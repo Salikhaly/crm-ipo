@@ -531,7 +531,7 @@ export default function CRM() {
       setWaChats(cs => cs.map(c => c.id === chatId ? { ...c, assigned_to: managerId } : c))
       toast$('✅ Менеджер назначен')
     } catch (e) { toast$('❌ ' + e.message, 'err') }
-  }
+  }, []) // useCallback
 
   const updateWaChatStatus = useCallback(async function updateWaChatStatus(chatId, newStatus) {
     try {
