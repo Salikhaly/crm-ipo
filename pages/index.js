@@ -1,7 +1,7 @@
 // pages/index.js
 // Главная страница CRM — полный UI подключённый к бэкенду через /api/*
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Head from 'next/head'
 import { api } from '../lib/api'
 
