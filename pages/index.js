@@ -716,6 +716,7 @@ export default function CRM() {
     { id:'clients',   l:'Клиенты',            i:'ti-users' },
     { id:'search',    l:'Поиск / Все клиенты',i:'ti-search' },
     { id:'wa',        l:'WhatsApp',           i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
+    { id:'calc',      l:'Калькулятор',        i:'ti-calculator' },
     { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
     { id:'kpi',       l:'KPI',               i:'ti-chart-bar' },
     ...(isAdmin ? [{ id:'admin', l:'Панель техника', i:'ti-settings-2' }] : []),
@@ -952,11 +953,11 @@ LoginPage = React.memo(LoginPage)
 // ─── BOTTOM NAV (mobile) ─────────────────────────────────────────
 function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
   const items = [
-    { id:'dashboard', l:'Главная',  i:'ti-home' },
-    { id:'search',    l:'Поиск',    i:'ti-search' },
-    { id:'wa',        l:'WhatsApp', i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
-    { id:'tasks',     l:'Задачи',   i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
-    { id:'kpi',       l:'KPI',      i:'ti-chart-bar' },
+    { id:'dashboard', l:'Главная',    i:'ti-home' },
+    { id:'search',    l:'Поиск',      i:'ti-search' },
+    { id:'wa',        l:'WhatsApp',   i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
+    { id:'calc',      l:'Калькулятор',i:'ti-calculator' },
+    { id:'tasks',     l:'Задачи',     i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
   ]
   return (
     <nav className="bot-nav" style={{background:'#fff',borderTop:'1.5px solid #e2e8f0',position:'fixed',bottom:0,left:0,right:0,zIndex:200}}>
