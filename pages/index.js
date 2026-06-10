@@ -670,14 +670,6 @@ export default function CRM() {
     [clients, isMgr, user?.manager_id]
   )
 
-  // Считаем просроченные/сегодняшние задачи для badge
-  const overdueTasks = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    return myCl.reduce((acc, c) => {
-      return acc + (c.tasks || []).filter(t => !t.done && t.due && t.due <= today).length
-    }, 0)
-  }, [myCl])
-
   const filtered = useMemo(() => {
     if (!search && !fMgr && !fStage) return myCl          // fast path: нет фильтров
     const q = search ? search.toLowerCase() : null
@@ -1407,13 +1399,7 @@ const MSG_TEMPLATES = [
     cat: '📄 Документы',
     items: [
       { id: 'd1', label: 'Запрос ИИН', text: 'Для предварительного расчёта, пожалуйста, пришлите ваш ИИН (12 цифр).' },
-      { id: 'd2', label: 'Список документов', text: 'Для подачи заявки понадобятся:
-• Удостоверение личности
-• Справка о доходах (форма банка)
-• ИИН и ЭЦП
-• Выписка ЕНПФ
-
-Есть созаёмщик? Те же документы.' },
+      { id: 'd2', label: 'Список документов', text: 'Для подачи заявки понадобятся:\n• Удостоверение личности\n• Справка о доходах (форма банка)\n• ИИН и ЭЦП\n• Выписка ЕНПФ\n\nЕсть созаёмщик? Те же документы.' },
       { id: 'd3', label: 'Документы получены', text: '{{имя}}, документы получили, проверяем ✅ Результат сообщу в течение 24 часов.' },
       { id: 'd4', label: 'Нужны доп. документы', text: '{{имя}}, для оформления нужны дополнительные документы. Пришлите, пожалуйста: {{документы}}' },
     ]
