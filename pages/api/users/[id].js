@@ -3,7 +3,8 @@
 // DELETE /api/users/:id  → удалить (только admin)
 
 import { getSupabase } from '../../../lib/supabase'
-import { withAuth } from '../../../lib/auth'
+import { withAuth }    from '../../../lib/auth'
+import bcrypt          from 'bcryptjs'
 
 export default withAuth(async function handler(req, res) {
   const sb = getSupabase()
@@ -16,21 +17,31 @@ export default withAuth(async function handler(req, res) {
 
   if (req.method === 'PUT') {
     const u = req.body
+
+    if (!u.login) return res.status(400).json({ error: 'login обязателен' })
+
+    const upd = {
+      name:       u.name  || '',
+      login:      u.login.trim().toLowerCase(),
+      role:       u.role  || 'manager',
+      manager_id: u.mid   || null,
+    }
+
+    // Обновляем пароль только если передан новый
+    if (u.pwd) {
+      upd.pwd_hash = await bcrypt.hash(u.pwd, 12)
+    }
+
     const { data, error } = await sb
       .from('users')
-      .update({
-        name:       u.name       || '',
-        login:      u.login,
-        pwd:        u.pwd,
-        role:       u.role       || 'manager',
-        manager_id: u.mid        || null,
-      })
+      .update(upd)
       .eq('id', id)
       .select()
       .single()
 
     if (error) return res.status(500).json({ error: error.message })
-    return res.status(200).json({ user: data })
+    const { pwd_hash: _, ...safeUser } = data  // не возвращаем хеш клиенту
+    return res.status(200).json({ user: safeUser })
   }
 
   if (req.method === 'DELETE') {

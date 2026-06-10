@@ -17,7 +17,8 @@
     "@supabase/supabase-js": "^2.43.1",
     "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
-    "formidable": "^3.5.1"
+    "formidable": "^3.5.1",
+    "googleapis": "^140.0.0"
   },
   "devDependencies": {
     "@types/node": "^20",

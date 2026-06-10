@@ -14,7 +14,7 @@ export default withAuth(async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Только GET' })
 
   const sb = getSupabase()
-  const { role, mid } = req.user
+  const { role, manager_id: mid } = req.user
   const { q = '', stage, manager } = req.query
 
   let query = sb.from('clients').select('*').order('created_at', { ascending: false })

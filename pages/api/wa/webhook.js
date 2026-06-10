@@ -17,11 +17,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Только POST' })
   }
 
-  // ── SECURITY: проверяем секрет вебхука (ОБЯЗАТЕЛЬНО) ──────
+  // ── SECURITY: проверяем секрет вебхука ────────────────────
   const expectedSecret = process.env.WEBHOOK_SECRET
-  if (!expectedSecret) {
-    console.error('[webhook] WEBHOOK_SECRET не задан — endpoint небезопасен!')
-    return res.status(500).json({ error: 'Server misconfiguration' })
+  const isPlaceholder  = !expectedSecret || expectedSecret === 'placeholder'
+  if (isPlaceholder) {
+    // Green API не настроен — возвращаем 200 чтобы не падать
+    return res.status(200).json({ ok: false, skipped: 'webhook_not_configured' })
   }
   const provided = req.query.secret || req.headers['x-webhook-secret']
   if (!provided || provided !== expectedSecret) {

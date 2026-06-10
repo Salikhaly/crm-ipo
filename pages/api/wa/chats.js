@@ -96,9 +96,10 @@ export default withAuth(async function handler(req, res) {
       .update(upd)
       .eq('id', chatId)
       .select()
-      .single()
+      .maybeSingle()
 
     if (error) return res.status(500).json({ error: error.message })
+    if (!data) return res.status(404).json({ error: 'Чат не найден' })
 
     return res.status(200).json({ ok: true, chat: data })
   }

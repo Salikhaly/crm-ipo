@@ -220,7 +220,13 @@ export default function CRM() {
     const token = localStorage.getItem('crm_token')
     const saved = localStorage.getItem('crm_user')
     if (token && saved) {
-      setUser(JSON.parse(saved))
+      try {
+        setUser(JSON.parse(saved))
+      } catch {
+        // Повреждённые данные в localStorage — сбрасываем сессию
+        localStorage.removeItem('crm_token')
+        localStorage.removeItem('crm_user')
+      }
     }
     setLoading(false)
   }, [])
@@ -334,10 +340,76 @@ export default function CRM() {
 
     loadChats()
     loadMsgs()
-    const t1 = setInterval(loadChats, WA_CHATS_POLL_MS)
-    const t2 = setInterval(loadMsgs,  WA_MESSAGES_POLL_MS)
-    return () => { clearInterval(t1); clearInterval(t2) }
+
+    // Адаптивный polling: замедляем когда вкладка скрыта (экономия Supabase запросов)
+    const t1 = setInterval(() => {
+      const interval = document.hidden ? WA_CHATS_POLL_MS * 3 : WA_CHATS_POLL_MS
+      // Простой интервал — при скрытой вкладке пропускаем 2 из 3 тиков
+      if (!document.hidden) loadChats()
+    }, WA_CHATS_POLL_MS)
+
+    const t2 = setInterval(() => {
+      if (!document.hidden) loadMsgs()
+    }, WA_MESSAGES_POLL_MS)
+
+    // При возврате на вкладку — сразу обновляем
+    const onVisible = () => { if (!document.hidden) { loadChats(); loadMsgs() } }
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      clearInterval(t1)
+      clearInterval(t2)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [user, page])
+
+  // ── УВЕДОМЛЕНИЯ ПО ЗАДАЧАМ ──────────────────────────────────
+  // Проверяем задачи каждые 15 минут и при смене страниц
+  useEffect(() => {
+    if (!user || !clients.length) return
+
+    function checkTaskReminders() {
+      const today = new Date().toISOString().slice(0, 10)
+      const now   = new Date()
+
+      clients.forEach(client => {
+        (client.tasks || []).forEach(task => {
+          if (task.done) return
+          if (!task.due) return
+
+          const isToday    = task.due === today
+          const isOverdue  = task.due < today
+          const taskKey    = `task_notified_${task.id}`
+          const alreadyNotified = sessionStorage.getItem(taskKey)
+
+          if ((isToday || isOverdue) && !alreadyNotified) {
+            sessionStorage.setItem(taskKey, '1')
+
+            const label   = isOverdue ? '🔴 Просрочена' : '🟡 Сегодня'
+            const msgText = `${label}: ${task.text} — ${client.fio || client.phone}`
+
+            // Browser Notification
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+              try {
+                new Notification('Задача CRM', {
+                  body: msgText,
+                  icon: '/favicon.ico',
+                  tag:  task.id,
+                })
+              } catch {}
+            }
+
+            // Toast в интерфейсе
+            toast$(msgText, isOverdue ? 'err' : '')
+          }
+        })
+      })
+    }
+
+    checkTaskReminders()
+    const t = setInterval(checkTaskReminders, 15 * 60 * 1000) // каждые 15 мин
+    return () => clearInterval(t)
+  }, [clients, user])
 
   // Search
   useEffect(() => {
@@ -352,6 +424,17 @@ export default function CRM() {
 
   // ─── CLIENT ACTIONS ──────────────────────────────────────
   async function saveClient(c) {
+    // Валидация ИИН
+    if (c.iin && !/^\d{12}$/.test(c.iin)) {
+      toast$('❌ ИИН должен содержать ровно 12 цифр', 'err'); return
+    }
+    // Проверка на дубликат по ИИН (если ИИН заполнен)
+    if (c.iin) {
+      const duplicate = clients.find(x => x.id !== c.id && x.iin === c.iin)
+      if (duplicate) {
+        toast$(`⚠️ Клиент с ИИН ${c.iin} уже существует: ${duplicate.fio}`, 'err'); return
+      }
+    }
     setSyncing(true)
     try {
       const existing = clients.find(x => x.id === c.id)
@@ -395,13 +478,18 @@ export default function CRM() {
   async function moveClient(id, stage) {
     const c = clients.find(x => x.id === id)
     if (!c) return
+    const prev    = c.stage
     const updated = { ...c, stage }
+    // Оптимистичное обновление — сразу показываем новую позицию
+    setClients(cs => cs.map(x => x.id === id ? updated : x))
+    if (selClient?.id === id) setSelClient(updated)
     try {
       await api.updateClient(id, updated)
-      setClients(cs => cs.map(x => x.id === id ? updated : x))
-      if (selClient?.id === id) setSelClient(updated)
-      toast$(`📌 ${pipeline.find(p => p.id === stage)?.l}`)
+      toast$(`📌 ${pipeline.find(p => p.id === stage)?.l || stage}`)
     } catch (e) {
+      // Rollback при ошибке
+      setClients(cs => cs.map(x => x.id === id ? { ...x, stage: prev } : x))
+      if (selClient?.id === id) setSelClient({ ...updated, stage: prev })
       toast$('❌ ' + e.message, 'err')
     }
   }
@@ -548,8 +636,7 @@ export default function CRM() {
       // Привязываем wa_chat к созданному клиенту
       if (linkWaChatId && saved?.id) {
         const waId = linkWaChatId
-        // Привязываем клиента к чату (используем api через request — с auth header)
-        await api.updateWaChatStatus(waId, undefined).catch(() => {})  // no-op warmup
+        // Привязываем клиента к чату
         await fetch('/api/wa/chats', {
           method:  'PATCH',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('crm_token')}` },
@@ -579,9 +666,17 @@ export default function CRM() {
 
   // ── Мемоизированные вычисления: пересчёт только при изменении зависимостей ──
   const myCl = useMemo(
-    () => isMgr ? clients.filter(c => c.manager === user?.mid) : clients,
-    [clients, isMgr, user?.mid]
+    () => isMgr ? clients.filter(c => c.manager === user?.manager_id) : clients,
+    [clients, isMgr, user?.manager_id]
   )
+
+  // Считаем просроченные/сегодняшние задачи для badge
+  const overdueTasks = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return myCl.reduce((acc, c) => {
+      return acc + (c.tasks || []).filter(t => !t.done && t.due && t.due <= today).length
+    }, 0)
+  }, [myCl])
 
   const filtered = useMemo(() => {
     if (!search && !fMgr && !fStage) return myCl          // fast path: нет фильтров
@@ -703,7 +798,7 @@ export default function CRM() {
           <div style={{padding:11,borderTop:'1px solid rgba(255,255,255,.07)'}}>
             <button onClick={() => { if (hasChanges) setExitDlg({ onConfirm: () => { setHasChanges(false); logout(); setExitDlg(null) } }); else logout() }}
               style={{display:'flex',alignItems:'center',gap:8,padding:'9px 10px',background:'rgba(255,255,255,.06)',borderRadius:10,cursor:'pointer',width:'100%',border:'none',fontFamily:'inherit',transition:'background .14s'}}>
-              <div style={{width:28,height:28,borderRadius:'50%',background:role?.c||'#3b82f6',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:11,color:'#fff',flexShrink:0}}>{user.name[0]}</div>
+              <div style={{width:28,height:28,borderRadius:'50%',background:role?.c||'#3b82f6',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:11,color:'#fff',flexShrink:0}}>{user.name?.[0]||'?'}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:11,fontWeight:600,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{user.name}</div>
                 <span style={{fontSize:9,fontWeight:700,padding:'1px 5px',borderRadius:20,background:(role?.c||'#3b82f6')+'22',color:role?.c||'#3b82f6'}}>{role?.l}</span>
@@ -736,7 +831,7 @@ export default function CRM() {
                 </Sel>
               </div>
             </>}
-            <Btn variant="primary" size="sm" onClick={() => setModal({ type:'new_client', c: emptyClient(user.mid||'') })}>
+            <Btn variant="primary" size="sm" onClick={() => setModal({ type:'new_client', c: emptyClient(user.manager_id||'') })}>
               <i className="ti ti-plus"/><span style={{display:'none'}} className="btn-text-desktop">Новый клиент</span><span style={{display:'inline'}}>+</span>
             </Btn>
             <Btn size="sm" onClick={loadAll} disabled={syncing}>
@@ -750,6 +845,7 @@ export default function CRM() {
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient}/>}
             {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')}/>}
             {page==='wa'        && <WAPage chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)}/>}
+            {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod}/>}
             {page==='admin'     && isAdmin && <AdminPage managers={managers} pipeline={pipeline} checklists={checklists} users={users} onSaveMgr={saveMgr} onDelMgr={delMgr} onSaveUser={saveUser} onDelUser={delUser} onSavePL={savePL} onSaveCL={saveCL} onModal={setModal} reload={loadAll} syncing={syncing}/>}
@@ -815,12 +911,13 @@ function LoginPage({ onLogin }) {
     setLd(false)
   }
 
-  const hints = [
+  // PROD: подсказки паролей скрыты. Раскомментируйте для dev/тестирования
+  const hints = process.env.NODE_ENV === 'development' ? [
     { l:'admin',   p:'admin123', r:'Техник' },
     { l:'head',    p:'head123',  r:'Руководитель' },
     { l:'aigerim', p:'a123',     r:'Менеджер' },
     { l:'daniyar', p:'d123',     r:'Менеджер' },
-  ]
+  ] : []
 
   return (
     <div style={{minHeight:'100vh',background:'linear-gradient(160deg,#0f172a,#1e3a5f)',display:'flex',alignItems:'center',justifyContent:'center',padding:20,fontFamily:"'Inter',system-ui,sans-serif"}}>
@@ -836,7 +933,7 @@ function LoginPage({ onLogin }) {
           <div style={{fontSize:13,color:'#64748b',marginTop:4}}>Войдите в систему</div>
         </div>
         <Fl l="Логин" ch={<Inp value={lg} onChange={e=>{setLg(e.target.value);setErr('')}} placeholder="Ваш логин" style={{fontSize:16,padding:'12px 14px',borderRadius:12}}/>}/>
-        <Fl l="Пароль" ch={<Inp type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr('')}} placeholder="Ваш пароль" style={{fontSize:16,padding:'12px 14px',borderRadius:12}}/>}/>
+        <Fl l="Пароль" ch={<Inp type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr('')}} placeholder="Ваш пароль" style={{fontSize:16,padding:'12px 14px',borderRadius:12}} onKeyDown={e=>e.key==='Enter'&&go()}/>}/>
         {err && <div style={{background:'#fef2f2',color:'#ef4444',border:'1.5px solid #fecaca',borderRadius:10,padding:'10px 13px',fontSize:13,fontWeight:600,marginBottom:12,textAlign:'center'}}>{err}</div>}
         <Btn variant="primary" onClick={go} disabled={ld} style={{width:'100%',justifyContent:'center',padding:'13px',fontSize:15,borderRadius:14,marginBottom:18}}>
           {ld ? <><i className="ti ti-loader spin"/>Вход...</> : <><i className="ti ti-login"/>Войти</>}
@@ -891,7 +988,7 @@ function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
 
 // ─── DASHBOARD PAGE ──────────────────────────────────────────────
 function DashPage({ data, pipeline, managers, onOpen, onLoadDash }) {
-  useEffect(() => { if (!data) onLoadDash() }, [])
+  useEffect(() => { if (!data) onLoadDash() }, [data, onLoadDash])
 
   if (!data) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300,color:'#64748b',gap:10}}>
@@ -1295,16 +1392,71 @@ const MAX_MESSAGES_FETCH  = 200      // максимум сообщений пр
 const MAX_FILE_SIZE_BYTES = 32 * 1024 * 1024  // 32 МБ лимит медиафайлов
 const MIN_SEARCH_LENGTH   = 2        // минимальная длина поисковой строки
 
-const QUICK_REPLIES = [
-  'Здравствуйте! Как я могу помочь?',
-  'Когда вам удобно позвонить?',
-  'Отправьте, пожалуйста, ваш ИИН',
-  'Ваша заявка одобрена ✅',
-  'Документы получены, обрабатываем',
-  'Назначим встречу — выберите время',
-  'Отправлю КП в течение часа',
-  'Спасибо за обращение! 🙏',
+// ─── ШАБЛОНЫ СООБЩЕНИЙ ────────────────────────────────────────
+// Переменные: {{имя}}, {{сумма}}, {{банк}}, {{дата}}, {{этап}}
+const MSG_TEMPLATES = [
+  {
+    cat: '👋 Приветствие',
+    items: [
+      { id: 't1', label: 'Приветствие', text: 'Здравствуйте, {{имя}}! Меня зовут {{менеджер}}, я ипотечный специалист. Чем могу помочь?' },
+      { id: 't2', label: 'Ответ на заявку', text: 'Здравствуйте, {{имя}}! Получили вашу заявку. Готов помочь подобрать лучшую ипотечную программу. Когда удобно поговорить?' },
+      { id: 't3', label: 'Первый контакт', text: 'Добрый день, {{имя}}! Спасибо за обращение. Расскажите подробнее — какую недвижимость рассматриваете?' },
+    ]
+  },
+  {
+    cat: '📄 Документы',
+    items: [
+      { id: 'd1', label: 'Запрос ИИН', text: 'Для предварительного расчёта, пожалуйста, пришлите ваш ИИН (12 цифр).' },
+      { id: 'd2', label: 'Список документов', text: 'Для подачи заявки понадобятся:
+• Удостоверение личности
+• Справка о доходах (форма банка)
+• ИИН и ЭЦП
+• Выписка ЕНПФ
+
+Есть созаёмщик? Те же документы.' },
+      { id: 'd3', label: 'Документы получены', text: '{{имя}}, документы получили, проверяем ✅ Результат сообщу в течение 24 часов.' },
+      { id: 'd4', label: 'Нужны доп. документы', text: '{{имя}}, для оформления нужны дополнительные документы. Пришлите, пожалуйста: {{документы}}' },
+    ]
+  },
+  {
+    cat: '🏦 Одобрение',
+    items: [
+      { id: 'a1', label: 'Заявка подана', text: '{{имя}}, заявка подана в {{банк}} ✅ Ожидаем решение 3-5 рабочих дней. Как только будет ответ — сразу сообщу!' },
+      { id: 'a2', label: 'Одобрено!', text: '🎉 {{имя}}, отличные новости! Банк {{банк}} одобрил ипотеку на сумму {{сумма}} ₸. Когда можете встретиться для обсуждения условий?' },
+      { id: 'a3', label: 'Отказ банка', text: '{{имя}}, к сожалению {{банк}} отказал в этот раз. Не переживайте — есть другие варианты. Предлагаю рассмотреть альтернативные банки. Когда удобно обсудить?' },
+      { id: 'a4', label: 'Нужна доработка', text: '{{имя}}, банк запросил дополнительную информацию. Нужно уточнить: {{запрос}}. Пожалуйста, пришлите в ближайшее время.' },
+    ]
+  },
+  {
+    cat: '📅 Встреча',
+    items: [
+      { id: 'm1', label: 'Назначить встречу', text: '{{имя}}, предлагаю встретиться для детального обсуждения. Вам удобно {{дата}}? Офис: пр. Абая 150, 3 этаж.' },
+      { id: 'm2', label: 'Подтверждение встречи', text: '{{имя}}, подтверждаем встречу {{дата}} ✅ Жду вас! Если что-то изменится — пишите заранее.' },
+      { id: 'm3', label: 'Напоминание о встрече', text: '{{имя}}, напоминаю — завтра встреча в {{время}}. Не забудьте взять оригиналы документов 📋' },
+    ]
+  },
+  {
+    cat: '💰 Сделка',
+    items: [
+      { id: 'c1', label: 'Дата сделки', text: '{{имя}}, сделка назначена на {{дата}} в {{время}}. Место: {{банк}}. Возьмите с собой все оригиналы документов и ЭЦП.' },
+      { id: 'c2', label: 'Сделка прошла', text: '🎉 Поздравляю, {{имя}}! Сделка успешно завершена! Ключи скоро будут ваши. Спасибо за доверие! Буду рад рекомендациям 🙏' },
+      { id: 'c3', label: 'Запрос отзыва', text: '{{имя}}, рады были помочь! Если остались довольны — буду признателен за отзыв в Google. Это очень важно для нас 🙏' },
+    ]
+  },
+  {
+    cat: '⚡ Быстрые',
+    items: [
+      { id: 'q1', label: 'Принято', text: 'Принято, {{имя}}! Займусь этим прямо сейчас.' },
+      { id: 'q2', label: 'Перезвоню', text: '{{имя}}, перезвоню вам в течение часа.' },
+      { id: 'q3', label: 'Уточняю', text: 'Уточняю информацию, {{имя}}, отвечу в ближайшее время.' },
+      { id: 'q4', label: 'На связи', text: 'Всегда на связи! Пишите если есть вопросы 😊' },
+      { id: 'q5', label: 'Спасибо', text: 'Спасибо за доверие, {{имя}}! 🙏' },
+    ]
+  },
 ]
+
+// Быстрые ответы (короткий список для быстрого доступа)
+const QUICK_REPLIES = MSG_TEMPLATES.find(c => c.cat.includes('Быстрые'))?.items.map(i => i.text) || []
 
 const WA_STATUSES = [
   { id: 'all',        l: 'Все',       color: '#64748b' },
@@ -1317,6 +1469,9 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
   const [msgText,         setMsgText]         = useState('')
   const [showChatView,    setShowChatView]     = useState(false)
   const [showQR,          setShowQR]           = useState(false)
+  const [showTemplates,   setShowTemplates]    = useState(false)
+  const [tmplCat,         setTmplCat]          = useState(0)
+  const [tmplSearch,      setTmplSearch]       = useState('')
   const [showNewLead,     setShowNewLead]       = useState(false)
   const [showClientPanel, setShowClientPanel]  = useState(false)
   const [showAssignDlg,   setShowAssignDlg]    = useState(false)
@@ -1366,6 +1521,35 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
     onSend(selChat.id, selChat.phone, msgText)
     setMsgText('')
     setShowQR(false)
+    setShowTemplates(false)
+    inputRef.current?.focus()
+  }
+
+  // Подставляет переменные шаблона из данных клиента/чата/менеджера
+  function applyTemplate(text) {
+    const lc  = linkedClient
+    const mgr = mgrById[selChat?.assigned_to]
+    const now = new Date()
+    const dateStr = now.toLocaleDateString('ru', { day:'numeric', month:'long' })
+    const timeStr = now.toLocaleTimeString('ru', { hour:'2-digit', minute:'2-digit' })
+    let result = text
+      .replace(/{{имя}}/g,     lc?.fio?.split(' ')[0] || selChat?.name?.split(' ')[0] || 'клиент')
+      .replace(/{{фио}}/g,     lc?.fio || selChat?.name || 'клиент')
+      .replace(/{{менеджер}}/g, mgr?.name || user?.name || 'менеджер')
+      .replace(/{{телефон}}/g,  lc?.phone || selChat?.phone || '')
+      .replace(/{{банк}}/g,     lc?.depositBank || 'банк')
+      .replace(/{{сумма}}/g,    lc?.contractAmount ? fmtN(lc.contractAmount) : '___')
+      .replace(/{{дата}}/g,     dateStr)
+      .replace(/{{время}}/g,    timeStr)
+      .replace(/{{этап}}/g,     lc?.stage || '')
+    return result
+  }
+
+  function useTemplate(tmpl) {
+    const applied = applyTemplate(tmpl.text)
+    setMsgText(applied)
+    setShowTemplates(false)
+    setShowQR(false)
     inputRef.current?.focus()
   }
 
@@ -1384,7 +1568,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
     if (file.size > MAX_FILE_SIZE_BYTES) { alert('Файл слишком большой (макс. 32 МБ)'); e.target.value = ''; return }
     const caption = file.type.startsWith('image/') ? '' : file.name
     setSendingFile(true)
-    onSendMedia(selChat.id, selChat.phone, file, caption)
+    Promise.resolve(onSendMedia(selChat.id, selChat.phone, file, caption))
       .finally(() => setSendingFile(false))
     e.target.value = ''
   }
@@ -1489,7 +1673,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
 
   // ── Sidebar: список чатов — useMemo чтобы не пересчитывать при несвязанных рендерах
   const ChatList = useMemo(() => (
-    <div className="wa-sidebar" style={showChatView?{transform:'translateX(-100%)'}:{}}>
+    <div className={"wa-sidebar" + (showChatView ? " slide-out" : "")}>
       {/* Header */}
       <div style={{padding:'12px 14px',borderBottom:'1px solid #e2e8f0',background:'#075e54',flexShrink:0}}>
         <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
@@ -1559,7 +1743,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
               onMouseEnter={e=>{if(!isAct)e.currentTarget.style.background='#f8fafc'}}
               onMouseLeave={e=>{if(!isAct)e.currentTarget.style.background='transparent'}}>
               <div style={{width:44,height:44,borderRadius:'50%',background:'#25d36622',color:'#25d366',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:18,flexShrink:0,position:'relative'}}>
-                {chat.name?chat.name[0].toUpperCase():'?'}
+                {chat.name?.[0]?.toUpperCase()||'?'}
                 {(chat.unread_count||0) > 0 && (
                   <span style={{position:'absolute',top:-2,right:-2,background:'#25d366',color:'#fff',borderRadius:'50%',width:18,height:18,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:800}}>{chat.unread_count}</span>
                 )}
@@ -1585,7 +1769,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
 
   // ── Chat view — useMemo чтобы не перестраивать при изменении списка чатов
   const ChatView = useMemo(() => (
-    <div className="wa-main" style={!showChatView&&typeof window!=='undefined'&&window.innerWidth<=768?{transform:'translateX(100%)'}:{}}>
+    <div className={"wa-main" + (!showChatView ? " slide-out" : "")}>
       {!selChat ? (
         <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'#64748b',gap:12,background:'#f0f0f0'}}>
           <i className="ti ti-brand-whatsapp" style={{fontSize:56,color:'#25d366',opacity:.25}}/>
@@ -1600,7 +1784,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
               <i className="ti ti-arrow-left" style={{fontSize:18}}/>
             </button>
             <div style={{width:38,height:38,borderRadius:'50%',background:'rgba(255,255,255,.2)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:16,flexShrink:0}}>
-              {selChat.name?selChat.name[0].toUpperCase():'?'}
+              {selChat.name?.[0]?.toUpperCase()||'?'}
             </div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:700,fontSize:14,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{selChat.name||selChat.phone}</div>
@@ -1622,7 +1806,16 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
                   style={{border:'none',background:'rgba(255,255,255,.15)',color:'#fff',borderRadius:8,width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
                   <i className="ti ti-user" style={{fontSize:16}}/>
                 </button>
-              : <button onClick={()=>setShowNewLead(true)}
+              : <button onClick={()=>{
+                    // Автозаполняем из данных чата
+                    setNLead(x=>({
+                      ...x,
+                      phone: selChat.phone || '',
+                      fio:   selChat.name && !selChat.name.startsWith('+') ? selChat.name : '',
+                      msg:   messages.slice(-3).map(m=>m.body).filter(Boolean).join(' / ') || '',
+                    }))
+                    setShowNewLead(true)
+                  }}
                   style={{border:'none',background:'#25d366',color:'#fff',borderRadius:8,padding:'6px 10px',cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'inherit',display:'flex',alignItems:'center',gap:5,flexShrink:0}}>
                   <i className="ti ti-user-plus" style={{fontSize:14}}/><span className="btn-text-desktop">Клиент</span>
                 </button>}
@@ -1670,6 +1863,61 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
             <div ref={msgsEndRef}/>
           </div>
 
+          {/* Панель шаблонов */}
+          {showTemplates && (
+            <div style={{background:'#fff',borderTop:'1.5px solid #e2e8f0',display:'flex',flexDirection:'column',maxHeight:340,flexShrink:0}}>
+              {/* Поиск по шаблонам */}
+              <div style={{padding:'8px 10px',borderBottom:'1px solid #f1f5f9',display:'flex',gap:8,alignItems:'center'}}>
+                <i className="ti ti-search" style={{color:'#94a3b8',fontSize:14,flexShrink:0}}/>
+                <input
+                  value={tmplSearch}
+                  onChange={e=>setTmplSearch(e.target.value)}
+                  placeholder="Поиск по шаблонам..."
+                  style={{flex:1,border:'none',outline:'none',fontSize:13,color:'#0f172a',fontFamily:'inherit'}}
+                />
+                {tmplSearch && <button onClick={()=>setTmplSearch('')} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:16}}>×</button>}
+              </div>
+              {/* Категории */}
+              {!tmplSearch && (
+                <div style={{display:'flex',gap:4,padding:'7px 10px',borderBottom:'1px solid #f1f5f9',overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+                  {MSG_TEMPLATES.map((cat,i) => (
+                    <button key={i} onClick={()=>setTmplCat(i)}
+                      style={{padding:'4px 10px',borderRadius:20,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap',flexShrink:0,
+                        background:tmplCat===i?'#3b82f6':'#f1f5f9',color:tmplCat===i?'#fff':'#64748b',transition:'all .15s'}}>
+                      {cat.cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Список шаблонов */}
+              <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
+                {(() => {
+                  const items = tmplSearch
+                    ? MSG_TEMPLATES.flatMap(c=>c.items).filter(t=>t.label.toLowerCase().includes(tmplSearch.toLowerCase())||t.text.toLowerCase().includes(tmplSearch.toLowerCase()))
+                    : MSG_TEMPLATES[tmplCat]?.items || []
+                  return items.length === 0
+                    ? <div style={{padding:'20px',textAlign:'center',color:'#94a3b8',fontSize:13}}>Ничего не найдено</div>
+                    : items.map(tmpl => (
+                      <div key={tmpl.id} onClick={()=>useTemplate(tmpl)}
+                        style={{padding:'10px 12px',borderBottom:'1px solid #f8fafc',cursor:'pointer',transition:'background .1s'}}
+                        onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
+                        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <div style={{fontWeight:700,fontSize:12,color:'#3b82f6',marginBottom:3}}>{tmpl.label}</div>
+                        <div style={{fontSize:12,color:'#374151',lineHeight:1.4,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
+                          {tmpl.text}
+                        </div>
+                      </div>
+                    ))
+                })()}
+              </div>
+              {/* Подсказка про переменные */}
+              <div style={{padding:'6px 12px',background:'#f8fafc',borderTop:'1px solid #f1f5f9',fontSize:10,color:'#94a3b8'}}>
+                <i className="ti ti-info-circle" style={{marginRight:4}}/>
+                Переменные подставляются автоматически: {{имя}}, {{банк}}, {{сумма}}, {{дата}}
+              </div>
+            </div>
+          )}
+
           {/* Quick replies */}
           {showQR && (
             <div className="qr-list">
@@ -1681,8 +1929,13 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
 
           {/* Input bar */}
           <div className="wa-input">
+            {/* Шаблоны сообщений */}
+            <button onClick={()=>{setShowTemplates(!showTemplates);setShowQR(false)}} title="Шаблоны сообщений"
+              style={{width:38,height:38,borderRadius:'50%',border:'none',background:showTemplates?'#3b82f6':'#e9e9e9',color:showTemplates?'#fff':'#555',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
+              <i className="ti ti-template" style={{fontSize:18}}/>
+            </button>
             {/* Быстрые ответы */}
-            <button onClick={()=>setShowQR(!showQR)} title="Быстрые ответы"
+            <button onClick={()=>{setShowQR(!showQR);setShowTemplates(false)}} title="Быстрые ответы"
               style={{width:38,height:38,borderRadius:'50%',border:'none',background:showQR?'#25d366':'#e9e9e9',color:showQR?'#fff':'#555',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
               <i className="ti ti-bolt" style={{fontSize:18}}/>
             </button>
@@ -1697,6 +1950,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
             <textarea
               ref={inputRef}
               className="wa-textarea"
+            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg()}}}
               value={msgText}
               onChange={e=>setMsgText(e.target.value)}
               placeholder="Написать сообщение..."
@@ -2110,7 +2364,7 @@ function AdminPage({ managers, pipeline, checklists, users, onSaveMgr, onDelMgr,
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,fontSize:13}}>{u.name}</div>
                 <div style={{fontSize:11,color:'#64748b'}}>
-                  Логин: <b style={{fontFamily:'monospace'}}>{u.login}</b> · Пароль: <b style={{fontFamily:'monospace'}}>{u.pwd}</b>
+                  Логин: <b style={{fontFamily:'monospace'}}>{u.login}</b> · Пароль: <b style={{fontFamily:'monospace',color:'#94a3b8'}}>{u.pwd_hash ? '••••••••' : u.pwd || '—'}</b>
                 </div>
               </div>
               {r && <Tag c={r.c} ch={r.l}/>}
@@ -2179,6 +2433,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
     {id:'accomp',   l:'🗺 Сопровождение'},
     {id:'tasks',    l:`✅ Задачи (${(c.tasks||[]).filter(t=>!t.done).length})`},
     {id:'history',  l:`💬 История (${(c.comments||[]).length})`},
+    {id:'drive',    l:'📁 Файлы'},
   ]
 
   const stageColor = stageObj?.c || '#3b82f6'
@@ -2190,7 +2445,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
       </Head>
-      <div style={{display:'flex',minHeight:'100vh',fontFamily:"'Inter',system-ui,sans-serif"}}>
+      <div className="client-detail" style={{display:'flex',minHeight:'100vh',fontFamily:"'Inter',system-ui,sans-serif"}}>
         {/* Sidebar */}
         <div style={{width:220,background:'#0f172a',display:'flex',flexDirection:'column',position:'sticky',top:0,height:'100vh',overflowY:'auto',flexShrink:0}}>
           <div style={{padding:'16px 15px 13px',borderBottom:'1px solid rgba(255,255,255,.07)'}}>
@@ -2297,6 +2552,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
                 {tab==='accomp'   && <AccompTab   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} managers={managers} canEdit={canEdit} checklists={cls} user={user} accIdx={accIdx} setAccIdx={setAccIdx} autoBanner={autoBanner} setAutoBanner={setAutoBanner} toggleCheck={toggleCheck} overallPct={overallPct} totalDone={totalDone} totalItems={totalItems} getSD={getSD} setSD={setSD} toast$={toast$}/>}
                 {tab==='tasks'    && <TasksTabC   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user} canEdit={canEdit}/>}
                 {tab==='history'  && <HistoryTab  c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
+                {tab==='drive'    && <DriveTab     c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
               </div>
             </div>
           </div>
@@ -2485,7 +2741,11 @@ function PaymentsTab({ c, setC, pipeline, canEdit }) {
   const totalPending = payments.filter(p=>p.status==='pending').reduce((s,p)=>s+p.amount,0)
   const payPct       = c.contractAmount > 0 ? Math.round((totalPaid+totalPartial)/c.contractAmount*100) : 0
 
-  function updPay(id, key, val) { setC({...c, payments:payments.map(p=>p.id===id?{...p,[key]:val}:p)}) }
+  function updPay(id, key, val) {
+    // paidAmount и amount должны быть числами, не строками
+    const safeVal = (key === 'paidAmount' || key === 'amount') ? (+val || 0) : val
+    setC({...c, payments:payments.map(p=>p.id===id?{...p,[key]:safeVal}:p)})
+  }
   function setStatus(id, status) {
     const p = payments.find(x=>x.id===id)
     if (status==='paid') setC({...c, payments:payments.map(x=>x.id===id?{...x,status:'paid',paidAmount:x.amount,paidDate:new Date().toLocaleDateString('ru',{day:'numeric',month:'short'})}:x)})
@@ -2643,16 +2903,21 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
     setC({...c, tasks:(c.tasks||[]).map(t=>t.id===tid?{...t,done:!t.done}:t)})
   }
   function handleFiles(si, files) {
+    const MAX_DOC = 2 * 1024 * 1024  // 2 МБ — лимит для base64 в JSONB Supabase
+    let added = 0, skipped = 0
     Array.from(files).forEach(file => {
+      if (file.size > MAX_DOC) { skipped++; return }
       const reader = new FileReader()
       reader.onload = e => {
         const doc = {id:uid(),name:file.name,type:file.type.includes('image')?'photo':'doc',base64:e.target.result,size:file.size,uploadDate:nowStr(),note:'',stage:ACCOMP[si]}
         const sdCurr = getSD(si)
         setSD(si, {...sdCurr, docs:[...(sdCurr.docs||[]),doc]})
+        added++
       }
       reader.readAsDataURL(file)
     })
-    if (files.length) toast$('📎 '+files.length+' файл(а) добавлено')
+    if (skipped) toast$(`⚠️ ${skipped} файл(а) пропущено — больше 2 МБ. Используйте вкладку 📁 Файлы для больших документов`, 'err')
+    else if (files.length) toast$('📎 '+files.length+' файл(а) добавлено')
   }
   function delDoc(si, did) {
     const sd = getSD(si)
@@ -2918,7 +3183,14 @@ function TasksTabC({ c, setC, user, canEdit }) {
     setNTask({type:TASK_T[0],text:'',due:''})
   }
   function tog(id) { setC({...c, tasks:tasks.map(t=>t.id===id?{...t,done:!t.done}:t)}) }
-  function del(id) { setC({...c, tasks:tasks.filter(t=>t.id!==id)}) }
+  function del(id) {
+    // Удаляем из c.tasks и синхронно из accompStages (задачи дублируются там)
+    const newTasks = tasks.filter(t => t.id !== id)
+    const newStages = Object.fromEntries(
+      Object.entries(c.accompStages || {}).map(([k, v]) => [k, {...v, tasks: (v.tasks||[]).filter(t => t.id !== id)}])
+    )
+    setC({...c, tasks: newTasks, accompStages: newStages})
+  }
   const open = tasks.filter(t=>!t.done)
   const done = tasks.filter(t=>t.done)
   return (
@@ -2965,6 +3237,10 @@ function TasksTabC({ c, setC, user, canEdit }) {
 }
 
 function HistoryTab({ c, setC, user }) {
+  // Разделяем обычные комментарии и аудит-записи
+  const allEntries = [...(c.comments || [])].sort((a, b) =>
+    (a.createdAt || '').localeCompare(b.createdAt || '')
+  )
   const [txt, setTxt] = useState('')
   function add() {
     if (!txt.trim()) return
@@ -3147,6 +3423,808 @@ function PLModal({ pipeline, onSave, onClose, syncing }) {
         </div>
       ))}
     </ModalWrap>
+  )
+}
+
+// ─── Google Drive Tab ────────────────────────────────────────────────────────
+function DriveTab({ c, setC, user }) {
+  const [files,      setFiles]      = useState([])
+  const [loading,    setLoading]    = useState(false)
+  const [uploading,  setUploading]  = useState(false)
+  const [uploadName, setUploadName] = useState('')
+  const [error,      setError]      = useState('')
+  const [folderLink, setFolderLink] = useState(c.driveLink || '')
+  const driveInputRef = useRef(null)
+
+  // Загружаем список файлов при открытии вкладки
+  useEffect(() => {
+    let cancelled = false
+    loadFiles(cancelled)
+    return () => { cancelled = true }  // cleanup: не обновляем стейт после размонтирования
+  }, [c.id])
+
+  async function loadFiles(cancelled) {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await api.getDriveFiles(c.id, c.driveFolderName || c.fio || '')
+      if (cancelled) return
+      setFiles(data.files || [])
+      if (data.folderLink && !c.driveLink) {
+        setFolderLink(data.folderLink)
+        setC({ ...c, driveLink: data.folderLink })
+      }
+    } catch (e) {
+      if (!cancelled) setError(e.message)
+    } finally {
+      if (!cancelled) setLoading(false)
+    }
+  }
+
+  async function handleUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setUploadName(file.name)
+    setError('')
+    try {
+      const data = await api.uploadDriveFile(c.id, file, c.driveFolderName || c.fio || '')
+      if (data.folderLink) {
+        setFolderLink(data.folderLink)
+        setC({ ...c, driveLink: data.folderLink })
+      }
+      await loadFiles()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setUploading(false)
+      setUploadName('')
+      e.target.value = ''
+    }
+  }
+
+  async function handleDelete(fileId, fileName) {
+    if (!confirm(`Удалить файл "${fileName}"?`)) return
+    setError('')
+    try {
+      await api.deleteDriveFile(c.id, fileId)
+      setFiles(files.filter(f => f.id !== fileId))
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  function fileIcon(mime) {
+    if (!mime) return 'ti-file'
+    if (mime.startsWith('image/'))                       return 'ti-photo'
+    if (mime === 'application/pdf')                      return 'ti-file-type-pdf'
+    if (mime.includes('word') || mime.includes('docx'))  return 'ti-file-type-doc'
+    if (mime.includes('excel') || mime.includes('xlsx')) return 'ti-file-type-xls'
+    if (mime.startsWith('video/'))                       return 'ti-video'
+    if (mime.startsWith('audio/'))                       return 'ti-music'
+    return 'ti-file'
+  }
+
+  const canDelete = user?.role === 'admin' || user?.role === 'head'
+
+  return (
+    <div style={{padding:'4px 0'}}>
+      {/* Заголовок + кнопки */}
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, gap:10}}>
+        <div style={{fontWeight:700, fontSize:14, color:'#0f172a'}}>
+          Файлы клиента
+          {files.length > 0 && <span style={{marginLeft:6, fontSize:12, fontWeight:500, color:'#64748b'}}>({files.length})</span>}
+        </div>
+        <div style={{display:'flex', gap:8}}>
+          {folderLink && (
+            <a href={folderLink} target="_blank" rel="noreferrer" style={{textDecoration:'none'}}>
+              <button style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:8,border:'1px solid #e2e8f0',background:'#f8fafc',color:'#64748b',fontSize:12,fontWeight:500,cursor:'pointer'}}>
+                <i className="ti ti-brand-google-drive" style={{fontSize:14, color:'#1a73e8'}}/>
+                Открыть папку
+              </button>
+            </a>
+          )}
+          <button
+            onClick={() => driveInputRef.current?.click()}
+            disabled={uploading}
+            style={{display:'flex',alignItems:'center',gap:5,padding:'6px 14px',borderRadius:8,border:'none',background:uploading?'#94a3b8':'#3b82f6',color:'#fff',fontSize:12,fontWeight:600,cursor:uploading?'not-allowed':'pointer'}}>
+            {uploading
+              ? <><i className="ti ti-loader-2" style={{fontSize:13, animation:'spin 1s linear infinite'}}/>Загружаю...</>
+              : <><i className="ti ti-upload" style={{fontSize:13}}/>Загрузить файл</>
+            }
+          </button>
+        </div>
+      </div>
+
+      <input ref={driveInputRef} type="file" style={{display:'none'}}
+        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+        onChange={handleUpload}/>
+
+      {/* Индикатор загрузки */}
+      {uploading && (
+        <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:10,padding:'10px 14px',marginBottom:12,fontSize:13,color:'#1d4ed8',display:'flex',alignItems:'center',gap:8}}>
+          <i className="ti ti-loader-2" style={{fontSize:15}}/>
+          Загружаю «{uploadName}» на Google Диск...
+        </div>
+      )}
+
+      {/* Ошибка */}
+      {error && (
+        <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:10,padding:'10px 14px',marginBottom:12,fontSize:13,color:'#dc2626'}}>
+          <i className="ti ti-alert-circle" style={{marginRight:6}}/>
+          {error.includes('не настроен')
+            ? <>Google Drive не настроен. Попросите администратора добавить ключ сервис-аккаунта.</>
+            : error
+          }
+        </div>
+      )}
+
+      {/* Список файлов */}
+      {loading ? (
+        <div style={{textAlign:'center',padding:'32px 0',color:'#94a3b8',fontSize:13}}>
+          <i className="ti ti-loader-2" style={{fontSize:22,display:'block',marginBottom:6}}/>
+          Загружаю список файлов...
+        </div>
+      ) : files.length === 0 ? (
+        <div style={{textAlign:'center',padding:'40px 20px',color:'#94a3b8'}}>
+          <i className="ti ti-folder-open" style={{fontSize:32,display:'block',marginBottom:8,color:'#cbd5e1'}}/>
+          <div style={{fontSize:13,fontWeight:500}}>Файлов пока нет</div>
+          <div style={{fontSize:12,marginTop:4}}>Нажмите «Загрузить файл» чтобы добавить документы клиента</div>
+        </div>
+      ) : (
+        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+          {files.map(f => (
+            <div key={f.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,border:'1px solid #e2e8f0',background:'#f8fafc',transition:'background .12s'}}>
+              <i className={`ti ${fileIcon(f.mimeType)}`} style={{fontSize:20,color:'#3b82f6',flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:500,color:'#0f172a',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.name}</div>
+                <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>
+                  {f.size ? fmtSize(+f.size) : ''}
+                  {f.size && f.createdTime ? ' · ' : ''}
+                  {f.createdTime ? new Date(f.createdTime).toLocaleDateString('ru-RU') : ''}
+                </div>
+              </div>
+              <div style={{display:'flex',gap:6,flexShrink:0}}>
+                <a href={f.webViewLink} target="_blank" rel="noreferrer"
+                  style={{display:'flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:7,border:'1px solid #e2e8f0',background:'#fff',color:'#374151',fontSize:11,fontWeight:500,textDecoration:'none',cursor:'pointer'}}>
+                  <i className="ti ti-eye" style={{fontSize:12}}/>Открыть
+                </a>
+                {f.webContentLink && (
+                  <a href={f.webContentLink} target="_blank" rel="noreferrer"
+                    style={{display:'flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:7,border:'1px solid #e2e8f0',background:'#fff',color:'#374151',fontSize:11,fontWeight:500,textDecoration:'none',cursor:'pointer'}}>
+                    <i className="ti ti-download" style={{fontSize:12}}/>
+                  </a>
+                )}
+                {canDelete && (
+                  <button onClick={() => handleDelete(f.id, f.name)}
+                    style={{display:'flex',alignItems:'center',padding:'5px 8px',borderRadius:7,border:'1px solid #fecaca',background:'#fff',color:'#dc2626',fontSize:11,cursor:'pointer'}}>
+                    <i className="ti ti-trash" style={{fontSize:12}}/>
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Подсказка */}
+      <div style={{marginTop:16,fontSize:11,color:'#94a3b8',background:'#f8fafc',borderRadius:9,padding:'9px 12px',border:'1px solid #e2e8f0'}}>
+        <i className="ti ti-info-circle" style={{marginRight:5}}/>
+        Файлы сохраняются в Google Drive в папке клиента. Форматы: PDF, Word, Excel, изображения, ZIP (до 50 МБ)
+      </div>
+
+      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  СТРАНИЦА КАЛЬКУЛЯТОРА
+// ════════════════════════════════════════════════════════════════════
+
+const PROGRAMS = [
+  { key:'5050',     name:'Ипотека 50/50',      icon:'🏛️', downRatio:0.50 },
+  { key:'3070',     name:'30/70',               icon:'🏠', downRatio:0.30 },
+  { key:'nauryz20', name:'Наурыз 20%',           icon:'🌸', downRatio:0.20 },
+  { key:'nauryz10', name:'Наурыз 10%',           icon:'🌷', downRatio:0.10 },
+  { key:'jasyl',    name:'Жасыл',                icon:'🌿', downRatio:0.20 },
+  { key:'askeri',   name:'Аскери',               icon:'🎖️', downRatio:0.00 },
+]
+
+const CONTRACT_TYPES = ['Трудовой', 'ГПХ']
+
+function fmtMoney(n) {
+  if (!n && n !== 0) return '—'
+  return new Intl.NumberFormat('ru').format(Math.round(n)) + ' ₸'
+}
+
+function CalcPage({ user, clients, toast$ }) {
+  const [tab, setTab]   = useState('mortgage')
+  const [busy, setBusy] = useState(false)
+
+  const tabs = [
+    { id:'mortgage', l:'🏠 Ипотека',     icon:'ti-home' },
+    { id:'bank',     l:'🏦 Одобрение',   icon:'ti-building-bank' },
+    { id:'opv',      l:'📊 ОПВ',         icon:'ti-chart-bar' },
+    { id:'tax',      l:'🧾 Бухгалтер',   icon:'ti-receipt' },
+  ]
+
+  async function doCalc(action, payload) {
+    setBusy(true)
+    try {
+      return await api.calc(action, payload)
+    } catch(e) {
+      toast$('❌ ' + e.message, 'err')
+      return null
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:22,fontWeight:900,letterSpacing:-.5,color:'#0f172a',marginBottom:3}}>
+          🧮 Калькулятор
+        </div>
+        <div style={{fontSize:13,color:'#64748b'}}>Все расчёты по ипотечным программам Казахстана</div>
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs" style={{borderRadius:'12px 12px 0 0',marginBottom:0}}>
+        {tabs.map(t => (
+          <div key={t.id} className={'tab-item'+(tab===t.id?' active':'')} onClick={()=>setTab(t.id)}>
+            {t.l}
+          </div>
+        ))}
+      </div>
+
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderTop:'none',borderRadius:'0 0 14px 14px',padding:20}}>
+        {busy && (
+          <div style={{textAlign:'center',padding:'12px 0',color:'#3b82f6',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+            <i className="ti ti-loader-2 spin" style={{fontSize:18}}/> Считаю...
+          </div>
+        )}
+        {tab==='mortgage' && <CalcMortgageTab doCalc={doCalc} clients={clients}/>}
+        {tab==='bank'     && <CalcBankTab     doCalc={doCalc}/>}
+        {tab==='opv'      && <CalcOpvTab      doCalc={doCalc}/>}
+        {tab==='tax'      && <CalcTaxTab      doCalc={doCalc}/>}
+      </div>
+    </div>
+  )
+}
+CalcPage = React.memo(CalcPage)
+
+// ─── ВКЛАДКА: ИПОТЕКА ───────────────────────────────────────────────────────
+function CalcMortgageTab({ doCalc, clients }) {
+  const [mode,     setMode]     = useState('price')  // 'price' | 'salary'
+  const [program,  setProgram]  = useState('nauryz20')
+  const [price,    setPrice]    = useState('')
+  const [salary,   setSalary]   = useState('')
+  const [members,  setMembers]  = useState('1')
+  const [oldCred,  setOldCred]  = useState('')
+  const [result,   setResult]   = useState(null)
+
+  async function calc() {
+    let res
+    if (mode === 'price') {
+      res = await doCalc('mortgage_by_price', {
+        program,
+        price:    +price,
+        members:  +members,
+        orgs:     [{ income: +salary, oldCredit: +oldCred }],
+      })
+    } else {
+      res = await doCalc('mortgage_by_salary', {
+        program,
+        salary:    +salary,
+        members:   +members,
+        oldCredit: +oldCred,
+      })
+    }
+    if (res?.ok) setResult(res)
+  }
+
+  const prog = PROGRAMS.find(p => p.key === program)
+
+  return (
+    <div>
+      {/* Режим */}
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {[['price','По цене квартиры'],['salary','По зарплате']].map(([m,l]) => (
+          <button key={m} onClick={()=>{setMode(m);setResult(null)}}
+            style={{flex:1,padding:'10px 0',borderRadius:10,border:'2px solid',fontFamily:'inherit',fontSize:13,fontWeight:700,cursor:'pointer',transition:'all .15s',
+              borderColor: mode===m?'#3b82f6':'#e2e8f0',
+              background:  mode===m?'#eff6ff':'#f8fafc',
+              color:       mode===m?'#3b82f6':'#64748b'}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* Программа */}
+      <div className="fi">
+        <div className="fl">Программа</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:7}}>
+          {PROGRAMS.map(p => (
+            <button key={p.key} onClick={()=>{setProgram(p.key);setResult(null)}}
+              style={{padding:'8px 6px',borderRadius:10,border:'2px solid',fontFamily:'inherit',fontSize:11,fontWeight:700,cursor:'pointer',textAlign:'center',lineHeight:1.3,transition:'all .15s',
+                borderColor: program===p.key?'#3b82f6':'#e2e8f0',
+                background:  program===p.key?'#eff6ff':'#f8fafc',
+                color:       program===p.key?'#3b82f6':'#374151'}}>
+              <div style={{fontSize:18,marginBottom:2}}>{p.icon}</div>
+              {p.name}
+              <div style={{fontSize:9,color:program===p.key?'#93c5fd':'#94a3b8',marginTop:1}}>
+                Взнос {Math.round(p.downRatio*100)}%
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="r2">
+        {mode==='price' && (
+          <div className="fi">
+            <div className="fl">Цена квартиры (₸)</div>
+            <input className="inp" type="number" value={price} onChange={e=>setPrice(e.target.value)} placeholder="25 000 000"/>
+          </div>
+        )}
+        <div className="fi">
+          <div className="fl">{mode==='price'?'Доход (₸)':'Зарплата (₸)'}</div>
+          <input className="inp" type="number" value={salary} onChange={e=>setSalary(e.target.value)} placeholder="300 000"/>
+        </div>
+        <div className="fi">
+          <div className="fl">Кол-во заёмщиков</div>
+          <select className="inp" value={members} onChange={e=>setMembers(e.target.value)}>
+            {[1,2,3,4].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div className="fi">
+          <div className="fl">Текущие кредиты/мес (₸)</div>
+          <input className="inp" type="number" value={oldCred} onChange={e=>setOldCred(e.target.value)} placeholder="0"/>
+        </div>
+      </div>
+
+      <button className="btn btn-primary btn-block btn-lg" onClick={calc} style={{marginTop:4}}>
+        <i className="ti ti-calculator" style={{fontSize:17}}/> Рассчитать
+      </button>
+
+      {/* РЕЗУЛЬТАТ */}
+      {result && <CalcMortgageResult result={result} mode={mode} prog={prog}/>}
+    </div>
+  )
+}
+
+function CalcMortgageResult({ result, mode, prog }) {
+  if (!result?.ok) return null
+
+  const fmtKd = kd => (kd*100).toFixed(0)+'%'
+
+  if (mode === 'salary' && result.approved === false) {
+    return (
+      <div style={{marginTop:20,background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:14,padding:18,textAlign:'center'}}>
+        <div style={{fontSize:32,marginBottom:6}}>😔</div>
+        <div style={{fontWeight:800,fontSize:16,color:'#dc2626',marginBottom:4}}>Одобрение невозможно</div>
+        <div style={{fontSize:13,color:'#64748b'}}>
+          Доход {fmtMoney(result.totalIncome)} недостаточен.<br/>
+          Метод 1: {fmtMoney(result.method1)} · Метод 2: {fmtMoney(result.method2)}
+        </div>
+      </div>
+    )
+  }
+
+  if (mode === 'salary' && result.approved) {
+    return (
+      <div style={{marginTop:20}}>
+        <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:14,padding:16,marginBottom:12}}>
+          <div style={{fontSize:13,color:'#16a34a',fontWeight:700,marginBottom:8}}>✅ Одобрение возможно — {result.prog?.name || prog?.name}</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            {[
+              ['Максимальная цена', fmtMoney(result.maxPrice)],
+              ['Сумма займа',       fmtMoney(result.maxLoan)],
+              ['Первый взнос',      fmtMoney(result.down)],
+              ['Платёж/мес',        fmtMoney(result.payment)],
+              ['КД',                fmtKd(result.kd)],
+              ['Ставка',            result.rate],
+            ].map(([l,v]) => (
+              <div key={l} style={{background:'#fff',borderRadius:10,padding:'10px 12px'}}>
+                <div style={{fontSize:10,color:'#64748b',marginBottom:3,textTransform:'uppercase',letterSpacing:.04,fontWeight:700}}>{l}</div>
+                <div style={{fontSize:15,fontWeight:800,color:'#0f172a'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:10,fontSize:11,color:'#64748b',background:'rgba(0,0,0,.03)',borderRadius:8,padding:'7px 10px'}}>
+            Метод 1 (КД): {fmtMoney(result.method1)} · Метод 2 (ПМ): {fmtMoney(result.method2)}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // mode === 'price' — варианты по цене
+  const variants = result.variantsByPrice
+  if (!variants?.length) return null
+
+  return (
+    <div style={{marginTop:20}}>
+      <div style={{fontWeight:800,fontSize:14,marginBottom:12,color:'#0f172a'}}>
+        {prog?.icon} {prog?.name} — результаты
+      </div>
+
+      {variants.map((v, i) => (
+        <div key={i} style={{border:'1.5px solid',borderRadius:14,padding:15,marginBottom:10,
+          borderColor: v.canAfford?'#86efac':'#fecaca',
+          background:  v.canAfford?'#f0fdf4':'#fff7f7'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>{v.label}</div>
+            <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,
+              background: v.canAfford?'#dcfce7':'#fee2e2',
+              color:      v.canAfford?'#16a34a':'#dc2626'}}>
+              {v.canAfford ? '✅ Доступно' : '❌ Не хватает'}
+            </span>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
+            {[
+              ['Платёж/мес',    fmtMoney(v.monthly)],
+              ['Первый взнос',  fmtMoney(v.downPayment)],
+              ['Сумма займа',   fmtMoney(v.loanAmount)],
+              ['Нужна ЗП',      fmtMoney(v.requiredSalary)],
+            ].map(([l,val]) => (
+              <div key={l} style={{background:'rgba(255,255,255,.7)',borderRadius:9,padding:'8px 10px'}}>
+                <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',fontWeight:700,marginBottom:2}}>{l}</div>
+                <div style={{fontSize:13,fontWeight:800,color:'#0f172a'}}>{val}</div>
+              </div>
+            ))}
+          </div>
+          {!v.canAfford && v.opvPlan?.length > 0 && (
+            <div style={{background:'#fff',borderRadius:10,padding:'10px 12px',border:'1px solid #e2e8f0'}}>
+              <div style={{fontSize:11,fontWeight:700,color:'#64748b',marginBottom:7}}>📈 План повышения ОПВ до нужной ЗП {fmtMoney(v.requiredSalary)}:</div>
+              <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                {v.opvPlan.map(p => p.opvPerMonth > 0 && (
+                  <div key={p.months} style={{background:'#f8fafc',border:'1.5px solid #e2e8f0',borderRadius:8,padding:'5px 10px',textAlign:'center'}}>
+                    <div style={{fontSize:10,color:'#64748b',fontWeight:700}}>{p.months} мес.</div>
+                    <div style={{fontSize:12,fontWeight:800,color:'#3b82f6'}}>{fmtMoney(p.opvPerMonth)}</div>
+                    <div style={{fontSize:9,color:'#94a3b8'}}>ОПВ/мес</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* Сравнение программ */}
+      {result.comparison?.length > 0 && (
+        <div style={{marginTop:16}}>
+          <div style={{fontWeight:800,fontSize:13,marginBottom:10,color:'#0f172a'}}>📊 Сравнение всех программ</div>
+          <div style={{border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden'}}>
+            {result.comparison.map((p, i) => (
+              <div key={p.key} style={{
+                display:'flex',alignItems:'center',gap:10,padding:'10px 14px',
+                borderBottom: i<result.comparison.length-1?'1px solid #f1f5f9':'none',
+                background: p.canAfford?'#f0fdf4':'#fff',
+              }}>
+                <span style={{fontSize:20,flexShrink:0}}>{p.icon}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#0f172a'}}>{p.name}</div>
+                  <div style={{fontSize:11,color:'#64748b'}}>Взнос {fmtMoney(p.downPayment)} · Нужна ЗП {fmtMoney(p.requiredSalary)}</div>
+                </div>
+                <div style={{textAlign:'right',flexShrink:0}}>
+                  <div style={{fontSize:14,fontWeight:800,color: p.canAfford?'#16a34a':'#dc2626'}}>{fmtMoney(p.monthly)}</div>
+                  <div style={{fontSize:9,color:'#94a3b8'}}>в месяц</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── ВКЛАДКА: ОДОБРЕНИЕ БАНКА ───────────────────────────────────────────────
+function CalcBankTab({ doCalc }) {
+  const [members,  setMembers]  = useState('1')
+  const [orgs,     setOrgs]     = useState([{ income:'', oldCredit:'', mode:'income' }])
+  const [result,   setResult]   = useState(null)
+
+  function setOrg(i, key, val) {
+    setOrgs(os => os.map((o, idx) => idx===i ? {...o, [key]: val} : o))
+    setResult(null)
+  }
+
+  async function calc() {
+    const res = await doCalc('bank_approval', {
+      orgs:    orgs.map(o => ({ income: +o.income||0, oldCredit: +o.oldCredit||0 })),
+      members: +members,
+    })
+    if (res?.ok) setResult(res)
+  }
+
+  const fmtKd = kd => (kd*100).toFixed(0)+'%'
+
+  return (
+    <div>
+      <div className="fi">
+        <div className="fl">Количество членов семьи</div>
+        <select className="inp" value={members} onChange={e=>setMembers(e.target.value)}>
+          {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+
+      {orgs.map((o, i) => (
+        <div key={i} style={{border:'1.5px solid #e2e8f0',borderRadius:12,padding:14,marginBottom:10,background:'#f8fafc'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>
+              {i===0?'👤 Заёмщик':`👤 Созаёмщик ${i}`}
+            </div>
+            {i>0 && (
+              <button onClick={()=>setOrgs(os=>os.filter((_,idx)=>idx!==i))}
+                style={{border:'none',background:'#fee2e2',color:'#dc2626',borderRadius:7,padding:'3px 9px',cursor:'pointer',fontSize:12,fontFamily:'inherit',fontWeight:700}}>
+                Удалить
+              </button>
+            )}
+          </div>
+          <div className="r2">
+            <div className="fi">
+              <div className="fl">Доход (₸/мес)</div>
+              <input className="inp" type="number" value={o.income} onChange={e=>setOrg(i,'income',e.target.value)} placeholder="300 000"/>
+            </div>
+            <div className="fi">
+              <div className="fl">Платежи по кредитам (₸/мес)</div>
+              <input className="inp" type="number" value={o.oldCredit} onChange={e=>setOrg(i,'oldCredit',e.target.value)} placeholder="0"/>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {orgs.length < 3 && (
+        <button onClick={()=>setOrgs(os=>[...os,{income:'',oldCredit:'',mode:'income'}])}
+          className="btn btn-ghost btn-block" style={{marginBottom:12}}>
+          <i className="ti ti-user-plus" style={{fontSize:15}}/> Добавить созаёмщика
+        </button>
+      )}
+
+      <button className="btn btn-primary btn-block btn-lg" onClick={calc}>
+        <i className="ti ti-building-bank" style={{fontSize:17}}/> Рассчитать одобрение
+      </button>
+
+      {result && (
+        <div style={{marginTop:20}}>
+          {/* Итоги */}
+          <div style={{background: result.approved?'#f0fdf4':'#fef2f2',
+            border:`1.5px solid ${result.approved?'#86efac':'#fecaca'}`,
+            borderRadius:14,padding:16,marginBottom:14}}>
+            <div style={{fontWeight:800,fontSize:15,marginBottom:10,
+              color: result.approved?'#16a34a':'#dc2626'}}>
+              {result.approved ? '✅ Одобрение возможно' : '❌ Одобрение невозможно'}
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8}}>
+              {[
+                ['Суммарный доход', fmtMoney(result.totalIncome)],
+                ['Макс. платёж',    fmtMoney(result.maxPayment)],
+                ['КД',              fmtKd(result.kd)],
+                ['ПМ × чел.',       fmtMoney(result.pm)],
+                ['Метод 1 (КД)',    fmtMoney(result.method1)],
+                ['Метод 2 (ПМ)',    fmtMoney(result.method2)],
+              ].map(([l,v]) => (
+                <div key={l} style={{background:'rgba(255,255,255,.7)',borderRadius:9,padding:'8px 10px'}}>
+                  <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',fontWeight:700,marginBottom:2}}>{l}</div>
+                  <div style={{fontSize:13,fontWeight:800,color:'#0f172a'}}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* По программам */}
+          {result.allPrograms?.length > 0 && (
+            <>
+              <div style={{fontWeight:800,fontSize:13,marginBottom:10}}>🏠 Максимальная сумма по программам</div>
+              {result.allPrograms.map(p => (
+                <div key={p.key} style={{display:'flex',alignItems:'center',gap:10,padding:'11px 14px',
+                  border:'1.5px solid #e2e8f0',borderRadius:11,marginBottom:7,background:'#fff'}}>
+                  <span style={{fontSize:22}}>{p.icon}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:13}}>{p.name}</div>
+                    <div style={{fontSize:11,color:'#64748b'}}>
+                      Взнос {Math.round(p.downRatio*100)}% = {fmtMoney(p.downPayment)}
+                    </div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontWeight:900,fontSize:15,color:'#3b82f6'}}>{fmtMoney(p.maxPrice)}</div>
+                    <div style={{fontSize:10,color:'#94a3b8'}}>цена квартиры</div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── ВКЛАДКА: ОПВ ───────────────────────────────────────────────────────────
+function CalcOpvTab({ doCalc }) {
+  const [mode,    setMode]    = useState('var')
+  const [opvStr,  setOpvStr]  = useState('')
+  const [target,  setTarget]  = useState('')
+  const [income,  setIncome]  = useState('')
+  const [months,  setMonths]  = useState('6')
+  const [result,  setResult]  = useState(null)
+
+  async function calc() {
+    let res
+    if (mode === 'var') {
+      const opv12 = opvStr.split(/[,;\n\s]+/).map(Number).filter(v => v > 0)
+      res = await doCalc('opv_var', { opv12, target: +target })
+    } else {
+      res = await doCalc('opv_eq', { income: +income, months: +months })
+    }
+    if (res?.ok) setResult(res)
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {[['var','По истории ОПВ'],['eq','Равномерный']].map(([m,l]) => (
+          <button key={m} onClick={()=>{setMode(m);setResult(null)}}
+            style={{flex:1,padding:'9px 0',borderRadius:10,border:'2px solid',fontFamily:'inherit',fontSize:13,fontWeight:700,cursor:'pointer',
+              borderColor:mode===m?'#3b82f6':'#e2e8f0',
+              background: mode===m?'#eff6ff':'#f8fafc',
+              color:      mode===m?'#3b82f6':'#64748b'}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'var' ? (
+        <>
+          <div className="fi">
+            <div className="fl">ОПВ за последние месяцы (через запятую или с новой строки)</div>
+            <textarea className="inp" rows={3} value={opvStr}
+              onChange={e=>setOpvStr(e.target.value)}
+              placeholder="23500, 28000, 31000, 29500, 27000, 25000"/>
+          </div>
+          <div className="fi">
+            <div className="fl">Целевая средняя ЗП (опционально)</div>
+            <input className="inp" type="number" value={target} onChange={e=>setTarget(e.target.value)} placeholder="300 000"/>
+          </div>
+        </>
+      ) : (
+        <div className="r2">
+          <div className="fi">
+            <div className="fl">Нужный доход (₸)</div>
+            <input className="inp" type="number" value={income} onChange={e=>setIncome(e.target.value)} placeholder="300 000"/>
+          </div>
+          <div className="fi">
+            <div className="fl">Срок (месяцев)</div>
+            <select className="inp" value={months} onChange={e=>setMonths(e.target.value)}>
+              {[3,4,5,6].map(n=><option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+
+      <button className="btn btn-primary btn-block btn-lg" onClick={calc}>
+        <i className="ti ti-chart-bar" style={{fontSize:17}}/> Рассчитать ОПВ
+      </button>
+
+      {result && (
+        <div style={{marginTop:20}}>
+          {result.avgSalary > 0 && (
+            <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:14,padding:16,marginBottom:14,textAlign:'center'}}>
+              <div style={{fontSize:11,color:'#3b82f6',fontWeight:700,textTransform:'uppercase',letterSpacing:.05,marginBottom:4}}>
+                {mode==='var'?'Средняя ЗП по ОПВ':'Нужная ЗП'}
+              </div>
+              <div style={{fontSize:28,fontWeight:900,color:'#1d4ed8',letterSpacing:-1}}>
+                {fmtMoney(result.avgSalary)}
+              </div>
+            </div>
+          )}
+
+          {mode === 'eq' && result.payments?.length > 0 && (
+            <div style={{border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:14}}>
+              <div style={{background:'#f8fafc',padding:'10px 14px',fontWeight:700,fontSize:12,color:'#64748b',borderBottom:'1px solid #e2e8f0'}}>
+                📅 ПЛАН ПЛАТЕЖЕЙ ОПВ
+              </div>
+              {result.payments.map((p, i) => (
+                <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'10px 14px',
+                  borderBottom: i<result.payments.length-1?'1px solid #f1f5f9':'none'}}>
+                  <span style={{fontSize:13,color:'#64748b'}}>Месяц {i+1}</span>
+                  <span style={{fontSize:14,fontWeight:800,color:'#0f172a'}}>{fmtMoney(p)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {result.targetPlan?.length > 0 && (
+            <div>
+              <div style={{fontWeight:800,fontSize:13,marginBottom:10}}>📈 Сколько нужно ОПВ для достижения цели</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
+                {result.targetPlan.map(p => p.opvPerMonth > 0 && (
+                  <div key={p.months} style={{border:'1.5px solid #e2e8f0',borderRadius:11,padding:'11px',textAlign:'center',background:'#f8fafc'}}>
+                    <div style={{fontSize:10,color:'#64748b',fontWeight:700,marginBottom:4}}>ЗА {p.months} МЕС.</div>
+                    <div style={{fontSize:16,fontWeight:900,color:'#3b82f6'}}>{fmtMoney(p.opvPerMonth)}</div>
+                    <div style={{fontSize:10,color:'#94a3b8',marginTop:2}}>ОПВ в месяц</div>
+                    <div style={{fontSize:10,color:'#10b981',marginTop:4,fontWeight:700}}>→ {fmtMoney(p.achieved)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── ВКЛАДКА: БУХГАЛТЕР ─────────────────────────────────────────────────────
+function CalcTaxTab({ doCalc }) {
+  const [type,    setType]    = useState('Трудовой')
+  const [salary,  setSalary]  = useState('')
+  const [result,  setResult]  = useState(null)
+
+  async function calc() {
+    const res = await doCalc('buh', { type, salary: +salary })
+    if (res?.ok) setResult(res)
+  }
+
+  return (
+    <div>
+      <div style={{background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:12,padding:'11px 14px',marginBottom:16,fontSize:13,color:'#92400e'}}>
+        <i className="ti ti-info-circle" style={{marginRight:6}}/>
+        Расчёт налогов и отчислений для менеджера — чтобы объяснить клиенту что нужно платить бухгалтеру
+      </div>
+
+      <div className="r2">
+        <div className="fi">
+          <div className="fl">Тип договора</div>
+          <select className="inp" value={type} onChange={e=>{setType(e.target.value);setResult(null)}}>
+            <option value="Трудовой">Трудовой договор</option>
+            <option value="ГПХ">ГПХ</option>
+          </select>
+        </div>
+        <div className="fi">
+          <div className="fl">Зарплата/доход (₸)</div>
+          <input className="inp" type="number" value={salary} onChange={e=>{setSalary(e.target.value);setResult(null)}} placeholder="300 000" onKeyDown={e=>e.key==='Enter'&&calc()}/>
+        </div>
+      </div>
+
+      <button className="btn btn-primary btn-block btn-lg" onClick={calc}>
+        <i className="ti ti-receipt" style={{fontSize:17}}/> Рассчитать налоги
+      </button>
+
+      {result?.breakdown && (
+        <div style={{marginTop:20,border:'1.5px solid #e2e8f0',borderRadius:14,overflow:'hidden'}}>
+          <div style={{background:'#f8fafc',padding:'11px 16px',fontWeight:700,fontSize:12,color:'#64748b',
+            borderBottom:'1.5px solid #e2e8f0',display:'flex',justifyContent:'space-between'}}>
+            <span>🧾 РАСЧЁТ ОТЧИСЛЕНИЙ — {type.toUpperCase()}</span>
+            <span style={{color:'#3b82f6'}}>{fmtMoney(+salary)}</span>
+          </div>
+          {result.breakdown.filter(r => r.val !== null).map((row, i) => (
+            <div key={i} style={{
+              display:'flex',justifyContent:'space-between',alignItems:'center',
+              padding:'12px 16px',
+              borderBottom: !row.isTotal ? '1px solid #f1f5f9' : 'none',
+              background: row.isTotal ? '#0f172a' : i%2===0?'#fff':'#fafafa',
+            }}>
+              <span style={{fontSize:13,color: row.isTotal?'#f8fafc':'#374151',fontWeight: row.isTotal?800:500}}>
+                {row.label}
+              </span>
+              <span style={{fontSize:14,fontWeight:800,color: row.isTotal?'#34d399':'#0f172a'}}>
+                {fmtMoney(row.val)}
+              </span>
+            </div>
+          ))}
+          <div style={{background:'#f0fdf4',padding:'10px 16px',fontSize:11,color:'#16a34a',fontWeight:600,borderTop:'1px solid #dcfce7'}}>
+            <i className="ti ti-bulb" style={{marginRight:5}}/>
+            ОПВ = {fmtMoney(Math.round(+salary*0.10))} → это сумма для расчёта средней ЗП
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -23,8 +23,15 @@ export default withAuth(async function handler(req, res) {
   }
 
   // Загружаем всё нужное параллельно
+  // Для периода 'all' ограничиваем 36 месяцами
+  const kpiLimit = period === 'all' ? (() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 36); return d.toISOString().split('T')[0]
+  })() : dateFrom
+
   const [clientsRes, managersRes] = await Promise.all([
-    sb.from('clients').select('id, manager, stage, contract_type, contract_amount, payments, tasks, created_at'),
+    sb.from('clients')
+      .select('id, manager, stage, contract_type, contract_amount, payments, tasks, created_at')
+      .gte('created_at', kpiLimit),
     sb.from('managers').select('*').eq('active', true),
   ])
 

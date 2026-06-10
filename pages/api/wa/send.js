@@ -64,10 +64,26 @@ export default withAuth(async function handler(req, res) {
       sent_at:   new Date().toISOString(),
     })
 
-    await sb.from('wa_chats').update({
-      last_message:    text,
-      last_message_at: new Date().toISOString(),
-    }).eq('id', waId)
+    // Обновляем чат — upsert создаёт запись если её ещё нет
+    const rawPhone2 = phone.replace(/\D/g, '')
+    const waPhone2  = rawPhone2.startsWith('7') ? rawPhone2 : '7' + rawPhone2
+    const { data: existChat } = await sb.from('wa_chats').select('id').eq('id', waId).maybeSingle()
+    if (existChat) {
+      await sb.from('wa_chats').update({
+        last_message:    text,
+        last_message_at: new Date().toISOString(),
+      }).eq('id', waId)
+    } else {
+      await sb.from('wa_chats').insert({
+        id:              waId,
+        phone:           '+' + waPhone2,
+        name:            '+' + waPhone2,
+        last_message:    text,
+        last_message_at: new Date().toISOString(),
+        unread_count:    0,
+        status:          'new',
+      })
+    }
 
     return res.status(200).json({
       ok:        true,

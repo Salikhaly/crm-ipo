@@ -8,15 +8,20 @@ export default withAuth(async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Только GET' })
 
   const sb = getSupabase()
-  const { role, mid } = req.user
+  const { role, manager_id: mid } = req.user
   const today = new Date().toISOString().split('T')[0]
   const now   = new Date()
   const moStart = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`
 
   // Строим запрос с учётом роли
+  // Ограничиваем выборку последними 24 месяцами для производительности
+  const dashDateFrom = new Date()
+  dashDateFrom.setMonth(dashDateFrom.getMonth() - 24)
+  const dashFrom = dashDateFrom.toISOString().split('T')[0]
+
   let query = sb.from('clients').select(
     'id, manager, stage, contract_type, contract_amount, payments, tasks, created_at, is_whatsapp'
-  )
+  ).gte('created_at', dashFrom)
   if (role === 'manager' && mid) query = query.eq('manager', mid)
 
   const [clientsRes, managersRes, waChatsRes] = await Promise.all([

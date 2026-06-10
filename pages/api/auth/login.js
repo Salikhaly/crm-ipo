@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     .from('users')
     .select('*')
     .eq('login', login.trim().toLowerCase())
-    .single()
+    .maybeSingle()  // null если не найден, не бросает PGRST116
 
   // Constant-time: даже если пользователь не найден — делаем compare чтобы время было одинаковым
   const dummyHash = '$2a$12$dummy.hash.to.prevent.timing.attacks.xxxxxxxxxxxxxxxxxxxx'
@@ -44,11 +44,11 @@ export default async function handler(req, res) {
   }
 
   const token = signToken({
-    id:    user.id,
-    name:  user.name,
-    role:  user.role,
-    mid:   user.manager_id,
-    login: user.login,
+    id:         user.id,
+    name:       user.name,
+    role:       user.role,
+    manager_id: user.manager_id,
+    login:      user.login,
   })
 
   return res.status(200).json({
@@ -57,7 +57,7 @@ export default async function handler(req, res) {
       id:    user.id,
       name:  user.name,
       role:  user.role,
-      mid:   user.manager_id,
+      manager_id: user.manager_id,
       login: user.login,
     },
   })

@@ -12,9 +12,13 @@ function escapeLike(s) {
 
 export default withAuth(async function handler(req, res) {
   const sb = getSupabase()
-  const { role, mid } = req.user
+  const { role, manager_id: mid } = req.user
 
   if (req.method === 'GET') {
+    // Пагинация: по умолчанию 200 записей (Vercel limit protection)
+    const PAGE_SIZE = 200
+    const page = Math.max(0, parseInt(req.query.page || '0'))
+
     let query = sb.from('clients').select('*').order('created_at', { ascending: false })
 
     // Менеджер видит только своих клиентов
@@ -30,10 +34,20 @@ export default withAuth(async function handler(req, res) {
       `fio.ilike.%${escapeLike(search)}%,phone.ilike.%${escapeLike(search)}%,iin.ilike.%${escapeLike(search)}%`
     )
 
-    const { data, error } = await query
+    // Применяем пагинацию
+    const from = page * PAGE_SIZE
+    const to   = from + PAGE_SIZE - 1
+    query = query.range(from, to)
+
+    const { data, error, count } = await query
 
     if (error) return res.status(500).json({ error: error.message })
-    return res.status(200).json({ clients: data.map(dbToClient) })
+    return res.status(200).json({
+      clients:  data.map(dbToClient),
+      page,
+      pageSize: PAGE_SIZE,
+      hasMore:  data.length === PAGE_SIZE,
+    })
   }
 
   if (req.method === 'POST') {

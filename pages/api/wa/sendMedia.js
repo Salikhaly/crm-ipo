@@ -36,6 +36,7 @@ export default withAuth(async function handler(req, res) {
 
     // Base64
     const fileData   = fs.readFileSync(file.filepath)
+    fs.unlink(file.filepath, () => {})   // удаляем временный файл сразу после прочтения
     const base64File = fileData.toString('base64')
     const fileName   = file.originalFilename || 'file'
     const mimeType   = file.mimetype || 'application/octet-stream'
