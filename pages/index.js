@@ -251,11 +251,40 @@ export default function CRM() {
   }
 
   // ─── LOAD DATA ───────────────────────────────────────────
+  // ─── SWIPE NAVIGATION (mobile) ──────────────────────────
+  const swipeStartX  = useRef(null)
+  const swipeStartY  = useRef(null)
+  const PAGE_ORDER   = ['dashboard','clients','wa','calc','tasks','kpi']
+
+  const onSwipeTouchStart = useCallback((e) => {
+    swipeStartX.current = e.touches[0].clientX
+    swipeStartY.current = e.touches[0].clientY
+  }, [])
+
+  const onSwipeTouchEnd = useCallback((e) => {
+    if (swipeStartX.current === null) return
+    const dx = e.changedTouches[0].clientX - swipeStartX.current
+    const dy = e.changedTouches[0].clientY - swipeStartY.current
+    swipeStartX.current = null
+    if (Math.abs(dx) < 70 || Math.abs(dy) > 50) return
+    setPage(prev => {
+      const idx = PAGE_ORDER.indexOf(prev)
+      if (idx === -1) return prev
+      if (dx < 0 && idx < PAGE_ORDER.length - 1) return PAGE_ORDER[idx + 1]
+      if (dx > 0 && idx > 0)                     return PAGE_ORDER[idx - 1]
+      return prev
+    })
+  }, [])
+
   const loadAll = useCallback(async () => {
     setSyncing(true)
     try {
+      // Менеджер получает только своих клиентов через API
+      const clientParams = user?.role === 'manager' && user?.manager_id
+        ? { manager: user.manager_id }
+        : {}
       const [cRes, mRes, uRes, plRes, clRes] = await Promise.all([
-        api.getClients(),
+        api.getClients(clientParams),
         api.getManagers(),
         api.getUsers().catch(() => ({ users: [] })),
         api.getPipeline(),
@@ -833,13 +862,13 @@ export default function CRM() {
           </div>
 
           {/* Page content */}
-          <div className="main-content">
+          <div className="main-content" ref={swipeRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient}/>}
             {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')}/>}
             {page==='wa'        && <WAPage chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
-            {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)}/>}
+            {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod}/>}
             {page==='admin'     && isAdmin && <AdminPage managers={managers} pipeline={pipeline} checklists={checklists} users={users} onSaveMgr={saveMgr} onDelMgr={delMgr} onSaveUser={saveUser} onDelUser={delUser} onSavePL={savePL} onSaveCL={saveCL} onModal={setModal} reload={loadAll} syncing={syncing}/>}
           </div>
@@ -847,6 +876,19 @@ export default function CRM() {
       </div>
 
       {/* Bottom nav (mobile) */}
+      {/* Swipe page indicator — mobile only */}
+      <div style={{display:'none',justifyContent:'center',gap:6,padding:'5px 0',
+        background:'#f8fafc',borderTop:'1px solid #e2e8f0',
+        position:'fixed',bottom:62,left:0,right:0,zIndex:199}}
+        className="swipe-dots-bar">
+        <style>{`.swipe-dots-bar{display:none!important}@media(max-width:768px){.swipe-dots-bar{display:flex!important}}`}</style>
+        {['dashboard','clients','wa','calc','tasks','kpi'].map((p,i)=>(
+          <div key={p} onClick={()=>setPage(p)} style={{
+            width: page===p?18:6, height:6, borderRadius:3, cursor:'pointer', transition:'all .2s',
+            background: page===p?'#3b82f6':'#cbd5e1',
+          }}/>
+        ))}
+      </div>
       <BottomNav page={page} navTo={navTo} openTasks={openTasks} overdueTasks={overdueTasks} waUnread={waUnread}/>
 
       {/* Modals */}
@@ -2046,9 +2088,30 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
 WAPage = React.memo(WAPage)
 
 // ─── TASKS PAGE ──────────────────────────────────────────────────
-function TasksPage({ clients, managers, onOpen }) {
-  // Stable today ref — computed once per render, not 3x
-  const todayStr = today()
+function TasksPage({ clients, managers, onOpen, user, onSave }) {
+  const todayStr  = today()
+  const [showNew, setShowNew] = useState(false)
+  const [newTask, setNewTask] = useState({ text:'', due:'', clientId:'', note:'' })
+
+  function createTask() {
+    if (!newTask.text.trim()) return
+    if (!newTask.clientId)    return
+    const client = clients.find(c => c.id === newTask.clientId)
+    if (!client) return
+    const task = {
+      id:         'task_' + Date.now(),
+      text:       newTask.text.trim(),
+      due:        newTask.due || '',
+      note:       newTask.note || '',
+      done:       false,
+      assignedTo: user?.manager_id || '',
+      createdAt:  new Date().toISOString().slice(0,10),
+    }
+    onSave && onSave({ ...client, tasks: [...(client.tasks||[]), task] })
+    setShowNew(false)
+    setNewTask({ text:'', due:'', clientId:'', note:'' })
+  }
+
   // Memoize: 5 array passes on clients — only recompute when clients change
   const { all, open, overdue, todayT, rest, done } = useMemo(() => {
     const td  = todayStr
