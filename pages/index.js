@@ -2446,6 +2446,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
   const [autoBanner, setAutoBanner] = useState(null)
   const [isDirty,    setIsDirty]    = useState(false)
   const [showCalc,   setShowCalc]   = useState(false)
+  const [showStageDrawer, setShowStageDrawer] = useState(false)
   const canEdit = user.role !== 'qa'
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
@@ -2506,8 +2507,18 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
       </Head>
       <div className="client-detail" style={{display:'flex',minHeight:'100vh',fontFamily:"'Inter',system-ui,sans-serif"}}>
+        {/* Затемнение под выезжающей панелью — мобильный */}
+        {showStageDrawer && (
+          <div onClick={()=>setShowStageDrawer(false)}
+            style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:998}}/>
+        )}
         {/* Sidebar */}
-        <div style={{width:220,background:'#0f172a',display:'flex',flexDirection:'column',position:'sticky',top:0,height:'100vh',overflowY:'auto',flexShrink:0}}>
+        <div className={"sidebar" + (showStageDrawer ? " mobile-open" : "")} style={{width:220,background:'#0f172a',display:'flex',flexDirection:'column',position:'sticky',top:0,height:'100vh',overflowY:'auto',flexShrink:0}}>
+          {/* Кнопка закрытия — только мобильный */}
+          <button className="sidebar-close-mobile" onClick={()=>setShowStageDrawer(false)}
+            style={{display:'none',position:'absolute',top:10,right:10,width:32,height:32,borderRadius:8,border:'none',background:'rgba(255,255,255,.08)',color:'#fff',fontSize:18,cursor:'pointer',alignItems:'center',justifyContent:'center',zIndex:10}}>
+            ×
+          </button>
           <div style={{padding:'16px 15px 13px',borderBottom:'1px solid rgba(255,255,255,.07)'}}>
             <div style={{fontSize:20,marginBottom:4}}>🏠</div>
             <div style={{fontSize:14,fontWeight:800,color:'#fff'}}>Ипотека CRM</div>
@@ -2543,6 +2554,10 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
         <div className="main-area">
           <div className="topbar">
             <Btn size="sm" onClick={onBack}><i className="ti ti-arrow-left"/><span className="btn-text-desktop">Назад</span></Btn>
+            <button className="stage-drawer-toggle" onClick={()=>setShowStageDrawer(true)}
+              style={{display:'none',width:36,height:36,borderRadius:9,border:'1.5px solid #e2e8f0',background:'#f8fafc',color:'#64748b',cursor:'pointer',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <i className="ti ti-list-details" style={{fontSize:17}}/>
+            </button>
             <div className="topbar-title" style={{fontSize:15}}>
               {c.fio||'Клиент'}
               {isDirty && <span style={{fontSize:10,color:'#f59e0b',marginLeft:6,fontWeight:600}}>●</span>}

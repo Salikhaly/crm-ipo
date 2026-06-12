@@ -234,7 +234,25 @@ tbody tr:active td{background:#f8fafc}
   .wa-client-panel{display:none}
 
   /* Client detail: hide sidebar on mobile */
-  .client-detail .sidebar{display:none!important}
+  /* Client detail: sidebar становится выезжающим drawer'ом */
+  .client-detail .sidebar{
+    display:flex!important;
+    position:fixed!important;
+    top:0; left:0; height:100dvh!important;
+    transform:translateX(-100%);
+    transition:transform .25s cubic-bezier(.4,0,.2,1);
+    z-index:999;
+    box-shadow:4px 0 24px rgba(0,0,0,.25);
+  }
+  .client-detail .sidebar.mobile-open{
+    transform:translateX(0);
+  }
+  .client-detail .sidebar-close-mobile{
+    display:flex!important;
+  }
+  .client-detail .stage-drawer-toggle{
+    display:flex!important;
+  }
   .client-detail .main-area{width:100%}
 
   /* Table */
