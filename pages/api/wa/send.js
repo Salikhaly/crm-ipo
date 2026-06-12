@@ -20,9 +20,9 @@ export default withAuth(async function handler(req, res) {
   const GREEN_ID    = process.env.GREEN_API_ID
   const GREEN_TOKEN = process.env.GREEN_API_TOKEN
 
-  if (!GREEN_ID || !GREEN_TOKEN) {
-    return res.status(500).json({
-      error: 'GREEN_API_ID и GREEN_API_TOKEN не настроены в переменных окружения'
+  if (!GREEN_ID || !GREEN_TOKEN || GREEN_ID === 'placeholder' || GREEN_TOKEN === 'placeholder') {
+    return res.status(503).json({
+      error: 'WhatsApp не подключён. Обратитесь к администратору для настройки Green API.'
     })
   }
 

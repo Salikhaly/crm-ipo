@@ -457,11 +457,19 @@ export default function CRM() {
     if (c.iin && !/^\d{12}$/.test(c.iin)) {
       toast$('❌ ИИН должен содержать ровно 12 цифр', 'err'); return
     }
-    // Проверка на дубликат по ИИН (если ИИН заполнен)
+    // Проверка дубля по ИИН
     if (c.iin) {
-      const duplicate = clients.find(x => x.id !== c.id && x.iin === c.iin)
-      if (duplicate) {
-        toast$(`⚠️ Клиент с ИИН ${c.iin} уже существует: ${duplicate.fio}`, 'err'); return
+      const dup = clients.find(x => x.id !== c.id && x.iin === c.iin)
+      if (dup) {
+        toast$(`⚠️ ИИН уже есть у клиента: ${dup.fio || dup.phone}`, 'err'); return
+      }
+    }
+    // Проверка дубля по телефону (при создании нового)
+    if (c.phone && !clients.find(x => x.id === c.id)) {
+      const phone = c.phone.replace(/\D/g, '')
+      const dup = clients.find(x => x.phone && x.phone.replace(/\D/g,'') === phone)
+      if (dup) {
+        toast$(`⚠️ Телефон уже есть у клиента: ${dup.fio || dup.phone}`, 'err'); return
       }
     }
     setSyncing(true)
@@ -862,7 +870,7 @@ export default function CRM() {
           </div>
 
           {/* Page content */}
-          <div className="main-content" ref={swipeRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+          <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient}/>}
             {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')}/>}
@@ -2436,7 +2444,8 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
   const [tab,    setTab]    = useState('profile')
   const [accIdx, setAccIdx] = useState(c.accompStageIndex||0)
   const [autoBanner, setAutoBanner] = useState(null)
-  const [isDirty, setIsDirty] = useState(false)
+  const [isDirty,    setIsDirty]    = useState(false)
+  const [showCalc,   setShowCalc]   = useState(false)
   const canEdit = user.role !== 'qa'
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
@@ -2484,6 +2493,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
     {id:'tasks',    l:`✅ Задачи (${(c.tasks||[]).filter(t=>!t.done).length})`},
     {id:'history',  l:`💬 История (${(c.comments||[]).length})`},
     {id:'drive',    l:'📁 Файлы'},
+    {id:'calc',     l:'🧮 Калькулятор'},
   ]
 
   const stageColor = stageObj?.c || '#3b82f6'
@@ -2603,6 +2613,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
                 {tab==='tasks'    && <TasksTabC   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user} canEdit={canEdit}/>}
                 {tab==='history'  && <HistoryTab  c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
                 {tab==='drive'    && <DriveTab     c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
+                {tab==='calc'     && <ClientCalcTab c={c} user={user} toast$={toast$}/>}
               </div>
             </div>
           </div>
@@ -4272,6 +4283,284 @@ function CalcTaxTab({ doCalc }) {
             <i className="ti ti-bulb" style={{marginRight:5}}/>
             ОПВ = {fmtMoney(Math.round(+salary*0.10))} → это сумма для расчёта средней ЗП
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════
+//  КАЛЬКУЛЯТОР В КАРТОЧКЕ КЛИЕНТА
+//  Данные клиента подставляются автоматически
+// ════════════════════════════════════════════════════════════════
+function ClientCalcTab({ c, user, toast$ }) {
+  const [program,  setProgram]  = useState('nauryz20')
+  const [price,    setPrice]    = useState(c.contractAmount > 0 ? String(c.contractAmount) : '')
+  const [salary,   setSalary]   = useState(c.officialIncome || '')
+  const [oldCred,  setOldCred]  = useState(c.monthlyLoad || '')
+  const [members,  setMembers]  = useState('1')
+  const [mode,     setMode]     = useState('price')
+  const [result,   setResult]   = useState(null)
+  const [busy,     setBusy]     = useState(false)
+  const [sending,  setSending]  = useState(false)
+
+  // Считаем суммарный доход (основной + доп)
+  const totalIncome = (+(c.officialIncome)||0) + (+(c.extraIncomeConfirmed ? c.extraIncome : 0)||0)
+
+  async function calc() {
+    setBusy(true)
+    setResult(null)
+    try {
+      let res
+      if (mode === 'price') {
+        res = await api.calc('mortgage_by_price', {
+          program,
+          price:   +price,
+          members: +members,
+          orgs:    [{ income: totalIncome || +salary, oldCredit: +oldCred }],
+        })
+      } else {
+        res = await api.calc('mortgage_by_salary', {
+          program,
+          salary:    totalIncome || +salary,
+          members:   +members,
+          oldCredit: +oldCred,
+        })
+      }
+      if (res?.ok) setResult(res)
+      else toast$('❌ ' + (res?.message || 'Ошибка расчёта'), 'err')
+    } catch(e) {
+      toast$('❌ ' + e.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Форматирует результат в красивое WA сообщение
+  function buildWaMsg(result) {
+    const prog = PROGRAMS.find(p => p.key === program)
+    const name = c.fio?.split(' ')[0] || 'Уважаемый клиент'
+
+    if (mode === 'salary' && result.approved) {
+      return `Здравствуйте, ${name}! 🏠
+
+По программе *${prog?.name || program}*:
+
+✅ Максимальная стоимость квартиры: *${fmtMoney(result.maxPrice)}*
+💰 Первоначальный взнос: *${fmtMoney(result.down)}*
+🏦 Сумма займа: *${fmtMoney(result.maxLoan)}*
+📅 Ежемесячный платёж: *${fmtMoney(result.payment)}*
+
+Расчёт подготовил: ${user?.name || 'Менеджер'}`
+    }
+
+    if (mode === 'price' && result.variantsByPrice?.length) {
+      const v = result.variantsByPrice[0]
+      return `Здравствуйте, ${name}! 🏠
+
+Расчёт по квартире *${fmtMoney(+price)}*
+Программа: *${prog?.name || program}*
+
+💵 Первоначальный взнос: *${fmtMoney(v.downPayment)}*
+🏦 Сумма займа: *${fmtMoney(v.loanAmount)}*
+📅 Платёж: *${fmtMoney(v.monthly)}* / мес
+📊 Нужный доход: *${fmtMoney(v.requiredSalary)}*
+
+По вопросам звоните! 🙏
+${user?.name || 'Менеджер'}`
+    }
+
+    return ''
+  }
+
+  async function sendToWA() {
+    if (!result) return
+    const msg = buildWaMsg(result)
+    if (!msg) return
+    // Находим WA чат клиента по телефону
+    const phone = c.phone?.replace(/\D/g, '')
+    if (!phone) { toast$('⚠️ У клиента не указан телефон', 'err'); return }
+    setSending(true)
+    try {
+      await api.sendWaMessage(null, phone, msg, user?.name || 'CRM')
+      toast$('✅ Расчёт отправлен клиенту в WhatsApp')
+    } catch(e) {
+      toast$('❌ Ошибка отправки: ' + e.message, 'err')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const prog = PROGRAMS.find(p => p.key === program)
+
+  return (
+    <div>
+      {/* Инфо из карточки */}
+      {(totalIncome > 0 || c.monthlyLoad) && (
+        <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:12,padding:'10px 14px',marginBottom:14,fontSize:13}}>
+          <div style={{fontWeight:700,color:'#15803d',marginBottom:5}}>📋 Данные из карточки клиента</div>
+          <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+            {totalIncome > 0 && <span style={{color:'#374151'}}>Доход: <b>{fmtMoney(totalIncome)}</b></span>}
+            {c.monthlyLoad  && <span style={{color:'#374151'}}>Кредиты: <b>{fmtMoney(+c.monthlyLoad)}</b></span>}
+            {c.contractAmount > 0 && <span style={{color:'#374151'}}>Договор: <b>{fmtMoney(+c.contractAmount)}</b></span>}
+          </div>
+        </div>
+      )}
+
+      {/* Режим */}
+      <div style={{display:'flex',gap:8,marginBottom:14}}>
+        {[['price','По цене'],['salary','По зарплате']].map(([m,l]) => (
+          <button key={m} onClick={()=>{setMode(m);setResult(null)}}
+            style={{flex:1,padding:'9px 0',borderRadius:10,border:'2px solid',fontFamily:'inherit',fontSize:13,fontWeight:700,cursor:'pointer',transition:'all .15s',
+              borderColor:mode===m?'#3b82f6':'#e2e8f0',
+              background: mode===m?'#eff6ff':'#f8fafc',
+              color:      mode===m?'#3b82f6':'#64748b'}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* Программа */}
+      <div className="fi">
+        <div className="fl">Программа</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6}}>
+          {PROGRAMS.map(p => (
+            <button key={p.key} onClick={()=>{setProgram(p.key);setResult(null)}}
+              style={{padding:'7px 5px',borderRadius:9,border:'2px solid',fontFamily:'inherit',fontSize:11,fontWeight:700,cursor:'pointer',textAlign:'center',transition:'all .15s',
+                borderColor:program===p.key?'#3b82f6':'#e2e8f0',
+                background: program===p.key?'#eff6ff':'#f8fafc',
+                color:      program===p.key?'#3b82f6':'#374151'}}>
+              <div style={{fontSize:16,marginBottom:2}}>{p.icon}</div>
+              <div style={{fontSize:10,lineHeight:1.2}}>{p.name}</div>
+              <div style={{fontSize:9,color:program===p.key?'#93c5fd':'#94a3b8',marginTop:1}}>Взнос {Math.round(p.downRatio*100)}%</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="r2">
+        {mode==='price' && (
+          <div className="fi">
+            <div className="fl">Цена квартиры (₸)</div>
+            <input className="inp" type="number" value={price}
+              onChange={e=>setPrice(e.target.value)}
+              placeholder="25 000 000"/>
+          </div>
+        )}
+        <div className="fi">
+          <div className="fl">Доход (₸) {totalIncome>0?'— из карточки':''}</div>
+          <input className="inp" type="number"
+            value={totalIncome > 0 ? totalIncome : salary}
+            onChange={e=>setSalary(e.target.value)}
+            readOnly={totalIncome > 0}
+            style={totalIncome>0?{background:'#f0fdf4',borderColor:'#86efac'}:{}}
+            placeholder="300 000"/>
+        </div>
+        <div className="fi">
+          <div className="fl">Текущие кредиты/мес (₸)</div>
+          <input className="inp" type="number" value={oldCred}
+            onChange={e=>setOldCred(e.target.value)}
+            placeholder="0"/>
+        </div>
+        <div className="fi">
+          <div className="fl">Заёмщиков</div>
+          <select className="inp" value={members} onChange={e=>setMembers(e.target.value)}>
+            {[1,2,3,4].map(n=><option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <button className="btn btn-primary btn-block btn-lg" onClick={calc} disabled={busy}
+        style={{marginTop:4,marginBottom:result?12:0}}>
+        {busy
+          ? <><i className="ti ti-loader-2 spin" style={{fontSize:17}}/> Считаю...</>
+          : <><i className="ti ti-calculator" style={{fontSize:17}}/> Рассчитать</>}
+      </button>
+
+      {/* РЕЗУЛЬТАТ */}
+      {result?.ok && (
+        <div>
+          {/* Основной результат */}
+          {mode==='salary' && result.approved && (
+            <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:14,padding:16,marginBottom:10}}>
+              <div style={{fontWeight:800,fontSize:14,color:'#15803d',marginBottom:10}}>
+                ✅ {prog?.icon} {prog?.name} — одобрение возможно
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                {[
+                  ['Цена квартиры',  fmtMoney(result.maxPrice)],
+                  ['Первый взнос',   fmtMoney(result.down)],
+                  ['Сумма займа',    fmtMoney(result.maxLoan)],
+                  ['Платёж / мес',   fmtMoney(result.payment)],
+                ].map(([l,v]) => (
+                  <div key={l} style={{background:'#fff',borderRadius:9,padding:'9px 11px'}}>
+                    <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',fontWeight:700,marginBottom:2}}>{l}</div>
+                    <div style={{fontSize:14,fontWeight:800,color:'#0f172a'}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode==='salary' && !result.approved && (
+            <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:14,padding:16,marginBottom:10,textAlign:'center'}}>
+              <div style={{fontSize:28,marginBottom:6}}>😔</div>
+              <div style={{fontWeight:800,color:'#dc2626',marginBottom:4}}>Одобрение невозможно</div>
+              <div style={{fontSize:12,color:'#64748b'}}>
+                Доход {fmtMoney(result.totalIncome)} недостаточен<br/>
+                М1: {fmtMoney(result.method1)} · М2: {fmtMoney(result.method2)}
+              </div>
+            </div>
+          )}
+
+          {mode==='price' && result.variantsByPrice?.map((v,i) => (
+            <div key={i} style={{border:'1.5px solid',borderRadius:12,padding:13,marginBottom:8,
+              borderColor:v.canAfford?'#86efac':'#fecaca',
+              background: v.canAfford?'#f0fdf4':'#fff7f7'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <div style={{fontWeight:700,fontSize:13}}>{v.label}</div>
+                <span style={{fontSize:11,fontWeight:700,padding:'3px 9px',borderRadius:20,
+                  background:v.canAfford?'#dcfce7':'#fee2e2',
+                  color:     v.canAfford?'#16a34a':'#dc2626'}}>
+                  {v.canAfford?'✅ Доступно':'❌ Не хватает'}
+                </span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7}}>
+                {[
+                  ['Платёж / мес',   fmtMoney(v.monthly)],
+                  ['Первый взнос',   fmtMoney(v.downPayment)],
+                  ['Сумма займа',    fmtMoney(v.loanAmount)],
+                  ['Нужна ЗП',       fmtMoney(v.requiredSalary)],
+                ].map(([l,val]) => (
+                  <div key={l} style={{background:'rgba(255,255,255,.7)',borderRadius:8,padding:'7px 9px'}}>
+                    <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',fontWeight:700,marginBottom:2}}>{l}</div>
+                    <div style={{fontSize:13,fontWeight:800}}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {/* Кнопка отправить в WhatsApp */}
+          {c.phone && (
+            <button
+              onClick={sendToWA}
+              disabled={sending}
+              style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+                padding:'12px',borderRadius:12,border:'none',cursor:sending?'not-allowed':'pointer',
+                background: sending ? '#94a3b8' : '#25d366',
+                color:'#fff',fontFamily:'inherit',fontWeight:700,fontSize:14,marginTop:4,transition:'all .15s'}}>
+              {sending
+                ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/> Отправляю...</>
+                : <><i className="ti ti-brand-whatsapp" style={{fontSize:18}}/> Отправить расчёт клиенту в WhatsApp</>
+              }
+            </button>
+          )}
+          {!c.phone && (
+            <div style={{textAlign:'center',fontSize:12,color:'#94a3b8',marginTop:8}}>
+              ⚠️ Укажите телефон в профиле чтобы отправить в WhatsApp
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -45,6 +45,32 @@ const makeRes = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn() })
 beforeEach(() => { jest.clearAllMocks(); fromCallIdx = 0 })
 
 describe('POST /api/wa/send', () => {
+  test('503 если GREEN_API_ID = placeholder', async () => {
+    const origId = process.env.GREEN_API_ID
+    process.env.GREEN_API_ID = 'placeholder'
+    const res = makeRes()
+    await handler({
+      method: 'POST',
+      headers: { authorization: makeToken() },
+      body: { phone: '77001234567', text: 'Тест', author: 'x' },
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(503)
+    process.env.GREEN_API_ID = origId
+  })
+
+  test('503 если GREEN_API_TOKEN = placeholder', async () => {
+    const origToken = process.env.GREEN_API_TOKEN
+    process.env.GREEN_API_TOKEN = 'placeholder'
+    const res = makeRes()
+    await handler({
+      method: 'POST',
+      headers: { authorization: makeToken() },
+      body: { phone: '77001234567', text: 'Тест', author: 'x' },
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(503)
+    process.env.GREEN_API_TOKEN = origToken
+  })
+
   test('405 для GET', async () => {
     const res = makeRes()
     await handler({ method: 'GET', headers: { authorization: makeToken() }, query: {}, body: {} }, res)
