@@ -2978,26 +2978,57 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
     setSD(si, {...sd, tasks:(sd.tasks||[]).map(t=>t.id===tid?{...t,done:!t.done}:t)})
     setC({...c, tasks:(c.tasks||[]).map(t=>t.id===tid?{...t,done:!t.done}:t)})
   }
-  function handleFiles(si, files) {
-    const MAX_DOC = 2 * 1024 * 1024  // 2 МБ — лимит для base64 в JSONB Supabase
-    let added = 0, skipped = 0
-    Array.from(files).forEach(file => {
-      if (file.size > MAX_DOC) { skipped++; return }
-      const reader = new FileReader()
-      reader.onload = e => {
-        const doc = {id:uid(),name:file.name,type:file.type.includes('image')?'photo':'doc',base64:e.target.result,size:file.size,uploadDate:nowStr(),note:'',stage:ACCOMP[si]}
+  const [uploading, setUploading] = useState(false)
+
+  async function handleFiles(si, files) {
+    const MAX_DOC = 20 * 1024 * 1024  // 20 МБ — лимит Google Drive
+    const list = Array.from(files)
+    const tooBig = list.filter(f => f.size > MAX_DOC)
+    const ok     = list.filter(f => f.size <= MAX_DOC)
+
+    if (tooBig.length) {
+      toast$(`⚠️ ${tooBig.length} файл(а) пропущено — больше 20 МБ`, 'err')
+    }
+    if (!ok.length) return
+
+    setUploading(true)
+    let uploaded = 0
+    for (const file of ok) {
+      try {
+        const res = await api.uploadDriveFile(c.id, file, c.driveFolderName || c.fio || '')
+        const doc = {
+          id:           uid(),
+          name:         res.file?.name || file.name,
+          type:         file.type.includes('image') ? 'photo' : 'doc',
+          driveFileId:  res.file?.id,
+          driveLink:    res.file?.webViewLink || res.folderLink,
+          size:         file.size,
+          uploadDate:   nowStr(),
+          note:         '',
+          stage:        ACCOMP[si],
+        }
         const sdCurr = getSD(si)
-        setSD(si, {...sdCurr, docs:[...(sdCurr.docs||[]),doc]})
-        added++
+        setSD(si, {...sdCurr, docs:[...(sdCurr.docs||[]), doc]})
+        // Обновляем ссылку на папку в карточке если её ещё нет
+        if (res.folderLink && !c.driveLink) {
+          setC(prev => ({...prev, driveLink: res.folderLink, driveFolderName: res.folder?.name || prev.driveFolderName}))
+        }
+        uploaded++
+      } catch (e) {
+        toast$(`❌ Ошибка загрузки "${file.name}": ${e.message}`, 'err')
       }
-      reader.readAsDataURL(file)
-    })
-    if (skipped) toast$(`⚠️ ${skipped} файл(а) пропущено — больше 2 МБ. Используйте вкладку 📁 Файлы для больших документов`, 'err')
-    else if (files.length) toast$('📎 '+files.length+' файл(а) добавлено')
+    }
+    setUploading(false)
+    if (uploaded) toast$(`📎 ${uploaded} файл(а) загружено в Google Drive`)
   }
   function delDoc(si, did) {
-    const sd = getSD(si)
+    const sd  = getSD(si)
+    const doc = (sd.docs||[]).find(d=>d.id===did)
     setSD(si, {...sd, docs:(sd.docs||[]).filter(d=>d.id!==did)})
+    // Удаляем из Drive (best-effort — не блокируем UI при ошибке)
+    if (doc?.driveFileId) {
+      api.deleteDriveFile(c.id, doc.driveFileId).catch(()=>{})
+    }
   }
 
   const nt = newTask[accIdx] || {type:'📞 Позвонить',text:'',due:''}
@@ -3142,17 +3173,17 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
                 <span>📎 Документы этапа</span><span style={{fontWeight:500}}>{stageDocs.length}</span>
               </div>
               {stageDocs.map(doc => {
-                const isImg = doc.base64&&doc.base64.startsWith('data:image')
+                const isImg = doc.type === 'photo'
                 return (
                   <div key={doc.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 13px',borderBottom:'1px solid #e2e8f0'}}>
-                    {isImg
-                      ? <img src={doc.base64} alt={doc.name} style={{width:44,height:44,borderRadius:8,objectFit:'cover',border:'1px solid #e2e8f0',flexShrink:0}}/>
-                      : <div style={{width:44,height:44,borderRadius:8,background:'#eff6ff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><i className="ti ti-file-text" style={{fontSize:20,color:'#3b82f6'}}/></div>}
+                    <div style={{width:44,height:44,borderRadius:8,background:isImg?'#f0fdf4':'#eff6ff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                      <i className={isImg?"ti ti-photo":"ti ti-file-text"} style={{fontSize:20,color:isImg?'#10b981':'#3b82f6'}}/>
+                    </div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontWeight:600,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{doc.name}</div>
                       <div style={{fontSize:11,color:'#64748b'}}>{doc.uploadDate}{doc.size?' · '+fmtSize(doc.size):''}</div>
                     </div>
-                    {doc.base64 && <a href={doc.base64} download={doc.name} style={{textDecoration:'none'}}><Btn size="sm"><i className="ti ti-download" style={{fontSize:14}}/></Btn></a>}
+                    {doc.driveLink && <a href={doc.driveLink} target="_blank" rel="noopener noreferrer" style={{textDecoration:'none'}}><Btn size="sm"><i className="ti ti-external-link" style={{fontSize:14}}/></Btn></a>}
                     {canEdit && <Btn size="sm" variant="danger" onClick={()=>delDoc(si,doc.id)}><i className="ti ti-trash" style={{fontSize:13}}/></Btn>}
                   </div>
                 )
@@ -3160,17 +3191,24 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
               {canEdit && (
                 <div style={{padding:'10px 13px'}}>
                   <div
-                    style={{border:'2.5px dashed #cbd5e1',borderRadius:12,padding:24,textAlign:'center',cursor:'pointer',transition:'all .15s'}}
-                    onClick={()=>fileRefs.current[si]?.click()}
+                    style={{border:'2.5px dashed #cbd5e1',borderRadius:12,padding:24,textAlign:'center',cursor:uploading?'wait':'pointer',transition:'all .15s',opacity:uploading?0.6:1,position:'relative'}}
+                    onClick={()=>!uploading&&fileRefs.current[si]?.click()}
                     onDragOver={e=>e.preventDefault()}
-                    onDrop={e=>{e.preventDefault();handleFiles(si,e.dataTransfer.files)}}
-                    onMouseEnter={e=>{e.currentTarget.style.borderColor='#3b82f6';e.currentTarget.style.background='#eff6ff'}}
-                    onMouseLeave={e=>{e.currentTarget.style.borderColor='#cbd5e1';e.currentTarget.style.background='transparent'}}>
-                    <i className="ti ti-cloud-upload" style={{fontSize:26,color:'#94a3b8',display:'block',marginBottom:5}}/>
-                    <div style={{fontWeight:600,fontSize:13,color:'#64748b'}}>Перетащите или нажмите для загрузки</div>
-                    <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Фото, PDF, документы</div>
+                    onDrop={e=>{e.preventDefault();!uploading&&handleFiles(si,e.dataTransfer.files)}}
+                    onMouseEnter={e=>{if(!uploading){e.currentTarget.style.borderColor='#3b82f6';e.currentTarget.style.background='#eff6ff'}}}
+                    onMouseLeave={e=>{if(!uploading){e.currentTarget.style.borderColor='#cbd5e1';e.currentTarget.style.background='transparent'}}}>
+                    {uploading
+                      ? <>
+                          <i className="ti ti-loader-2 spin" style={{fontSize:26,color:'#3b82f6',display:'block',marginBottom:5}}/>
+                          <div style={{fontWeight:600,fontSize:13,color:'#3b82f6'}}>Загрузка в Google Drive...</div>
+                        </>
+                      : <>
+                          <i className="ti ti-cloud-upload" style={{fontSize:26,color:'#94a3b8',display:'block',marginBottom:5}}/>
+                          <div style={{fontWeight:600,fontSize:13,color:'#64748b'}}>Перетащите или нажмите для загрузки</div>
+                          <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Фото, PDF, документы — до 20 МБ</div>
+                        </>}
                   </div>
-                  <input ref={el=>fileRefs.current[si]=el} type="file" multiple accept="image/*,.pdf,.doc,.docx" style={{display:'none'}} onChange={e=>handleFiles(si,e.target.files)}/>
+                  <input ref={el=>fileRefs.current[si]=el} type="file" multiple accept="image/*,.pdf,.doc,.docx" style={{display:'none'}} onChange={e=>handleFiles(si,e.target.files)} disabled={uploading}/>
                 </div>
               )}
             </div>

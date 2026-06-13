@@ -41,14 +41,70 @@ function getDrive() {
   return google.drive({ version: 'v3', auth: getDriveAuth() })
 }
 
-// ── Получить или создать папку клиента внутри корневой ───────────────────────
-async function getOrCreateClientFolder(drive, clientId, folderName) {
-  const rootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+// ── Получить имя менеджера клиента из Supabase + построить структуру папок ───
+async function resolveFolders(drive, rootId, clientId, folderName) {
   if (!rootId) throw new Error('GOOGLE_DRIVE_ROOT_FOLDER_ID не задан')
 
+  const sb = getSupabase()
+  const { data: client } = await sb
+    .from('clients')
+    .select('fio, manager')
+    .eq('id', clientId)
+    .maybeSingle()
+
+  let managerName = 'Без менеджера'
+  if (client?.manager) {
+    const { data: mgr } = await sb
+      .from('managers')
+      .select('name')
+      .eq('id', client.manager)
+      .maybeSingle()
+    if (mgr?.name) managerName = mgr.name
+  }
+
+  const managerFolder = await getOrCreateManagerFolder(drive, rootId, managerName)
+
+  // Имя папки клиента: ФИО + короткий ID для уникальности (если ФИО совпадают)
+  const fio = (folderName || client?.fio || '').trim()
+  const shortId = clientId.slice(0, 6)
+  const clientFolderName = fio
+    ? `${fio}_${shortId}`
+    : `Клиент_${shortId}`
+
+  const folder = await getOrCreateClientFolder(drive, clientId, clientFolderName, managerFolder.id)
+
+  return { managerFolder, folder }
+}
+async function getOrCreateManagerFolder(drive, rootId, managerName) {
+  const safeName = (managerName || 'Без менеджера').trim()
+  const marker   = `crm_manager_${safeName}`
+
+  const search = await drive.files.list({
+    q: `'${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and description='${marker}' and trashed=false`,
+    fields: 'files(id, name, webViewLink)',
+    spaces: 'drive',
+  })
+
+  if (search.data.files?.length > 0) return search.data.files[0]
+
+  const created = await drive.files.create({
+    requestBody: {
+      name:        safeName,
+      mimeType:    'application/vnd.google-apps.folder',
+      parents:     [rootId],
+      description: marker,
+    },
+    fields: 'id, name, webViewLink',
+  })
+
+  return created.data
+}
+
+// ── Получить или создать папку клиента внутри папки менеджера ────────────────
+async function getOrCreateClientFolder(drive, clientId, folderName, managerFolderId) {
   // Ищем папку по clientId в описании (надёжнее чем по имени)
   const search = await drive.files.list({
-    q: `'${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and description='crm_client_${clientId}' and trashed=false`,
+    q: `'${managerFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and description='crm_client_${clientId}' and trashed=false`,
     fields: 'files(id, name, webViewLink)',
     spaces: 'drive',
   })
@@ -57,13 +113,13 @@ async function getOrCreateClientFolder(drive, clientId, folderName) {
     return search.data.files[0]
   }
 
-  // Создаём новую папку
+  // Создаём новую папку: ФИО_клиента_xxxxxx (короткий ID для уникальности)
   const name = folderName || `Клиент_${clientId.slice(0, 8)}`
   const created = await drive.files.create({
     requestBody: {
       name,
       mimeType:    'application/vnd.google-apps.folder',
-      parents:     [rootId],
+      parents:     [managerFolderId],
       description: `crm_client_${clientId}`,   // маркер для поиска
     },
     fields: 'id, name, webViewLink',
@@ -88,7 +144,9 @@ export default withAuth(async function handler(req, res) {
   if (req.method === 'GET') {
     try {
       const drive  = getDrive()
-      const folder = await getOrCreateClientFolder(drive, clientId, req.query.folderName)
+      const rootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+
+      const { managerFolder, folder } = await resolveFolders(drive, rootId, clientId, req.query.folderName)
 
       const list = await drive.files.list({
         q:      `'${folder.id}' in parents and trashed=false`,
@@ -99,6 +157,7 @@ export default withAuth(async function handler(req, res) {
       return res.status(200).json({
         folderId:      folder.id,
         folderLink:    folder.webViewLink,
+        managerFolder: managerFolder.name,
         files:         list.data.files || [],
       })
     } catch (err) {
@@ -110,23 +169,33 @@ export default withAuth(async function handler(req, res) {
   // ── POST: загрузить файл ───────────────────────────────────────────────────
   if (req.method === 'POST') {
     try {
-      const form = formidable({ maxFileSize: 50 * 1024 * 1024 }) // 50 МБ
+      const form = formidable({ maxFileSize: 20 * 1024 * 1024 }) // 20 МБ
       const [fields, files] = await form.parse(req)
 
       const file       = files.file?.[0]
       const folderName = fields.folderName?.[0] || ''
+      const docName    = fields.docName?.[0] || ''  // тип документа (опционально)
 
       if (!file) return res.status(400).json({ error: 'Файл не передан' })
 
       const drive  = getDrive()
-      const folder = await getOrCreateClientFolder(drive, clientId, folderName)
+      const rootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+
+      const { managerFolder, folder } = await resolveFolders(drive, rootId, clientId, folderName)
+
+      // Имя файла: если указан тип документа — добавляем его в начало
+      let uploadName = file.originalFilename || 'file'
+      if (docName) {
+        const ext = uploadName.includes('.') ? uploadName.slice(uploadName.lastIndexOf('.')) : ''
+        uploadName = `${docName}${ext}`
+      }
 
       // Загружаем файл в папку клиента
       let uploaded
       try {
         uploaded = await drive.files.create({
           requestBody: {
-            name:    file.originalFilename || 'file',
+            name:    uploadName,
             parents: [folder.id],
           },
           media: {
@@ -140,19 +209,20 @@ export default withAuth(async function handler(req, res) {
         fs.unlink(file.filepath, () => {})
       }
 
-      // Единый upsert: сохраняем ссылку на папку в карточке клиента
+      // Сохраняем ссылку на папку клиента в карточке
       const sb = getSupabase()
       await sb.from('clients')
         .update({
           drive_link:        folder.webViewLink,
-          drive_folder_name: folderName || folder.name,
+          drive_folder_name: folder.name,
         })
         .eq('id', clientId)
 
       return res.status(200).json({
-        file:       uploaded.data,
-        folderId:   folder.id,
-        folderLink: folder.webViewLink,
+        file:          uploaded.data,
+        folderId:      folder.id,
+        folderLink:    folder.webViewLink,
+        managerFolder: managerFolder.name,
       })
     } catch (err) {
       console.error('Drive POST error:', err.message)
