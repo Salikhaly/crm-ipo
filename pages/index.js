@@ -3819,14 +3819,14 @@ function CalcMortgageTab({ doCalc, clients }) {
       res = await doCalc('mortgage_by_price', {
         program,
         price:    +price,
-        members:  +members,
+        members:  Math.max(1, +members || 1),
         orgs:     [{ income: +salary, oldCredit: +oldCred }],
       })
     } else {
       res = await doCalc('mortgage_by_salary', {
         program,
         salary:    +salary,
-        members:   +members,
+        members:   Math.max(1, +members || 1),
         oldCredit: +oldCred,
       })
     }
@@ -3883,9 +3883,7 @@ function CalcMortgageTab({ doCalc, clients }) {
         </div>
         <div className="fi">
           <div className="fl">Кол-во заёмщиков</div>
-          <select className="inp" value={members} onChange={e=>setMembers(e.target.value)}>
-            {[1,2,3,4].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
+          <input className="inp" type="number" min="1" max="20" value={members} onChange={e=>setMembers(e.target.value)} placeholder="1"/>
         </div>
         <div className="fi">
           <div className="fl">Текущие кредиты/мес (₸)</div>
@@ -3893,7 +3891,7 @@ function CalcMortgageTab({ doCalc, clients }) {
         </div>
       </div>
 
-      <button className="btn btn-primary btn-block btn-lg" onClick={calc} style={{marginTop:4}}>
+      <button className="btn btn-primary btn-block btn-lg" onClick={calc} disabled={busy} style={{marginTop:4}}>
         <i className="ti ti-calculator" style={{fontSize:17}}/> Рассчитать
       </button>
 
@@ -3945,6 +3943,27 @@ function CalcMortgageResult({ result, mode, prog }) {
             Метод 1 (КД): {fmtMoney(result.method1)} · Метод 2 (ПМ): {fmtMoney(result.method2)}
           </div>
         </div>
+
+        {/* Альтернативные варианты ставок (если программа имеет несколько вариантов) */}
+        {result.variantsBySalary?.length > 1 && (
+          <div style={{marginTop:10}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#64748b',marginBottom:8}}>📊 Варианты по ставке:</div>
+            {result.variantsBySalary.map((v, i) => (
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                padding:'9px 12px',borderRadius:10,border:'1.5px solid #e2e8f0',
+                background: i===0?'#eff6ff':'#f8fafc',marginBottom:6}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#0f172a'}}>{v.label}</div>
+                  <div style={{fontSize:11,color:'#64748b'}}>Взнос {fmtMoney(v.downPayment)}</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:14,fontWeight:800,color:'#3b82f6'}}>{fmtMoney(v.maxPrice)}</div>
+                  <div style={{fontSize:10,color:'#94a3b8'}}>макс. цена</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -4044,7 +4063,7 @@ function CalcBankTab({ doCalc }) {
   async function calc() {
     const res = await doCalc('bank_approval', {
       orgs:    orgs.map(o => ({ income: +o.income||0, oldCredit: +o.oldCredit||0 })),
-      members: +members,
+      members: Math.max(1, +members || 1),
     })
     if (res?.ok) setResult(res)
   }
@@ -4055,9 +4074,7 @@ function CalcBankTab({ doCalc }) {
     <div>
       <div className="fi">
         <div className="fl">Количество членов семьи</div>
-        <select className="inp" value={members} onChange={e=>setMembers(e.target.value)}>
-          {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-        </select>
+        <input className="inp" type="number" min="1" max="20" value={members} onChange={e=>setMembers(e.target.value)} placeholder="1"/>
       </div>
 
       {orgs.map((o, i) => (
@@ -4086,7 +4103,7 @@ function CalcBankTab({ doCalc }) {
         </div>
       ))}
 
-      {orgs.length < 3 && (
+      {orgs.length < 10 && (
         <button onClick={()=>setOrgs(os=>[...os,{income:'',oldCredit:'',mode:'income'}])}
           className="btn btn-ghost btn-block" style={{marginBottom:12}}>
           <i className="ti ti-user-plus" style={{fontSize:15}}/> Добавить созаёмщика
@@ -4154,18 +4171,20 @@ function CalcBankTab({ doCalc }) {
 
 // ─── ВКЛАДКА: ОПВ ───────────────────────────────────────────────────────────
 function CalcOpvTab({ doCalc }) {
-  const [mode,    setMode]    = useState('var')
-  const [opvStr,  setOpvStr]  = useState('')
-  const [target,  setTarget]  = useState('')
-  const [income,  setIncome]  = useState('')
-  const [months,  setMonths]  = useState('6')
-  const [result,  setResult]  = useState(null)
+  const [mode,      setMode]      = useState('var')
+  const [opvStr,    setOpvStr]    = useState('')
+  const [target,    setTarget]    = useState('')
+  const [income,    setIncome]    = useState('')
+  const [months,    setMonths]    = useState('6')
+  const [salaryBuh, setSalaryBuh] = useState('')   // для расчёта отчислений бухгалтера
+  const [typeBuh,   setTypeBuh]   = useState('Трудовой')
+  const [result,    setResult]    = useState(null)
 
   async function calc() {
     let res
     if (mode === 'var') {
       const opv12 = opvStr.split(/[,;\n\s]+/).map(Number).filter(v => v > 0)
-      res = await doCalc('opv_var', { opv12, target: +target })
+      res = await doCalc('opv_var', { opv12, target: +target, salary: +salaryBuh, type: typeBuh })
     } else {
       res = await doCalc('opv_eq', { income: +income, months: +months })
     }
@@ -4197,6 +4216,19 @@ function CalcOpvTab({ doCalc }) {
           <div className="fi">
             <div className="fl">Целевая средняя ЗП (опционально)</div>
             <input className="inp" type="number" value={target} onChange={e=>setTarget(e.target.value)} placeholder="300 000"/>
+          </div>
+          <div className="r2">
+            <div className="fi">
+              <div className="fl">Тип договора (для бухгалтера)</div>
+              <select className="inp" value={typeBuh} onChange={e=>setTypeBuh(e.target.value)}>
+                <option value="Трудовой">Трудовой</option>
+                <option value="ГПХ">ГПХ</option>
+              </select>
+            </div>
+            <div className="fi">
+              <div className="fl">ЗП для расчёта отчислений (опц.)</div>
+              <input className="inp" type="number" value={salaryBuh} onChange={e=>setSalaryBuh(e.target.value)} placeholder="300 000"/>
+            </div>
           </div>
         </>
       ) : (
@@ -4352,24 +4384,26 @@ function ClientCalcTab({ c, user, toast$ }) {
 
   // Считаем суммарный доход (основной + доп)
   const totalIncome = (+(c.officialIncome)||0) + (+(c.extraIncomeConfirmed ? c.extraIncome : 0)||0)
+  const [overrideIncome, setOverrideIncome] = React.useState(false)  // позволяет вручную изменить доход
 
   async function calc() {
     setBusy(true)
     setResult(null)
     try {
       let res
+      const effectiveIncome = (!overrideIncome && totalIncome > 0) ? totalIncome : +salary
       if (mode === 'price') {
         res = await api.calc('mortgage_by_price', {
           program,
           price:   +price,
-          members: +members,
-          orgs:    [{ income: totalIncome || +salary, oldCredit: +oldCred }],
+          members: Math.max(1, +members || 1),
+          orgs:    [{ income: effectiveIncome, oldCredit: +oldCred }],
         })
       } else {
         res = await api.calc('mortgage_by_salary', {
           program,
-          salary:    totalIncome || +salary,
-          members:   +members,
+          salary:    effectiveIncome,
+          members:   Math.max(1, +members || 1),
           oldCredit: +oldCred,
         })
       }
@@ -4494,12 +4528,20 @@ ${user?.name || 'Менеджер'}`
           </div>
         )}
         <div className="fi">
-          <div className="fl">Доход (₸) {totalIncome>0?'— из карточки':''}</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div className="fl">Доход (₸) {totalIncome>0&&!overrideIncome?'— из карточки':''}</div>
+            {totalIncome>0 && (
+              <button onClick={()=>setOverrideIncome(v=>!v)}
+                style={{fontSize:11,fontWeight:700,color:'#3b82f6',background:'none',border:'none',cursor:'pointer',padding:'0 0 4px'}}>
+                {overrideIncome ? '↩ Из карточки' : '✏️ Изменить'}
+              </button>
+            )}
+          </div>
           <input className="inp" type="number"
-            value={totalIncome > 0 ? totalIncome : salary}
+            value={(!overrideIncome && totalIncome > 0) ? totalIncome : salary}
             onChange={e=>setSalary(e.target.value)}
-            readOnly={totalIncome > 0}
-            style={totalIncome>0?{background:'#f0fdf4',borderColor:'#86efac'}:{}}
+            readOnly={!overrideIncome && totalIncome > 0}
+            style={(!overrideIncome && totalIncome>0)?{background:'#f0fdf4',borderColor:'#86efac'}:{}}
             placeholder="300 000"/>
         </div>
         <div className="fi">
@@ -4510,9 +4552,7 @@ ${user?.name || 'Менеджер'}`
         </div>
         <div className="fi">
           <div className="fl">Заёмщиков</div>
-          <select className="inp" value={members} onChange={e=>setMembers(e.target.value)}>
-            {[1,2,3,4].map(n=><option key={n} value={n}>{n}</option>)}
-          </select>
+          <input className="inp" type="number" min="1" max="20" value={members} onChange={e=>setMembers(e.target.value)} placeholder="1"/>
         </div>
       </div>
 
