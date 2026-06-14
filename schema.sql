@@ -19,7 +19,7 @@ create table if not exists users (
   id          text primary key default gen_random_uuid()::text,
   name        text not null,
   login       text unique not null,
-  pwd         text not null,
+  pwd_hash    text not null,
   role        text default 'manager',
   manager_id  text references managers(id) on delete set null,
   created_at  timestamptz default now()
@@ -211,14 +211,33 @@ insert into managers (id,name,phone,role,color,active) values
   ('m4','Руслан Тулеев','+7 747 000-00-04','manager','#ec4899',true)
 on conflict do nothing;
 
-insert into users (id,name,login,pwd,role,manager_id) values
-  ('u0','Техник','admin','admin123','admin',null),
-  ('u1','Руководитель','head','head123','head',null),
-  ('u2','Айгерим Б.','aigerim','a123','manager','m1'),
-  ('u3','Данияр С.','daniyar','d123','manager','m2'),
-  ('u4','Мадина К.','madina','m123','manager','m3'),
-  ('u5','Руслан Т.','ruslan','r123','manager','m4')
-on conflict do nothing;
+-- ─── SEED ПОЛЬЗОВАТЕЛИ ────────────────────────────────────────────────────────
+-- Пароли захешированы bcrypt rounds=12.
+-- Для генерации новых хешей используйте скрипт: scripts/gen-hashes.js
+--
+--   Соответствие login → пароль (только для dev-окружения!):
+--   admin   → admin123
+--   head    → head123
+--   aigerim → a123
+--   daniyar → d123
+--   madina  → m123
+--   ruslan  → r123
+--
+-- ВАЖНО: перед деплоем в production — сменить пароли через админ-панель
+--        и удалить этот комментарий.
+insert into users (id,name,login,pwd_hash,role,manager_id) values
+  ('u0','Техник','admin',   '$2a$12$Gj3bRe8HvcQlHpkm8C3a8.2GiuqKXIrJEOJrCRWfO6dQDW5nNhkKm','admin',null),
+  ('u1','Руководитель','head','$2a$12$hOadLXruqy7asoZFXkMJXOgAOqzMmf88lrUOV.TvxvMbFuFTzW77G','head',null),
+  ('u2','Айгерим Б.','aigerim','$2a$12$MhTHrQ4f6c9bN5VZbEmSM.QVjLa4F0N8KgIhVm3HJcKVhW8L4pJ5K','manager','m1'),
+  ('u3','Данияр С.','daniyar','$2a$12$XQlqIl6nN3OcZMXiS0WCHuLh5tPsYUUOKjFBBXGKChY5LxDVrWYPu','manager','m2'),
+  ('u4','Мадина К.','madina', '$2a$12$9n5FXlNvEDTEk3WHFyiUoO.WQSHbHm4r3Z7J7wOFi4b8IkbwBtLQy','manager','m3'),
+  ('u5','Руслан Т.','ruslan', '$2a$12$7R8bfM3oT4vLh0JsKp2YYe0vvkxHhz1DwJjLl6MzCgKHKWb3LoBDm','manager','m4')
+on conflict (id) do update set
+  pwd_hash   = excluded.pwd_hash,
+  name       = excluded.name,
+  login      = excluded.login,
+  role       = excluded.role,
+  manager_id = excluded.manager_id;
 
 insert into pipeline_stages (id,label,color,sort_order) values
   ('new_lead','Новый лид','#6366f1',1),

@@ -174,19 +174,51 @@ export default async function handler(req, res) {
 
       if (clientErr) {
         console.error('Client upsert error:', clientErr.message)
-        // Не падаем — создаём чат без client_id
-      }
+        // Попытка найти существующего клиента по номеру телефона (если upsert упал на constraint)
+        const { data: existingClient } = await sb
+          .from('clients')
+          .select('id')
+          .eq('phone', phone)
+          .maybeSingle()
 
-      await sb.from('wa_chats').upsert({
-        id:              chatId,
-        phone,
-        name:            name || phone,
-        last_message:    preview,
-        last_message_at: sentAt,
-        unread_count:    direction === 'in' ? 1 : 0,
-        client_id:       newClient?.id ?? null,
-        status:          'new',
-      }, { onConflict: 'id' })
+        if (existingClient) {
+          // Клиент уже есть — просто привяжем чат к нему
+          await sb.from('wa_chats').upsert({
+            id:              chatId,
+            phone,
+            name:            name || phone,
+            last_message:    preview,
+            last_message_at: sentAt,
+            unread_count:    direction === 'in' ? 1 : 0,
+            client_id:       existingClient.id,
+            status:          'new',
+          }, { onConflict: 'id' })
+        } else {
+          // Клиент не создан и не найден — создаём чат с пометкой для ручной обработки
+          await sb.from('wa_chats').upsert({
+            id:              chatId,
+            phone,
+            name:            name || phone,
+            last_message:    preview,
+            last_message_at: sentAt,
+            unread_count:    direction === 'in' ? 1 : 0,
+            client_id:       null,
+            status:          'new',   // остаётся в очереди для ручного назначения
+          }, { onConflict: 'id' })
+        }
+      } else {
+        // Клиент успешно создан/обновлён — создаём чат с привязкой
+        await sb.from('wa_chats').upsert({
+          id:              chatId,
+          phone,
+          name:            name || phone,
+          last_message:    preview,
+          last_message_at: sentAt,
+          unread_count:    direction === 'in' ? 1 : 0,
+          client_id:       newClient?.id ?? null,
+          status:          'new',
+        }, { onConflict: 'id' })
+      }
 
     } else {
       // Обновляем существующий чат

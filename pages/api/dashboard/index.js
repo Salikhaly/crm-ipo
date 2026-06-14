@@ -20,9 +20,10 @@ export default withAuth(async function handler(req, res) {
   const dashFrom = dashDateFrom.toISOString().split('T')[0]
 
   let query = sb.from('clients').select(
-    'id, manager, stage, contract_type, contract_amount, payments, tasks, created_at, is_whatsapp'
+    'id, manager, responsible_manager, stage, contract_type, contract_amount, payments, tasks, created_at, is_whatsapp'
   ).gte('created_at', dashFrom)
-  if (role === 'manager' && mid) query = query.eq('manager', mid)
+  if (role === 'manager'    && mid) query = query.eq('manager', mid)
+  if (role === 'specialist' && mid) query = query.eq('responsible_manager', mid)
 
   const [clientsRes, managersRes, waChatsRes] = await Promise.all([
     query,
@@ -38,7 +39,13 @@ export default withAuth(async function handler(req, res) {
 
   const withCt  = clients.filter(c => c.contract_type)
   const rev     = withCt.reduce((s, c) => s + (c.contract_amount || 0), 0)
-  const paidRev = clients
+  // paidRev — платежи по клиентам текущего месяца (согласованно с KPI логикой)
+  const thisMonthClients = clients.filter(c => c.created_at >= moStart)
+  const paidRev = thisMonthClients
+    .flatMap(c => c.payments || [])
+    .filter(p => p.status === 'paid')
+    .reduce((s, p) => s + (p.paidAmount || 0), 0)
+  const paidRevTotal = clients
     .flatMap(c => c.payments || [])
     .filter(p => p.status === 'paid')
     .reduce((s, p) => s + (p.paidAmount || 0), 0)
@@ -72,10 +79,14 @@ export default withAuth(async function handler(req, res) {
       contracts:   withCt.length,
       conversion:  clients.length ? Math.round(withCt.length / clients.length * 100) : 0,
       rev,
-      paidRev,
+      paidRev,        // платежи клиентов этого месяца
+      paidRevTotal,   // платежи за всё время (для справки на карточке)
       openTasks:   openTasks.length,
       overdueTasks: overdueTasks.length,
       waUnread,
+      // Кол-во WA чатов, ожидающих первичной обработки (статус 'new' в таблице wa_chats)
+      waChatsAwaiting: waNew.length,
+      // Кол-во клиентов, пришедших из WhatsApp, и ещё не взятых в работу
       waNewLeads:  clients.filter(c => c.is_whatsapp && c.stage === 'new_lead').length,
       closed:      clients.filter(c => c.stage === 'closed').length,
     },

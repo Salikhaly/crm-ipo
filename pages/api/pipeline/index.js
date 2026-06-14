@@ -25,7 +25,33 @@ export default withAuth(async function handler(req, res) {
     if (role !== 'admin') return res.status(403).json({ error: 'Только admin' })
 
     const { stages } = req.body
-    if (!Array.isArray(stages)) return res.status(400).json({ error: 'stages должен быть массивом' })
+    if (!Array.isArray(stages) || stages.length === 0) {
+      return res.status(400).json({ error: 'stages должен быть непустым массивом' })
+    }
+
+    // Получаем текущие этапы воронки
+    const { data: existing } = await sb.from('pipeline_stages').select('id')
+    const newIds     = new Set(stages.map(s => s.id))
+    const removedIds = (existing || []).map(s => s.id).filter(id => !newIds.has(id))
+
+    // Проверяем, есть ли клиенты на удаляемых этапах
+    if (removedIds.length > 0) {
+      const { count } = await sb
+        .from('clients')
+        .select('id', { count: 'exact', head: true })
+        .in('stage', removedIds)
+
+      if (count > 0) {
+        return res.status(400).json({
+          error: `Нельзя удалить этапы: на них находятся ${count} клиент(ов). Переместите клиентов на другой этап сначала.`,
+          affectedCount: count,
+          removedStages: removedIds,
+        })
+      }
+
+      // Безопасно: удаляем убранные этапы
+      await sb.from('pipeline_stages').delete().in('id', removedIds)
+    }
 
     const rows = stages.map((s, i) => ({
       id:         s.id,
@@ -34,7 +60,7 @@ export default withAuth(async function handler(req, res) {
       sort_order: i + 1,
     }))
 
-    // Удаляем старые и вставляем новые
+    // Upsert оставшихся / новых этапов
     const { error } = await sb.from('pipeline_stages').upsert(rows, { onConflict: 'id' })
     if (error) return res.status(500).json({ error: error.message })
 

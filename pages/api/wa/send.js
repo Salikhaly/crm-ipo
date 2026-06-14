@@ -65,8 +65,6 @@ export default withAuth(async function handler(req, res) {
     })
 
     // Обновляем чат — upsert создаёт запись если её ещё нет
-    const rawPhone2 = phone.replace(/\D/g, '')
-    const waPhone2  = rawPhone2.startsWith('7') ? rawPhone2 : '7' + rawPhone2
     const { data: existChat } = await sb.from('wa_chats').select('id').eq('id', waId).maybeSingle()
     if (existChat) {
       await sb.from('wa_chats').update({
@@ -76,8 +74,8 @@ export default withAuth(async function handler(req, res) {
     } else {
       await sb.from('wa_chats').insert({
         id:              waId,
-        phone:           '+' + waPhone2,
-        name:            '+' + waPhone2,
+        phone:           '+' + waPhone,
+        name:            '+' + waPhone,
         last_message:    text,
         last_message_at: new Date().toISOString(),
         unread_count:    0,

@@ -6,6 +6,15 @@ import Head from 'next/head'
 import { api } from '../lib/api'
 
 // ═══ КОНСТАНТЫ ═══════════════════════════════════════════════════
+// ─── WhatsApp polling ─────────────────────────────────────────────
+const WA_CHATS_POLL_MS    = 10_000         // интервал обновления списка чатов
+const WA_MESSAGES_POLL_MS = 5_000          // интервал обновления сообщений открытого чата
+// ─── Прочие лимиты ────────────────────────────────────────────────
+const MIN_SEARCH_LENGTH   = 2              // минимальная длина поисковой строки
+const API_TIMEOUT_MS      = 15_000         // таймаут fetch запросов
+const MAX_MESSAGES_FETCH  = 200            // максимум сообщений при полной загрузке
+const MAX_FILE_SIZE_BYTES = 32 * 1024 * 1024  // 32 МБ лимит медиафайлов
+
 const PIPELINE_DEFAULT = [
   { id: 'new_lead',      l: 'Новый лид',        c: '#6366f1' },
   { id: 'in_work',       l: 'Взят в работу',    c: '#0ea5e9' },
@@ -295,11 +304,12 @@ export default function CRM() {
       if (uRes?.users)      setUsers(uRes.users)
       if (plRes?.pipeline)  setPipeline(plRes.pipeline)
       if (clRes?.checklists) setChecklists(clRes.checklists)
+      if (cRes?.hasMore) toast$('⚠️ Загружены первые 200 клиентов. Для поиска остальных используйте страницу Поиск.')
     } catch (e) {
       toast$('❌ Ошибка загрузки: ' + e.message, 'err')
     }
     setSyncing(false)
-  }, [])
+  }, [user])
 
   useEffect(() => {
     if (user) loadAll()
@@ -344,10 +354,10 @@ export default function CRM() {
       if (typeof document !== 'undefined' && document.hidden) return  // вкладка не активна
       const cur = selWaChatRef.current
       if (!cur?.id) return
-      // Берём id последнего известного сообщения чтобы загружать только новые
+      // Используем id последнего сообщения как курсор (надёжнее чем sent_at при clock skew)
       setWaMessages(prev => {
-        const lastId  = prev.length ? prev[prev.length - 1].sent_at : null
-        const qs      = lastId ? `&after=${encodeURIComponent(lastId)}` : ''
+        const lastMsg = prev.length ? prev[prev.length - 1] : null
+        const qs      = lastMsg ? `&after_id=${encodeURIComponent(lastMsg.id)}` : ''
         api.getWaMessages(cur.id, qs).then(d => {
           if (!d?.messages?.length) return
           setWaMessages(existing => {
@@ -370,10 +380,8 @@ export default function CRM() {
     loadChats()
     loadMsgs()
 
-    // Адаптивный polling: замедляем когда вкладка скрыта (экономия Supabase запросов)
+    // Polling: пропускаем тики когда вкладка скрыта (экономия Supabase запросов)
     const t1 = setInterval(() => {
-      const interval = document.hidden ? WA_CHATS_POLL_MS * 3 : WA_CHATS_POLL_MS
-      // Простой интервал — при скрытой вкладке пропускаем 2 из 3 тиков
       if (!document.hidden) loadChats()
     }, WA_CHATS_POLL_MS)
 
@@ -464,10 +472,10 @@ export default function CRM() {
         toast$(`⚠️ ИИН уже есть у клиента: ${dup.fio || dup.phone}`, 'err'); return
       }
     }
-    // Проверка дубля по телефону (при создании нового)
-    if (c.phone && !clients.find(x => x.id === c.id)) {
+    // Проверка дубля по телефону (при создании и при обновлении)
+    if (c.phone) {
       const phone = c.phone.replace(/\D/g, '')
-      const dup = clients.find(x => x.phone && x.phone.replace(/\D/g,'') === phone)
+      const dup = clients.find(x => x.id !== c.id && x.phone && x.phone.replace(/\D/g, '') === phone)
       if (dup) {
         toast$(`⚠️ Телефон уже есть у клиента: ${dup.fio || dup.phone}`, 'err'); return
       }
@@ -623,13 +631,13 @@ export default function CRM() {
   }
 
   // ─── WA ACTIONS ──────────────────────────────────────────
-  async function loadWaMessages(chatId) {
+  const loadWaMessages = useCallback(async function loadWaMessages(chatId) {
     try {
       const d = await api.getWaMessages(chatId)
       if (d?.messages) setWaMessages(d.messages)
       setWaChats(cs => cs.map(c => c.id === chatId ? { ...c, unread_count: 0 } : c))
     } catch (e) { toast$('❌ ' + e.message, 'err') }
-  }
+  }, []) // setWaMessages и setWaChats — стабильные setState, не нужны в deps
 
   const sendWaMsg = useCallback(async function sendWaMsg(chatId, phone, text) {
     if (!text.trim()) return
@@ -637,7 +645,7 @@ export default function CRM() {
       await api.sendWaMessage(chatId, phone, text, user?.name)
       await loadWaMessages(chatId)
     } catch (e) { toast$('❌ ' + e.message, 'err') }
-  }, [user]) // useCallback
+  }, [user, loadWaMessages])
 
   const sendWaMedia = useCallback(async function sendWaMedia(chatId, phone, file, caption) {
     try {
@@ -648,7 +656,7 @@ export default function CRM() {
       toast$('❌ ' + e.message, 'err')
       throw e
     }
-  }, [user]) // useCallback
+  }, [user, loadWaMessages])
 
   const assignWaChat = useCallback(async function assignWaChat(chatId, managerId) {
     try {
@@ -672,14 +680,8 @@ export default function CRM() {
       setClients(cs => [saved, ...cs])
       // Привязываем wa_chat к созданному клиенту
       if (linkWaChatId && saved?.id) {
-        const waId = linkWaChatId
-        // Привязываем клиента к чату
-        await fetch('/api/wa/chats', {
-          method:  'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('crm_token')}` },
-          body:    JSON.stringify({ chatId: waId, clientId: saved.id }),
-        }).catch(() => {})
-        setWaChats(cs => cs.map(ch => ch.id === waId ? { ...ch, client_id: saved.id } : ch))
+        await api.linkWaChat(linkWaChatId, saved.id).catch(() => {})
+        setWaChats(cs => cs.map(ch => ch.id === linkWaChatId ? { ...ch, client_id: saved.id } : ch))
       }
       toast$('✅ WhatsApp лид добавлен!')
     } catch (e) { toast$('❌ ' + e.message, 'err') }
@@ -736,12 +738,11 @@ export default function CRM() {
     Object.fromEntries(managers.map(m => [m.id, m])),
   [managers])
 
-    const stageCounts = useMemo(() => {
+  const stageCounts = useMemo(() => {
     const counts = {}
     for (const c of myCl) counts[c.stage] = (counts[c.stage] || 0) + 1
     return counts
   }, [myCl])
-
 
   const waUnread = useMemo(
     () => waChats.reduce((s, c) => s + (c.unread_count || 0), 0),
@@ -1426,14 +1427,6 @@ function useDebounce(value, delay = 200) {
   }, [value, delay])
   return debounced
 }
-
-// ─── APP CONSTANTS ─────────────────────────────────────────────
-const WA_CHATS_POLL_MS    = 10_000   // интервал обновления списка чатов
-const WA_MESSAGES_POLL_MS = 5_000    // интервал обновления сообщений открытого чата
-const API_TIMEOUT_MS      = 15_000   // таймаут fetch запросов
-const MAX_MESSAGES_FETCH  = 200      // максимум сообщений при полной загрузке
-const MAX_FILE_SIZE_BYTES = 32 * 1024 * 1024  // 32 МБ лимит медиафайлов
-const MIN_SEARCH_LENGTH   = 2        // минимальная длина поисковой строки
 
 // ─── ШАБЛОНЫ СООБЩЕНИЙ ────────────────────────────────────────
 // Переменные: {{имя}}, {{сумма}}, {{банк}}, {{дата}}, {{этап}}

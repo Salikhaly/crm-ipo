@@ -21,15 +21,20 @@ export default withAuth(async function handler(req, res) {
 
     let query = sb.from('clients').select('*').order('created_at', { ascending: false })
 
-    // Менеджер видит только своих клиентов
+    // Роль определяет видимость клиентов:
+    // - manager: только свои (по полю manager)
+    // - specialist: только где назначен ответственным (по полю responsible_manager)
+    // - head / admin: все клиенты
     if (role === 'manager' && mid) {
       query = query.eq('manager', mid)
+    } else if (role === 'specialist' && mid) {
+      query = query.eq('responsible_manager', mid)
     }
 
     // Фильтры из query string
     const { stage, manager, search } = req.query
     if (stage)   query = query.eq('stage', stage)
-    if (manager && role !== 'manager') query = query.eq('manager', manager)
+    if (manager && role !== 'manager' && role !== 'specialist') query = query.eq('manager', manager)
     if (search)  query = query.or(
       `fio.ilike.%${escapeLike(search)}%,phone.ilike.%${escapeLike(search)}%,iin.ilike.%${escapeLike(search)}%`
     )

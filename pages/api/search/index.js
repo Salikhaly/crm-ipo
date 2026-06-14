@@ -17,16 +17,20 @@ export default withAuth(async function handler(req, res) {
   const { role, manager_id: mid } = req.user
   const { q = '', stage, manager } = req.query
 
-  let query = sb.from('clients').select('*').order('created_at', { ascending: false })
-
-  // Роль менеджера — только свои
-  if (role === 'manager' && mid) {
-    query = query.eq('manager', mid)
+  // Без критериев поиска — возвращаем пустой результат (не дампим всю БД)
+  if (!q && !stage && !manager) {
+    return res.status(200).json({ results: [], count: 0 })
   }
 
-  // Фильтры
-  if (stage)                          query = query.eq('stage', stage)
-  if (manager && role !== 'manager')  query = query.eq('manager', manager)
+  let query = sb.from('clients').select('*').order('created_at', { ascending: false })
+
+  // Роль определяет видимость (зеркалим логику clients/index.js)
+  if (role === 'manager'    && mid) query = query.eq('manager', mid)
+  if (role === 'specialist' && mid) query = query.eq('responsible_manager', mid)
+
+  // Фильтры (менеджер и специалист не могут обойти свои ограничения через query string)
+  if (stage)   query = query.eq('stage', stage)
+  if (manager && role !== 'manager' && role !== 'specialist') query = query.eq('manager', manager)
 
   // Поиск (минимум 2 символа)
   if (q.length >= 2) {

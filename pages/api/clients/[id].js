@@ -20,8 +20,11 @@ export default withAuth(async function handler(req, res) {
 
     if (!data) return res.status(404).json({ error: 'Клиент не найден' })
 
-    // Менеджер видит только своих
+    // Менеджер видит только своих; специалист — только где он ответственный
     if (role === 'manager' && data.manager !== mid) {
+      return res.status(403).json({ error: 'Нет доступа' })
+    }
+    if (role === 'specialist' && data.responsible_manager !== mid) {
       return res.status(403).json({ error: 'Нет доступа' })
     }
 
@@ -82,8 +85,15 @@ export default withAuth(async function handler(req, res) {
         createdAt: now,
         isAudit:   true,
       }
-      const prevComments = Array.isArray(row.comments) ? row.comments : []
-      row.comments = [...prevComments, auditEntry]
+      // Используем comments из БД как источник истины для аудита (не из запроса),
+      // чтобы предотвратить случайное затирание истории устаревшим payload'ом клиента.
+      const dbComments      = Array.isArray(existing.comments)  ? existing.comments  : []
+      const requestComments = Array.isArray(row.comments)        ? row.comments        : []
+      // Пользовательские комментарии — из запроса (не-аудитные),
+      // аудитные записи — из БД + новая запись.
+      const userComments  = requestComments.filter(c => !c.isAudit)
+      const auditComments = dbComments.filter(c => c.isAudit)
+      row.comments = [...userComments, ...auditComments, auditEntry]
     }
 
     const { data, error } = await sb

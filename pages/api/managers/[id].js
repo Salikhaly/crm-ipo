@@ -35,6 +35,37 @@ export default withAuth(async function handler(req, res) {
 
   if (req.method === 'DELETE') {
     if (role !== 'admin') return res.status(403).json({ error: 'Только admin' })
+
+    // Проверяем наличие клиентов у этого менеджера
+    const { count, error: countErr } = await sb
+      .from('clients')
+      .select('id', { count: 'exact', head: true })
+      .eq('manager', id)
+
+    if (countErr) return res.status(500).json({ error: countErr.message })
+
+    if (count > 0) {
+      return res.status(400).json({
+        error: `У менеджера ${count} клиент(ов). Переназначьте их другому менеджеру перед удалением.`,
+        clientCount: count,
+      })
+    }
+
+    // Также проверяем responsible_manager
+    const { count: respCount, error: respErr } = await sb
+      .from('clients')
+      .select('id', { count: 'exact', head: true })
+      .eq('responsible_manager', id)
+
+    if (respErr) return res.status(500).json({ error: respErr.message })
+
+    if (respCount > 0) {
+      return res.status(400).json({
+        error: `Менеджер является ответственным у ${respCount} клиент(ов). Снимите назначение перед удалением.`,
+        clientCount: respCount,
+      })
+    }
+
     const { error } = await sb.from('managers').delete().eq('id', id)
     if (error) return res.status(500).json({ error: error.message })
     return res.status(200).json({ ok: true })

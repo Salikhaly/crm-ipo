@@ -131,6 +131,7 @@ async function getOrCreateClientFolder(drive, clientId, folderName, managerFolde
 // ── Handler ──────────────────────────────────────────────────────────────────
 export default withAuth(async function handler(req, res) {
   const { clientId } = req.query
+  const { role, manager_id: mid } = req.user
 
   // Проверяем наличие переменных окружения
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON === 'placeholder') {
@@ -138,6 +139,24 @@ export default withAuth(async function handler(req, res) {
   }
   if (!process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID === 'placeholder') {
     return res.status(503).json({ error: 'Google Drive не настроен. Добавьте GOOGLE_DRIVE_ROOT_FOLDER_ID в переменные окружения.' })
+  }
+
+  // Проверяем доступ к клиенту для ролей с ограничениями
+  if (role === 'manager' || role === 'specialist') {
+    const sb = getSupabase()
+    const { data: client } = await sb
+      .from('clients')
+      .select('manager, responsible_manager')
+      .eq('id', clientId)
+      .maybeSingle()
+
+    if (!client) return res.status(404).json({ error: 'Клиент не найден' })
+
+    const allowed = role === 'manager'
+      ? client.manager === mid
+      : client.responsible_manager === mid
+
+    if (!allowed) return res.status(403).json({ error: 'Нет доступа к файлам этого клиента' })
   }
 
   // ── GET: список файлов клиента ─────────────────────────────────────────────
@@ -235,8 +254,8 @@ export default withAuth(async function handler(req, res) {
     const { fileId } = req.query
     if (!fileId) return res.status(400).json({ error: 'fileId обязателен' })
 
-    // Только admin и head могут удалять
-    if (req.user.role === 'manager') {
+    // Только admin и head могут удалять файлы
+    if (role === 'manager' || role === 'specialist') {
       return res.status(403).json({ error: 'Нет доступа для удаления файлов' })
     }
 

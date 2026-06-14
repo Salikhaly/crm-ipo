@@ -15,7 +15,7 @@ export default withAuth(async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
-    const { data, error } = await sb.from('users').select('*').order('created_at')
+    const { data, error } = await sb.from('users').select('id, name, login, role, manager_id, created_at').order('created_at')
     if (error) return res.status(500).json({ error: error.message })
     return res.status(200).json({ users: data })
   }

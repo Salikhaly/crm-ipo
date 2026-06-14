@@ -22,8 +22,12 @@ export default withAuth(async function handler(req, res) {
         .eq('chat_id', id)
         .order('sent_at', { ascending: true })
 
-      // Инкрементальный фетч: только сообщения новее after (ISO timestamp)
-      if (req.query.after) {
+      // Инкрементальный фетч: поддерживаем after_id (стабильный курсор) и legacy after (timestamp)
+      if (req.query.after_id) {
+        // Надёжный курсор по id — не зависит от расхождения часов серверов
+        query = query.gt('id', req.query.after_id)
+      } else if (req.query.after) {
+        // Legacy: курсор по sent_at (оставлен для обратной совместимости)
         query = query.gt('sent_at', req.query.after)
       } else {
         // Полный фетч: ограничиваем последними 200 сообщениями для производительности
@@ -37,9 +41,9 @@ export default withAuth(async function handler(req, res) {
         await sb.from('wa_chats').update({ unread_count: 0 }).eq('id', id)
       }
 
-      // Короткий cache только для инкрементальных запросов (after=...)
-      if (req.query.after) {
-        res.setHeader('Cache-Control', 'no-store')  // данные реального времени — не кешируем
+      // Данные реального времени — не кешируем инкрементальные запросы
+      if (req.query.after_id || req.query.after) {
+        res.setHeader('Cache-Control', 'no-store')
       }
 
       return res.status(200).json({ messages: messages || [] })

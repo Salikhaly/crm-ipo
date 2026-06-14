@@ -45,6 +45,23 @@ export default withAuth(async function handler(req, res) {
   }
 
   if (req.method === 'DELETE') {
+    // Нельзя удалить собственный аккаунт
+    if (req.user.id === id) {
+      return res.status(400).json({ error: 'Нельзя удалить собственный аккаунт' })
+    }
+
+    // Нельзя удалить последнего администратора
+    const { data: targetUser } = await sb.from('users').select('role').eq('id', id).maybeSingle()
+    if (targetUser?.role === 'admin') {
+      const { count } = await sb
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'admin')
+      if (count <= 1) {
+        return res.status(400).json({ error: 'Нельзя удалить единственного администратора системы' })
+      }
+    }
+
     const { error } = await sb.from('users').delete().eq('id', id)
     if (error) return res.status(500).json({ error: error.message })
     return res.status(200).json({ ok: true })

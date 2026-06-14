@@ -13,7 +13,8 @@ export default withAuth(async function handler(req, res) {
   const today = new Date().toISOString().split('T')[0]
 
   let query = sb.from('clients').select('id, fio, phone, manager, tasks')
-  if (role === 'manager' && mid) query = query.eq('manager', mid)
+  if (role === 'manager'    && mid) query = query.eq('manager', mid)
+  if (role === 'specialist' && mid) query = query.eq('responsible_manager', mid)
 
   const { data, error } = await query
   if (error) return res.status(500).json({ error: error.message })
