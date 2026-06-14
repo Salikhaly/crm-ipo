@@ -3928,10 +3928,9 @@ function CalcMortgageResult({ result, mode, prog }) {
           <div style={{fontSize:13,color:'#16a34a',fontWeight:700,marginBottom:8}}>✅ Одобрение возможно — {result.prog?.name || prog?.name}</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
             {[
-              ['Максимальная цена', fmtMoney(result.maxLoan)],
-              ['Цена квартиры',     fmtMoney(result.maxPrice)],
-              ['Первый взнос',      fmtMoney(result.down)],
+              ['Максимальная цена', fmtMoney(result.maxPrice)],
               ['Сумма займа',       fmtMoney(result.maxLoan)],
+              ['Первый взнос',      fmtMoney(result.down)],
               ['Платёж/мес',        fmtMoney(result.payment)],
               ['КД',                fmtKd(result.kd)],
               ['Ставка',            result.rate],
@@ -4140,8 +4139,8 @@ function CalcBankTab({ doCalc }) {
                     </div>
                   </div>
                   <div style={{textAlign:'right'}}>
-                    <div style={{fontWeight:900,fontSize:15,color:'#3b82f6'}}>{fmtMoney(p.maxLoan)}</div>
-                    <div style={{fontSize:10,color:'#94a3b8'}}>макс. займ</div>
+                    <div style={{fontWeight:900,fontSize:15,color:'#3b82f6'}}>{fmtMoney(p.maxPrice)}</div>
+                    <div style={{fontSize:10,color:'#94a3b8'}}>макс. цена</div>
                   </div>
                 </div>
               ))}
@@ -4393,10 +4392,9 @@ function ClientCalcTab({ c, user, toast$ }) {
 
 По программе *${prog?.name || program}*:
 
-✅ Максимальная сумма займа: *${fmtMoney(result.maxLoan)}*
-🏠 Цена квартиры: *${fmtMoney(result.maxPrice)}*
-💰 Первоначальный взнос: *${fmtMoney(result.down)}*
+🏠 Максимальная цена квартиры: *${fmtMoney(result.maxPrice)}*
 🏦 Сумма займа: *${fmtMoney(result.maxLoan)}*
+💰 Первоначальный взнос: *${fmtMoney(result.down)}*
 📅 Ежемесячный платёж: *${fmtMoney(result.payment)}*
 
 Расчёт подготовил: ${user?.name || 'Менеджер'}`
@@ -4536,9 +4534,9 @@ ${user?.name || 'Менеджер'}`
               </div>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
                 {[
-                  ['Максимальная цена', fmtMoney(result.maxLoan)],
+                  ['Максимальная цена', fmtMoney(result.maxPrice)],
+                  ['Сумма займа',       fmtMoney(result.maxLoan)],
                   ['Первый взнос',      fmtMoney(result.down)],
-                  ['Цена квартиры',     fmtMoney(result.maxPrice)],
                   ['Платёж / мес',      fmtMoney(result.payment)],
                 ].map(([l,v]) => (
                   <div key={l} style={{background:'#fff',borderRadius:9,padding:'9px 11px'}}>
