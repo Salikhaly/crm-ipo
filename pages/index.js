@@ -3812,25 +3812,32 @@ function CalcMortgageTab({ doCalc, clients }) {
   const [members,  setMembers]  = useState('1')
   const [oldCred,  setOldCred]  = useState('')
   const [result,   setResult]   = useState(null)
+  const [busy,     setBusy]     = useState(false)
 
   async function calc() {
+    setBusy(true)
+    setResult(null)
     let res
-    if (mode === 'price') {
-      res = await doCalc('mortgage_by_price', {
-        program,
-        price:    +price,
-        members:  Math.max(1, +members || 1),
-        orgs:     [{ income: +salary, oldCredit: +oldCred }],
-      })
-    } else {
-      res = await doCalc('mortgage_by_salary', {
-        program,
-        salary:    +salary,
-        members:   Math.max(1, +members || 1),
-        oldCredit: +oldCred,
-      })
+    try {
+      if (mode === 'price') {
+        res = await doCalc('mortgage_by_price', {
+          program,
+          price:    +price,
+          members:  Math.max(1, +members || 1),
+          orgs:     [{ income: +salary, oldCredit: +oldCred }],
+        })
+      } else {
+        res = await doCalc('mortgage_by_salary', {
+          program,
+          salary:    +salary,
+          members:   Math.max(1, +members || 1),
+          oldCredit: +oldCred,
+        })
+      }
+      if (res?.ok) setResult(res)
+    } finally {
+      setBusy(false)
     }
-    if (res?.ok) setResult(res)
   }
 
   const prog = PROGRAMS.find(p => p.key === program)
@@ -3892,7 +3899,9 @@ function CalcMortgageTab({ doCalc, clients }) {
       </div>
 
       <button className="btn btn-primary btn-block btn-lg" onClick={calc} disabled={busy} style={{marginTop:4}}>
-        <i className="ti ti-calculator" style={{fontSize:17}}/> Рассчитать
+        {busy
+          ? <><i className="ti ti-loader-2 spin" style={{fontSize:17}}/> Считаю...</>
+          : <><i className="ti ti-calculator" style={{fontSize:17}}/> Рассчитать</>}
       </button>
 
       {/* РЕЗУЛЬТАТ */}
