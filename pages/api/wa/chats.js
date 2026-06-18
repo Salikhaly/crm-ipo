@@ -77,7 +77,7 @@ export default withAuth(async function handler(req, res) {
 
   // ── PATCH ─────────────────────────────────────────────
   if (req.method === 'PATCH') {
-    const { chatId, managerId, status } = req.body
+    const { chatId, managerId, status, markRead } = req.body
 
     if (!chatId) return res.status(400).json({ error: 'chatId обязателен' })
 
@@ -90,6 +90,7 @@ export default withAuth(async function handler(req, res) {
       upd.status = status
     }
     if (req.body.clientId !== undefined) upd.client_id = req.body.clientId || null
+    if (markRead === true) upd.unread_count = 0
 
     if (Object.keys(upd).length === 0) {
       return res.status(400).json({ error: 'Нечего обновлять' })

@@ -25,10 +25,17 @@ export default withAuth(async function handler(req, res) {
   if (role === 'manager'    && mid) query = query.eq('manager', mid)
   if (role === 'specialist' && mid) query = query.eq('responsible_manager', mid)
 
-  const [clientsRes, managersRes, waChatsRes] = await Promise.all([
+  // Лёгкий запрос только на количество ВСЕХ клиентов (без окна 24 месяца) —
+  // head:true не возвращает строки, поэтому почти не нагружает БД
+  let trueTotalQuery = sb.from('clients').select('id', { count: 'exact', head: true })
+  if (role === 'manager'    && mid) trueTotalQuery = trueTotalQuery.eq('manager', mid)
+  if (role === 'specialist' && mid) trueTotalQuery = trueTotalQuery.eq('responsible_manager', mid)
+
+  const [clientsRes, managersRes, waChatsRes, trueTotalRes] = await Promise.all([
     query,
     sb.from('managers').select('id, name, color').eq('active', true),
     sb.from('wa_chats').select('id, unread_count, status').eq('status', 'new'),
+    trueTotalQuery,
   ])
 
   if (clientsRes.error) return res.status(500).json({ error: clientsRes.error.message })
@@ -74,7 +81,8 @@ export default withAuth(async function handler(req, res) {
 
   return res.status(200).json({
     metrics: {
-      total:       clients.length,
+      total:       clients.length,           // в окне 24 месяца (для конверсии/воронки)
+      trueTotal:   trueTotalRes.count ?? clients.length,  // реальное общее число за всю историю
       thisMonth:   clients.filter(c => c.created_at >= moStart).length,
       contracts:   withCt.length,
       conversion:  clients.length ? Math.round(withCt.length / clients.length * 100) : 0,

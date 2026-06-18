@@ -3,7 +3,7 @@
 // DELETE /api/users/:id  → удалить (только admin)
 
 import { getSupabase } from '../../../lib/supabase'
-import { withAuth }    from '../../../lib/auth'
+import { withAuth, invalidateUserCache } from '../../../lib/auth'
 import bcrypt          from 'bcryptjs'
 
 export default withAuth(async function handler(req, res) {
@@ -40,6 +40,7 @@ export default withAuth(async function handler(req, res) {
       .single()
 
     if (error) return res.status(500).json({ error: error.message })
+    invalidateUserCache(id)  // новая роль/manager_id действуют сразу, не через 60 сек кэша
     const { pwd_hash: _, ...safeUser } = data  // не возвращаем хеш клиенту
     return res.status(200).json({ user: safeUser })
   }
@@ -64,6 +65,7 @@ export default withAuth(async function handler(req, res) {
 
     const { error } = await sb.from('users').delete().eq('id', id)
     if (error) return res.status(500).json({ error: error.message })
+    invalidateUserCache(id)  // удалённый юзер сразу теряет доступ, не через 60 сек кэша
     return res.status(200).json({ ok: true })
   }
 

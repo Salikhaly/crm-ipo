@@ -45,7 +45,9 @@ export default withAuth(async function handler(req, res) {
     today:    todayT,
     upcoming,
     noDue,
-    done:     done.slice(0, 50), // последние 50 выполненных
+    // Сортируем выполненные по doneAt (новые сверху). Задачи без doneAt
+    // (созданные до этого поля) уходят в конец — лучше чем случайный порядок.
+    done:     [...done].sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || '')).slice(0, 50),
     counts: {
       open:    filtered.filter(t => !t.done).length,
       overdue: overdue.length,

@@ -44,7 +44,7 @@ export default withAuth(async function handler(req, res) {
     const to   = from + PAGE_SIZE - 1
     query = query.range(from, to)
 
-    const { data, error, count } = await query
+    const { data, error } = await query
 
     if (error) return res.status(500).json({ error: error.message })
     return res.status(200).json({
