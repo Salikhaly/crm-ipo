@@ -1527,6 +1527,9 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
   const [showClientPanel, setShowClientPanel]  = useState(false)
   const [showAssignDlg,   setShowAssignDlg]    = useState(false)
   const [waSearch,        setWaSearch]         = useState('')
+  const [quickReplies,    setQuickReplies]     = useState([])
+  const [showQuickMenu,   setShowQuickMenu]    = useState(false)
+  const [quickFilter,     setQuickFilter]      = useState('')
   const debouncedSearch = useDebounce(waSearch, 150)  // 150ms debounce
   const [waFilter,        setWaFilter]         = useState('all')   // all | new | in_work | done
   const [waMgrFilter,     setWaMgrFilter]      = useState('')      // '' = все
@@ -1537,6 +1540,49 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
 
   const totalUnread  = chats.reduce((s,c) => s+(c.unread_count||0), 0)
   const linkedClient = selChat ? clients.find(c => c.id === selChat.client_id) : null
+
+  // Загружаем быстрые ответы один раз
+  useEffect(() => {
+    api.getCalcSettings().then(d => {
+      if (d?.replies?.length) setQuickReplies(d.replies.filter(r => r.active !== false))
+    }).catch(() => {})
+  }, [])
+
+  // Логика быстрого меню через /
+  function handleMsgChange(val) {
+    setMsgText(val)
+    if (val === '/' || (val.startsWith('/') && val.length <= 30)) {
+      const q = val.slice(1).toLowerCase()
+      setQuickFilter(q)
+      setShowQuickMenu(true)
+    } else {
+      setShowQuickMenu(false)
+      setQuickFilter('')
+    }
+  }
+
+  function applyQuickReply(r) {
+    const client = linkedClient
+    let text = r.body
+    if (client) {
+      text = text
+        .replace(/\{\{имя\}\}/g,      client.fio?.split(' ')[0] || client.fio || '')
+        .replace(/\{\{менеджер\}\}/g,  user?.name || '')
+        .replace(/\{\{сумма\}\}/g,     client.contract_amount ? Math.round(client.contract_amount).toLocaleString('ru') + ' ₸' : '')
+        .replace(/\{\{программа\}\}/g, client.contract_type || '')
+    }
+    text = text.replace(/\{\{менеджер\}\}/g, user?.name || '')
+    setMsgText(text)
+    setShowQuickMenu(false)
+    setQuickFilter('')
+    setTimeout(() => inputRef.current?.focus(), 50)
+  }
+
+  const filteredQuickReplies = quickReplies.filter(r => {
+    if (!quickFilter) return true
+    return r.trigger.toLowerCase().includes(quickFilter) ||
+           r.title.toLowerCase().includes(quickFilter)
+  })
 
   // Запрашиваем уведомления при первом открытии
   useEffect(() => {
@@ -2001,14 +2047,59 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
             <textarea
               ref={inputRef}
               className="wa-textarea"
-            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg()}}}
               value={msgText}
-              onChange={e=>setMsgText(e.target.value)}
-              placeholder="Написать сообщение..."
+              onChange={e=>handleMsgChange(e.target.value)}
+              placeholder="Написать сообщение... (/ для быстрых ответов)"
               rows={1}
-              onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg()}}}
+              onKeyDown={e=>{
+                if(showQuickMenu && (e.key==='ArrowDown'||e.key==='ArrowUp'||e.key==='Escape')){
+                  if(e.key==='Escape'){setShowQuickMenu(false);setMsgText('')}
+                  e.preventDefault(); return
+                }
+                if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(!showQuickMenu)sendMsg()}
+              }}
               style={{minHeight:40}}
             />
+
+            {/* ─── Меню быстрых ответов через / ─── */}
+            {showQuickMenu && filteredQuickReplies.length > 0 && (
+              <div style={{position:'absolute',bottom:'100%',left:0,right:0,marginBottom:6,
+                background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,
+                boxShadow:'0 8px 30px rgba(0,0,0,.15)',overflow:'hidden',zIndex:100,maxHeight:320,overflowY:'auto'}}>
+                <div style={{padding:'8px 12px',background:'#f8fafc',borderBottom:'1px solid #f1f5f9',
+                  fontSize:11,color:'#64748b',fontWeight:600}}>
+                  ⚡ Быстрые ответы — введите / и начните набирать
+                </div>
+                {filteredQuickReplies.map(r => (
+                  <div key={r.id} onClick={()=>applyQuickReply(r)}
+                    style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',cursor:'pointer',
+                      borderBottom:'1px solid #f8fafc',transition:'background .1s'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='#f0fdf4'}
+                    onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                    <div style={{fontFamily:'monospace',fontWeight:700,fontSize:12,color:'#3b82f6',
+                      background:'#eff6ff',padding:'2px 7px',borderRadius:5,flexShrink:0,marginTop:1}}>
+                      {r.trigger}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:12,color:'#0f172a',marginBottom:2}}>{r.title}</div>
+                      <div style={{fontSize:11,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',
+                        whiteSpace:'nowrap'}}>{r.body.slice(0,60)}...</div>
+                    </div>
+                  </div>
+                ))}
+                <div style={{padding:'6px 12px',background:'#f8fafc',borderTop:'1px solid #f1f5f9',
+                  fontSize:10,color:'#94a3b8'}}>
+                  Нажмите на шаблон или Esc для закрытия
+                </div>
+              </div>
+            )}
+            {showQuickMenu && filteredQuickReplies.length === 0 && (
+              <div style={{position:'absolute',bottom:'100%',left:0,right:0,marginBottom:6,
+                background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,padding:'12px 14px',
+                boxShadow:'0 4px 16px rgba(0,0,0,.1)',zIndex:100,fontSize:12,color:'#94a3b8'}}>
+                Шаблоны не найдены по «/{quickFilter}». Техник добавляет шаблоны в Панели техника.
+              </div>
+            )}
             <button onClick={sendMsg} disabled={!msgText.trim()}
               style={{width:44,height:44,borderRadius:'50%',border:'none',background:msgText.trim()?'#25d366':'#e9e9e9',color:msgText.trim()?'#fff':'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center',cursor:msgText.trim()?'pointer':'default',flexShrink:0,transition:'all .15s'}}>
               <i className="ti ti-send" style={{fontSize:20}}/>
@@ -2017,7 +2108,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
         </>
       )}
     </div>
-  ), [selChat, messages, showChatView, showAssignDlg, showQR, msgText, sendingFile, managers, linkedClient, showClientPanel, mgrById])
+  ), [selChat, messages, showChatView, showAssignDlg, showQR, msgText, sendingFile, managers, linkedClient, showClientPanel, mgrById, showQuickMenu, filteredQuickReplies, quickFilter])
 
   // ── Client panel ──────────────────────────────────────────────
   const ClientPanel = showClientPanel && linkedClient && (
@@ -2316,7 +2407,7 @@ function AdminPage({ managers, pipeline, checklists, users, user, onSaveMgr, onD
       </div>
 
       <div style={{display:'flex',gap:7,marginBottom:18,flexWrap:'wrap'}}>
-        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'}].map(t => (
+        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'}].map(t => (
           <Btn key={t.id} variant={tab===t.id?'primary':'ghost'} onClick={()=>setTab(t.id)}>{t.l}</Btn>
         ))}
       </div>
@@ -2450,11 +2541,420 @@ function AdminPage({ managers, pipeline, checklists, users, user, onSaveMgr, onD
           )
         })}
       </>}
+      {tab === 'calc'       && <CalcSettingsPanel/>}
+      {tab === 'wa_replies' && <WaRepliesPanel/>}
     </div>
   )
 }
 
 AdminPage = React.memo(AdminPage)
+
+// ─── ПАНЕЛЬ НАСТРОЕК КАЛЬКУЛЯТОРА (техник) ────────────────────────────────────
+function CalcSettingsPanel() {
+  const [loading,  setLoading]  = useState(true)
+  const [saving,   setSaving]   = useState(false)
+  const [cfg,      setCfg]      = useState({ mrp:4325, pmNauryz:10, pmOther:13 })
+  const [programs, setPrograms] = useState([])
+  const [editKey,  setEditKey]  = useState(null)
+  const [msg,      setMsg]      = useState('')
+
+  const toast = (t) => { setMsg(t); setTimeout(()=>setMsg(''), 3500) }
+
+  useEffect(() => {
+    api.getCalcSettings().then(d => {
+      if (d?.settings) setCfg({
+        mrp:      d.settings.mrp        || 4325,
+        pmNauryz: d.settings.pm_nauryz  || 10,
+        pmOther:  d.settings.pm_other   || 13,
+      })
+      if (d?.programs?.length) setPrograms(d.programs.map(p => ({
+        key:       p.key,
+        name:      p.name,
+        icon:      p.icon         || '🏠',
+        downRatio: parseFloat(p.down_ratio) || 0.20,
+        desc:      p.desc_text    || '',
+        active:    p.active       !== false,
+        sortOrder: p.sort_order   || 0,
+        variants:  Array.isArray(p.variants) ? p.variants : [],
+      })))
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const setCfgF   = (k,v) => setCfg(s=>({...s,[k]:v}))
+  const setProg   = (key,field,val) => setPrograms(ps => ps.map(p => p.key===key ? {...p,[field]:val} : p))
+  const setVar    = (key,vi,field,val) => setPrograms(ps => ps.map(p => p.key===key
+    ? {...p, variants: p.variants.map((v,i)=>i===vi?{...v,[field]:field==='coeff'?+val:val}:v)} : p))
+  const addVar    = (key) => setPrograms(ps => ps.map(p => p.key===key
+    ? {...p, variants:[...p.variants,{label:'',coeff:0.01}]} : p))
+  const removeVar = (key,vi) => setPrograms(ps => ps.map(p => p.key===key
+    ? {...p, variants:p.variants.filter((_,i)=>i!==vi)} : p))
+
+  function addProgram() {
+    const key = 'prog_'+Date.now()
+    setPrograms(ps=>[...ps,{key,name:'Новая программа',icon:'🏠',downRatio:0.20,desc:'',active:true,sortOrder:ps.length,variants:[{label:'7% — 25 лет',coeff:0.00783333}]}])
+    setEditKey(key)
+  }
+
+  async function deleteProgram(key) {
+    if (!window.confirm('Удалить программу?')) return
+    await api.deleteCalcProgram(key).catch(()=>{})
+    setPrograms(ps=>ps.filter(p=>p.key!==key))
+    toast('🗑 Программа удалена')
+  }
+
+  async function saveAll() {
+    setSaving(true)
+    try {
+      const res = await api.saveCalcSettings({ settings: cfg, programs })
+      await api.invalidateCalcCache().catch(()=>{})
+      if (res?.ok) toast('✅ Настройки сохранены и применены!')
+      else toast('⚠️ Сохранено с ошибками — проверьте данные')
+    } catch(e) { toast('❌ ' + e.message) }
+    setSaving(false)
+  }
+
+  if (loading) return <div style={{textAlign:'center',padding:40,color:'#94a3b8',fontSize:14}}>⏳ Загрузка...</div>
+
+  const inp = (val, onChange, extra={}) => (
+    <input value={val} onChange={e=>onChange(e.target.value)} {...extra}
+      style={{padding:'8px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:13,
+        background:'#fff',color:'#0f172a',width:'100%',fontFamily:'inherit',
+        ...(extra.style||{})}}/>
+  )
+
+  return (
+    <div style={{position:'relative'}}>
+      {msg && (
+        <div style={{position:'fixed',top:20,right:20,zIndex:9999,
+          background:'#0f172a',color:'#fff',padding:'10px 18px',borderRadius:10,
+          fontSize:13,boxShadow:'0 4px 20px rgba(0,0,0,.3)'}}>
+          {msg}
+        </div>
+      )}
+
+      {/* Базовые показатели */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:'#0f172a',
+          display:'flex',alignItems:'center',gap:8}}>
+          <span style={{background:'#eff6ff',padding:'4px 8px',borderRadius:7,fontSize:12}}>📊</span>
+          Базовые показатели
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:10}}>
+          {[
+            {k:'mrp',      label:'МРП (₸)',                    hint:'2025 = 4 325 ₸'},
+            {k:'pmNauryz', label:'ПМ Наурыз (кол-во МРП)',     hint:'обычно 10'},
+            {k:'pmOther',  label:'ПМ остальные (кол-во МРП)',  hint:'обычно 13'},
+          ].map(({k,label,hint}) => (
+            <div key={k}>
+              <div style={{fontSize:11,color:'#64748b',marginBottom:4,fontWeight:500}}>{label}</div>
+              {inp(cfg[k], v=>setCfgF(k,+v), {type:'number',placeholder:hint})}
+              <div style={{fontSize:10,color:'#94a3b8',marginTop:3}}>{hint}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{background:'#f0fdf4',borderRadius:9,padding:'9px 12px',fontSize:12,color:'#166534'}}>
+          💡 ПМ (прожиточный минимум) = МРП × коэфф. Используется в расчёте одобрения (Метод 2).
+          <br/>Наурыз: {cfg.pmNauryz} × {cfg.mrp} = <b>{(cfg.pmNauryz * cfg.mrp).toLocaleString('ru-RU')} ₸</b> · 
+          Остальные: {cfg.pmOther} × {cfg.mrp} = <b>{(cfg.pmOther * cfg.mrp).toLocaleString('ru-RU')} ₸</b>
+        </div>
+      </div>
+
+      {/* Программы */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:14}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,color:'#0f172a',display:'flex',alignItems:'center',gap:8}}>
+            <span style={{background:'#eff6ff',padding:'4px 8px',borderRadius:7,fontSize:12}}>🏠</span>
+            Ипотечные программы ({programs.length})
+          </div>
+          <button onClick={addProgram}
+            style={{padding:'7px 14px',border:'1.5px solid #3b82f6',borderRadius:8,
+              background:'#eff6ff',color:'#1d4ed8',fontSize:12,fontWeight:600,cursor:'pointer'}}>
+            + Добавить
+          </button>
+        </div>
+
+        {programs.map(p => (
+          <div key={p.key}
+            style={{border:`1.5px solid ${editKey===p.key?'#3b82f6':'#e2e8f0'}`,
+              borderRadius:11,marginBottom:9,overflow:'hidden',
+              opacity:p.active?1:0.55,transition:'opacity .2s'}}>
+
+            {/* Заголовок */}
+            <div onClick={()=>setEditKey(editKey===p.key?null:p.key)}
+              style={{display:'flex',alignItems:'center',gap:10,padding:'10px 13px',
+                cursor:'pointer',background:editKey===p.key?'#eff6ff':'#f8fafc',
+                userSelect:'none'}}>
+              <span style={{fontSize:20}}>{p.icon}</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
+                <div style={{fontSize:11,color:'#64748b'}}>
+                  ПВ {Math.round(p.downRatio*100)}% · {p.variants.length} вариант(ов)
+                  {!p.active && <span style={{color:'#ef4444',marginLeft:8,fontWeight:600}}>⛔ отключена</span>}
+                </div>
+              </div>
+              <div style={{display:'flex',gap:5}}>
+                <button onClick={e=>{e.stopPropagation();setProg(p.key,'active',!p.active)}}
+                  style={{padding:'3px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:10,
+                    fontWeight:600,cursor:'pointer',
+                    background:p.active?'#e1f5ee':'#fef2f2',
+                    color:p.active?'#0f766e':'#991b1b'}}>
+                  {p.active?'Активна':'Откл.'}
+                </button>
+                <button onClick={e=>{e.stopPropagation();deleteProgram(p.key)}}
+                  style={{padding:'3px 8px',border:'1px solid #fecaca',borderRadius:6,
+                    background:'#fef2f2',color:'#dc2626',fontSize:11,cursor:'pointer'}}>
+                  🗑
+                </button>
+              </div>
+            </div>
+
+            {/* Редактор */}
+            {editKey === p.key && (
+              <div style={{padding:14,background:'#fff',borderTop:'1px solid #e2e8f0'}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 80px 60px',gap:9,marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Название</div>
+                    {inp(p.name, v=>setProg(p.key,'name',v))}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Описание (краткое)</div>
+                    {inp(p.desc, v=>setProg(p.key,'desc',v), {placeholder:'Взнос 20%'})}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Иконка</div>
+                    {inp(p.icon, v=>setProg(p.key,'icon',v), {placeholder:'🏠',style:{textAlign:'center',fontSize:18}})}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>ПВ %</div>
+                    <input type="number" min="0" max="100" step="5"
+                      value={Math.round(p.downRatio*100)}
+                      onChange={e=>setProg(p.key,'downRatio',+e.target.value/100)}
+                      style={{padding:'8px 6px',border:'1.5px solid #e2e8f0',borderRadius:9,
+                        fontSize:13,width:'100%',textAlign:'center',background:'#fff',color:'#0f172a'}}/>
+                  </div>
+                </div>
+
+                {/* Варианты ставок */}
+                <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:7}}>
+                  Варианты ставок:
+                </div>
+                {p.variants.map((v, vi) => (
+                  <div key={vi} style={{display:'grid',gridTemplateColumns:'1fr 200px 34px',gap:7,marginBottom:6,alignItems:'center'}}>
+                    <input value={v.label} placeholder="напр. 8.5% — 8 лет"
+                      onChange={e=>setVar(p.key,vi,'label',e.target.value)}
+                      style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,background:'#fff',color:'#0f172a'}}/>
+                    <div>
+                      <input type="number" step="0.0000001" value={v.coeff}
+                        onChange={e=>setVar(p.key,vi,'coeff',e.target.value)}
+                        placeholder="коэффициент"
+                        style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,width:'100%',background:'#fff',color:'#0f172a'}}/>
+                      {v.coeff > 0 && (
+                        <div style={{fontSize:9,color:'#94a3b8',marginTop:2}}>
+                          платёж ≈ цена × {v.coeff} · для 30М = {Math.round(30000000*v.coeff).toLocaleString('ru')} ₸/мес
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={()=>removeVar(p.key,vi)}
+                      style={{width:32,height:32,border:'1px solid #fecaca',borderRadius:7,
+                        background:'#fef2f2',color:'#dc2626',cursor:'pointer',fontSize:14,
+                        display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                  </div>
+                ))}
+                <button onClick={()=>addVar(p.key)}
+                  style={{padding:'5px 12px',border:'1.5px dashed #cbd5e1',borderRadius:8,
+                    background:'transparent',color:'#64748b',fontSize:11,cursor:'pointer',marginTop:3}}>
+                  + Добавить вариант ставки
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <button onClick={saveAll} disabled={saving}
+        style={{width:'100%',padding:13,border:'none',borderRadius:12,fontWeight:700,fontSize:14,
+          cursor:saving?'not-allowed':'pointer',marginBottom:4,
+          background:saving?'#93c5fd':'linear-gradient(135deg,#3b82f6,#1d4ed8)',
+          color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+          boxShadow:saving?'none':'0 4px 14px rgba(59,130,246,.4)'}}>
+        {saving
+          ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Сохраняю...</>
+          : <><i className="ti ti-device-floppy" style={{fontSize:16}}/>Сохранить настройки калькулятора</>}
+      </button>
+      <div style={{fontSize:11,color:'#94a3b8',textAlign:'center',marginTop:5}}>
+        Изменения применяются в течение 30 секунд (кэш сервера)
+      </div>
+    </div>
+  )
+}
+
+// ─── ПАНЕЛЬ БЫСТРЫХ ОТВЕТОВ WA (техник) ───────────────────────────────────────
+function WaRepliesPanel() {
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [replies, setReplies] = useState([])
+  const [editId,  setEditId]  = useState(null)
+  const [msg,     setMsg]     = useState('')
+
+  const toast = t => { setMsg(t); setTimeout(()=>setMsg(''), 3500) }
+  const CATS  = ['greeting','approval','rejection','docs','calc','meeting','thanks','status','general']
+
+  useEffect(() => {
+    api.getCalcSettings().then(d => {
+      if (d?.replies) setReplies(d.replies.map(r => ({
+        id:        r.id,
+        trigger:   r.trigger,
+        title:     r.title,
+        body:      r.body,
+        category:  r.category  || 'general',
+        active:    r.active    !== false,
+        sortOrder: r.sort_order || 0,
+      })))
+      setLoading(false)
+    }).catch(()=>setLoading(false))
+  }, [])
+
+  const setR = (id,f,v) => setReplies(rs=>rs.map(r=>r.id===id?{...r,[f]:v}:r))
+
+  function addReply() {
+    const id = 'reply_'+Date.now()
+    setReplies(rs=>[...rs,{id,trigger:'/новый',title:'Новый шаблон',body:'Текст...',category:'general',active:true,sortOrder:rs.length}])
+    setEditId(id)
+  }
+
+  async function deleteReply(id) {
+    if (!window.confirm('Удалить шаблон?')) return
+    await api.deleteQuickReply(id).catch(()=>{})
+    setReplies(rs=>rs.filter(r=>r.id!==id))
+    toast('🗑 Удалено')
+  }
+
+  async function saveAll() {
+    setSaving(true)
+    try {
+      const res = await api.saveCalcSettings({ replies })
+      if (res?.ok) toast('✅ Шаблоны сохранены!')
+      else toast('⚠️ Сохранено с ошибками')
+    } catch(e) { toast('❌ '+e.message) }
+    setSaving(false)
+  }
+
+  if (loading) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>⏳ Загрузка...</div>
+
+  return (
+    <div style={{position:'relative'}}>
+      {msg && (
+        <div style={{position:'fixed',top:20,right:20,zIndex:9999,
+          background:'#0f172a',color:'#fff',padding:'10px 18px',borderRadius:10,
+          fontSize:13,boxShadow:'0 4px 20px rgba(0,0,0,.3)'}}>
+          {msg}
+        </div>
+      )}
+
+      <div style={{background:'#e1f5ee',border:'1.5px solid #5dcaa5',borderRadius:11,
+        padding:'10px 14px',marginBottom:14,fontSize:12,color:'#085041',lineHeight:1.6}}>
+        <b>⚡ Быстрые ответы через /</b><br/>
+        В чате WhatsApp введите <code style={{background:'#fff',padding:'1px 6px',borderRadius:4}}>/</code> и выберите из меню.
+        Переменные: <code>{'{{имя}}'}</code> <code>{'{{менеджер}}'}</code> <code>{'{{сумма}}'}</code> <code>{'{{программа}}'}</code>
+      </div>
+
+      <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+        <button onClick={addReply}
+          style={{padding:'7px 15px',border:'1.5px solid #3b82f6',borderRadius:8,
+            background:'#eff6ff',color:'#1d4ed8',fontSize:12,fontWeight:600,cursor:'pointer'}}>
+          + Добавить шаблон
+        </button>
+      </div>
+
+      {replies.map(r => (
+        <div key={r.id}
+          style={{border:`1.5px solid ${editId===r.id?'#3b82f6':'#e2e8f0'}`,
+            borderRadius:11,marginBottom:9,overflow:'hidden',
+            opacity:r.active?1:0.55}}>
+
+          {/* Заголовок */}
+          <div onClick={()=>setEditId(editId===r.id?null:r.id)}
+            style={{display:'flex',alignItems:'center',gap:10,padding:'9px 13px',
+              cursor:'pointer',background:editId===r.id?'#eff6ff':'#f8fafc',userSelect:'none'}}>
+            <code style={{fontWeight:700,fontSize:13,color:'#3b82f6',
+              background:'#eff6ff',padding:'2px 8px',borderRadius:6,
+              border:'1px solid #bfdbfe',flexShrink:0}}>
+              {r.trigger}
+            </code>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:12,color:'#0f172a'}}>{r.title}</div>
+              <div style={{fontSize:11,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                {r.body.slice(0,70)}{r.body.length>70?'…':''}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:5,flexShrink:0}}>
+              <span style={{fontSize:10,padding:'2px 7px',borderRadius:5,background:'#f1f5f9',color:'#64748b'}}>{r.category}</span>
+              <button onClick={e=>{e.stopPropagation();setR(r.id,'active',!r.active)}}
+                style={{padding:'3px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:10,
+                  fontWeight:600,cursor:'pointer',
+                  background:r.active?'#e1f5ee':'#fef2f2',
+                  color:r.active?'#0f766e':'#991b1b'}}>
+                {r.active?'✓ Вкл':'✗ Выкл'}
+              </button>
+              <button onClick={e=>{e.stopPropagation();deleteReply(r.id)}}
+                style={{padding:'3px 8px',border:'1px solid #fecaca',borderRadius:6,
+                  background:'#fef2f2',color:'#dc2626',fontSize:11,cursor:'pointer'}}>🗑</button>
+            </div>
+          </div>
+
+          {/* Редактор */}
+          {editId===r.id && (
+            <div style={{padding:14,background:'#fff',borderTop:'1px solid #e2e8f0'}}>
+              <div style={{display:'grid',gridTemplateColumns:'130px 1fr 150px',gap:10,marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Триггер (с /)</div>
+                  <input value={r.trigger} onChange={e=>setR(r.id,'trigger',e.target.value)}
+                    style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,
+                      fontSize:13,fontFamily:'monospace',width:'100%',background:'#fff',color:'#0f172a'}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Заголовок в меню</div>
+                  <input value={r.title} onChange={e=>setR(r.id,'title',e.target.value)}
+                    style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,
+                      fontSize:13,width:'100%',background:'#fff',color:'#0f172a'}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Категория</div>
+                  <select value={r.category} onChange={e=>setR(r.id,'category',e.target.value)}
+                    style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,
+                      fontSize:13,width:'100%',background:'#fff',color:'#0f172a'}}>
+                    {CATS.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Текст сообщения</div>
+              <textarea value={r.body} onChange={e=>setR(r.id,'body',e.target.value)} rows={5}
+                style={{width:'100%',padding:'9px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,
+                  fontSize:12,background:'#fff',color:'#0f172a',resize:'vertical',
+                  fontFamily:'inherit',lineHeight:1.55}}/>
+              <div style={{fontSize:10,color:'#94a3b8',marginTop:4}}>
+                Переменные: {'{{имя}}'} {'{{менеджер}}'} {'{{сумма}}'} {'{{программа}}'} {'{{цена}}'} {'{{взнос}}'} {'{{кредит}}'} {'{{платёж}}'} {'{{ставка}}'}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+
+      <button onClick={saveAll} disabled={saving}
+        style={{width:'100%',padding:13,border:'none',borderRadius:12,fontWeight:700,fontSize:14,
+          cursor:saving?'not-allowed':'pointer',
+          background:saving?'#93c5fd':'linear-gradient(135deg,#3b82f6,#1d4ed8)',
+          color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+          boxShadow:saving?'none':'0 4px 14px rgba(59,130,246,.4)'}}>
+        {saving
+          ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Сохраняю...</>
+          : <><i className="ti ti-device-floppy" style={{fontSize:16}}/>Сохранить шаблоны</>}
+      </button>
+    </div>
+  )
+}
+
 
 // ─── CLIENT DETAIL (full card) ────────────────────────────────────
 function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing }) {
@@ -5237,109 +5737,291 @@ function CalcOpvTab({ doCalc }) {
   const [result,    setResult]    = useState(null)
   const [busy,      setBusy]      = useState(false)
 
+  // Форматирование с пробелами — 2000000 → «2 000 000»
+  const fmt  = n => n > 0 ? Math.round(n).toLocaleString('ru-RU') + ' ₸' : '—'
+  const fmtP = n => n > 0 ? Math.round(n * 10) / 10 + '%' : '—'
+
+  // При вводе ОПВ форматируем с пробелами в подсказке
+  function parseOpv(str) {
+    return str.split(/[,;\n\s]+/).map(Number).filter(v => v > 0)
+  }
+
   async function calc() {
     setBusy(true); setResult(null)
     try {
       let res
       if (mode === 'var') {
-        const opv12 = opvStr.split(/[,;\n\s]+/).map(Number).filter(v => v > 0)
-        res = await doCalc('opv_var', { opv12, target: +target, salary: +salaryBuh, type: typeBuh })
+        const opv12 = parseOpv(opvStr)
+        if (!opv12.length) { setBusy(false); return }
+        res = await doCalc('opv_var', { opv12, target: +target.replace(/\s/g,''), salary: +salaryBuh.replace(/\s/g,''), type: typeBuh })
       } else {
-        res = await doCalc('opv_eq', { income: +income, months: +months, salary: +salaryBuh, type: typeBuh })
+        if (!income) { setBusy(false); return }
+        res = await doCalc('opv_eq', { income: +income.replace(/\s/g,''), months: +months, salary: +salaryBuh.replace(/\s/g,''), type: typeBuh })
       }
       if (res?.ok) setResult(res)
     } finally { setBusy(false) }
   }
 
-  const fmtM = n => Math.round(n||0).toLocaleString('ru-RU') + ' ₸'
+  const opvList = parseOpv(opvStr)
+  const opvTotal = opvList.reduce((s,v)=>s+v, 0)
+  const opvAvg   = opvList.length ? opvTotal / opvList.length : 0
+  // ОПВ = 10% от ЗП → ЗП = ОПВ / 0.10
+  const salaryFromOpv = opvAvg / 0.10
 
   return (
     <div>
-      <div className="r2" style={{marginBottom:12}}>
-        {[['var','По истории ОПВ'],['eq','Равномерный']].map(([m,l])=>(
+      {/* Режим */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:14}}>
+        {[['var','📊 По истории ОПВ'],['eq','📐 Равномерный']].map(([m,l])=>(
           <button key={m} onClick={()=>{setMode(m);setResult(null)}}
-            style={{flex:1,padding:'8px',border:`1.5px solid ${mode===m?'#3b82f6':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
-              background:mode===m?'#eff6ff':'#fff',color:mode===m?'#1d4ed8':'#64748b',fontSize:12,fontWeight:mode===m?600:400}}>
+            style={{padding:'10px',border:`2px solid ${mode===m?'#3b82f6':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
+              background:mode===m?'#eff6ff':'#fff',color:mode===m?'#1d4ed8':'#64748b',
+              fontSize:13,fontWeight:mode===m?700:400,transition:'all .15s'}}>
             {l}
           </button>
         ))}
       </div>
-      <div style={{background:'#f8fafc',borderRadius:12,padding:14,marginBottom:12}}>
-        {mode === 'var' ? (
-          <>
-            <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Суммы ОПВ за последние месяцы (через запятую или с новой строки, ₸)</div>
-            <textarea value={opvStr} onChange={e=>setOpvStr(e.target.value)} placeholder="Например: 30000, 32000, 29500, 31000, 30500, 28000"
-              rows={3} style={{width:'100%',padding:'10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a',resize:'vertical',marginBottom:8,fontFamily:'inherit'}}/>
-            <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Целевая средняя ЗП (опц.)</div>
-            <input type="number" value={target} onChange={e=>setTarget(e.target.value)} placeholder="300 000"
-              style={{width:'100%',padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a',marginBottom:8}}/>
-          </>
-        ) : (
-          <div className="r2" style={{marginBottom:8}}>
-            <div style={{flex:1}}>
-              <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Нужный доход (₸)</div>
-              <input type="number" value={income} onChange={e=>setIncome(e.target.value)} placeholder="300 000"
-                style={{width:'100%',padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a'}}/>
+
+      {mode === 'var' ? (
+        <div>
+          {/* Пояснение */}
+          <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:10,padding:'10px 13px',marginBottom:12,fontSize:12,color:'#1e40af',lineHeight:1.5}}>
+            <b>Как заполнить:</b> Введите суммы ОПВ из истории ОПВ — каждый месяц с новой строки или через запятую.<br/>
+            ОПВ — это 10% от вашей официальной зарплаты (например, ОПВ 30 000 ₸ → ЗП 300 000 ₸)
+          </div>
+
+          {/* Поле ОПВ */}
+          <div style={{marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <label style={{fontSize:12,fontWeight:600,color:'#374151'}}>Суммы ОПВ за каждый месяц (₸)</label>
+              {opvList.length > 0 && (
+                <span style={{fontSize:11,color:'#64748b',background:'#f1f5f9',padding:'2px 8px',borderRadius:6}}>
+                  {opvList.length} мес. введено
+                </span>
+              )}
             </div>
-            <div style={{flex:1}}>
-              <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Срок (месяцев)</div>
-              <select value={months} onChange={e=>setMonths(e.target.value)}
-                style={{width:'100%',padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a'}}>
-                {[3,4,5,6].map(n=><option key={n} value={n}>{n}</option>)}
-              </select>
+            <textarea
+              value={opvStr}
+              onChange={e=>setOpvStr(e.target.value)}
+              placeholder={"Пример:\n30000\n32500\n29000\n31000\n30500\n28000\n\n(каждая строка — один месяц)"}
+              rows={5}
+              style={{width:'100%',padding:'10px 12px',border:`1.5px solid ${opvStr&&!opvList.length?'#fca5a5':'#e2e8f0'}`,
+                borderRadius:10,fontSize:14,background:'#fff',color:'#0f172a',
+                resize:'vertical',fontFamily:'monospace',lineHeight:1.7}}
+            />
+            {/* Живой предпросмотр */}
+            {opvList.length > 0 && (
+              <div style={{marginTop:8,padding:'10px 13px',background:'#f8fafc',borderRadius:10,border:'1px solid #e2e8f0'}}>
+                <div style={{fontSize:11,color:'#64748b',marginBottom:6,fontWeight:600}}>Распознанные данные:</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:8}}>
+                  {opvList.map((v,i) => (
+                    <span key={i} style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:6,
+                      padding:'3px 8px',fontSize:11,fontFamily:'monospace',color:'#0f172a'}}>
+                      {i+1}. {v.toLocaleString('ru-RU')} ₸
+                    </span>
+                  ))}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
+                  {[
+                    ['Месяцев', opvList.length + ' мес.', '#374151'],
+                    ['Ср. ОПВ/мес', opvAvg.toLocaleString('ru-RU',{maximumFractionDigits:0}) + ' ₸', '#1d4ed8'],
+                    ['Ср. ЗП (÷0.10)', salaryFromOpv.toLocaleString('ru-RU',{maximumFractionDigits:0}) + ' ₸', '#0f766e'],
+                  ].map(([l,v,c])=>(
+                    <div key={l} style={{background:'#fff',borderRadius:8,padding:'8px 10px',border:'1px solid #e2e8f0'}}>
+                      <div style={{fontSize:10,color:'#94a3b8',marginBottom:2}}>{l}</div>
+                      <div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Целевая ЗП */}
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>
+              Целевая средняя ЗП (необязательно)
+            </label>
+            <div style={{position:'relative'}}>
+              <input value={target} onChange={e=>setTarget(e.target.value)} type="number"
+                placeholder="300 000"
+                style={{width:'100%',padding:'10px 50px 10px 12px',border:'1.5px solid #e2e8f0',
+                  borderRadius:10,fontSize:14,background:'#fff',color:'#0f172a'}}/>
+              <span style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',
+                fontSize:13,color:'#94a3b8',pointerEvents:'none'}}>₸</span>
+            </div>
+            {target > 0 && (
+              <div style={{fontSize:11,color:'#64748b',marginTop:4}}>
+                = {(+target/10).toLocaleString('ru-RU',{maximumFractionDigits:0})} ₸ ОПВ/мес (10%)
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:10,padding:'10px 13px',marginBottom:12,fontSize:12,color:'#1e40af'}}>
+            Рассчитывает какой должен быть доход каждый месяц, если ОПВ поступают равномерно.
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+            <div>
+              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>Нужный доход (₸)</label>
+              <div style={{position:'relative'}}>
+                <input value={income} onChange={e=>setIncome(e.target.value)} type="number" placeholder="300 000"
+                  style={{width:'100%',padding:'10px 50px 10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:14,background:'#fff',color:'#0f172a'}}/>
+                <span style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontSize:13,color:'#94a3b8',pointerEvents:'none'}}>₸</span>
+              </div>
+              {income > 0 && <div style={{fontSize:11,color:'#64748b',marginTop:4}}>ОПВ = {(+income * 0.10).toLocaleString('ru-RU',{maximumFractionDigits:0})} ₸/мес</div>}
+            </div>
+            <div>
+              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>Срок накопления</label>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:4}}>
+                {[3,4,5,6].map(n=>(
+                  <button key={n} onClick={()=>setMonths(String(n))}
+                    style={{padding:'10px 0',border:`1.5px solid ${months==n?'#3b82f6':'#e2e8f0'}`,borderRadius:8,
+                      background:months==n?'#eff6ff':'#fff',color:months==n?'#1d4ed8':'#64748b',
+                      fontSize:12,fontWeight:months==n?700:400,cursor:'pointer'}}>
+                    {n} мес
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        )}
-        <div className="r2">
-          <div style={{flex:1}}>
-            <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Тип договора (бухгалтер)</div>
+        </div>
+      )}
+
+      {/* Тип договора и ЗП для бухгалтера */}
+      <div style={{background:'#fafafa',borderRadius:10,border:'1px solid #e2e8f0',padding:12,marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:600,color:'#64748b',marginBottom:8}}>Для расчёта отчислений (необязательно)</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div>
+            <label style={{fontSize:11,color:'#64748b',display:'block',marginBottom:4}}>Тип договора</label>
             <select value={typeBuh} onChange={e=>setTypeBuh(e.target.value)}
-              style={{width:'100%',padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a'}}>
+              style={{width:'100%',padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:13,background:'#fff',color:'#0f172a'}}>
               <option value="Трудовой">Трудовой</option>
               <option value="ГПХ">ГПХ</option>
             </select>
           </div>
-          <div style={{flex:1}}>
-            <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>ЗП для отчислений (опц.)</div>
-            <input type="number" value={salaryBuh} onChange={e=>setSalaryBuh(e.target.value)} placeholder="300 000"
-              style={{width:'100%',padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a'}}/>
+          <div>
+            <label style={{fontSize:11,color:'#64748b',display:'block',marginBottom:4}}>Зарплата (₸)</label>
+            <div style={{position:'relative'}}>
+              <input value={salaryBuh} onChange={e=>setSalaryBuh(e.target.value)} type="number" placeholder="300 000"
+                style={{width:'100%',padding:'8px 40px 8px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:13,background:'#fff',color:'#0f172a'}}/>
+              <span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#94a3b8',pointerEvents:'none'}}>₸</span>
+            </div>
           </div>
         </div>
       </div>
 
       <button onClick={calc} disabled={busy}
-        style={{width:'100%',padding:12,border:'none',borderRadius:12,background:busy?'#93c5fd':'#3b82f6',color:'#fff',fontSize:14,fontWeight:600,cursor:busy?'default':'pointer',marginBottom:12,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
-        {busy ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Считаю...</> : <><i className="ti ti-chart-bar" style={{fontSize:16}}/>Рассчитать ОПВ</>}
+        style={{width:'100%',padding:13,border:'none',borderRadius:12,
+          background:busy?'#93c5fd':'#3b82f6',color:'#fff',fontSize:14,fontWeight:700,
+          cursor:busy?'default':'pointer',marginBottom:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+        {busy
+          ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Считаю...</>
+          : <><i className="ti ti-chart-bar" style={{fontSize:16}}/>Рассчитать ОПВ</>}
       </button>
 
-      {result?.ok && result.result && (
-        <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:12,padding:14}}>
-          <div style={{fontSize:13,fontWeight:700,color:'#16a34a',marginBottom:8}}>Результат ОПВ</div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginBottom:10}}>
-            {[
-              ['Средняя ЗП', fmtM(result.result.currentAvg)],
-              ['Цель', fmtM(result.result.target)],
-              ['Разница', fmtM(result.result.gap)],
-            ].map(([l,v])=>(
-              <div key={l} style={{background:'#fff',borderRadius:8,padding:8}}>
-                <div style={{fontSize:10,color:'#64748b',marginBottom:1}}>{l}</div>
-                <div style={{fontSize:13,fontWeight:600}}>{v}</div>
-              </div>
-            ))}
-          </div>
-          {result.result.plan?.length > 0 && (
-            <>
-              <div style={{fontSize:12,fontWeight:600,color:'#16a34a',marginBottom:6}}>План ОПВ для набора нужной суммы:</div>
-              {result.result.plan.filter(p=>p.opvPerMonth).map((p,i)=>(
-                <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #dcfce7'}}>
-                  <span style={{fontSize:12,color:'#374151'}}>{p.months} мес.</span>
-                  <span style={{fontSize:12,fontWeight:500}}>ОПВ {fmtM(p.opvPerMonth)}/мес → ЗП {fmtM(p.achieved)}</span>
+      {/* Результат */}
+      {result?.ok && result.result && (() => {
+        const r = result.result
+        return (
+          <div>
+            {/* Основные метрики */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:14}}>
+              {[
+                {l:'Средняя ЗП', v: fmt(r.currentAvg), sub:'по данным ОПВ', c:'#0f766e', bg:'#f0fdfa'},
+                {l:'Цель', v: r.target ? fmt(r.target) : '—', sub:'целевая зарплата', c:'#1d4ed8', bg:'#eff6ff'},
+                {l:'Разница', v: r.gap > 0 ? fmt(r.gap) : '✅ Достигнута', sub:r.gap>0?'нужно добрать':'цель достигнута', c:r.gap>0?'#854F0B':'#0f766e', bg:r.gap>0?'#fefce8':'#f0fdfa'},
+              ].map(({l,v,sub,c,bg})=>(
+                <div key={l} style={{background:bg,borderRadius:12,padding:'12px 14px',border:`1.5px solid ${c}33`}}>
+                  <div style={{fontSize:10,color:'#64748b',marginBottom:4,fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em'}}>{l}</div>
+                  <div style={{fontSize:16,fontWeight:800,color:c,marginBottom:2}}>{v}</div>
+                  <div style={{fontSize:10,color:'#94a3b8'}}>{sub}</div>
                 </div>
               ))}
-            </>
-          )}
-        </div>
-      )}
+            </div>
+
+            {/* Разбивка по месяцам */}
+            {mode==='var' && r.breakdown && (
+              <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:14}}>
+                <div style={{padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontSize:12,fontWeight:600,color:'#374151'}}>
+                  📅 Разбивка по месяцам
+                </div>
+                {r.breakdown.map((row,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                    padding:'9px 14px',borderBottom:i<r.breakdown.length-1?'1px solid #f8fafc':'none',
+                    background:row.isTotal?'#f0fdf4':row.isAvg?'#eff6ff':'transparent'}}>
+                    <span style={{fontSize:12,fontWeight:row.isTotal||row.isAvg?600:400,
+                      color:row.isTotal?'#0f766e':row.isAvg?'#1d4ed8':'#374151'}}>{row.label}</span>
+                    <div style={{textAlign:'right'}}>
+                      <div style={{fontSize:row.isTotal||row.isAvg?14:12,fontWeight:row.isTotal||row.isAvg?700:400,
+                        color:row.isTotal?'#0f766e':row.isAvg?'#1d4ed8':'#0f172a'}}>
+                        {typeof row.val === 'number' ? row.val.toLocaleString('ru-RU',{maximumFractionDigits:0})+' ₸' : row.val}
+                      </div>
+                      {row.opv != null && (
+                        <div style={{fontSize:10,color:'#94a3b8'}}>ОПВ: {Math.round(row.opv).toLocaleString('ru-RU')} ₸</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* План набора ОПВ */}
+            {r.plan?.length > 0 && r.plan.some(p=>p.opvPerMonth) && (
+              <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:14}}>
+                <div style={{padding:'10px 14px',background:'#fefce8',borderBottom:'1px solid #fde68a',fontSize:12,fontWeight:600,color:'#854F0B'}}>
+                  🎯 План набора нужной суммы ОПВ
+                </div>
+                {r.plan.filter(p=>p.opvPerMonth).map((p,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                    padding:'10px 14px',borderBottom:i<r.plan.filter(x=>x.opvPerMonth).length-1?'1px solid #f8fafc':'none'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:10}}>
+                      <div style={{width:28,height:28,borderRadius:'50%',background:'#fef3c7',
+                        color:'#92400e',display:'flex',alignItems:'center',justifyContent:'center',
+                        fontSize:11,fontWeight:700}}>{p.months}</div>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:600,color:'#0f172a'}}>{p.months} месяц{p.months>1?p.months<5?'а':'ев':''}</div>
+                        <div style={{fontSize:10,color:'#94a3b8'}}>платить ОПВ в мес.</div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:'right'}}>
+                      <div style={{fontSize:13,fontWeight:700,color:'#854F0B'}}>{fmt(p.opvPerMonth)}</div>
+                      <div style={{fontSize:10,color:'#94a3b8'}}>→ ЗП {fmt(p.achieved)}</div>
+                    </div>
+                    {p.totalCost && (
+                      <div style={{textAlign:'right',marginLeft:12}}>
+                        <div style={{fontSize:11,color:'#64748b'}}>Итого</div>
+                        <div style={{fontSize:12,fontWeight:600,color:'#374151'}}>{fmt(p.totalCost)}</div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Отчисления бухгалтера */}
+            {r.buh?.length > 0 && (
+              <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden'}}>
+                <div style={{padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontSize:12,fontWeight:600,color:'#374151'}}>
+                  🧾 Отчисления ({typeBuh})
+                </div>
+                {r.buh.map((row,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                    padding:'8px 14px',borderBottom:i<r.buh.length-1?'1px solid #f8fafc':'none',
+                    background:row.isTotal?'#f0fdf4':'transparent'}}>
+                    <span style={{fontSize:12,fontWeight:row.isTotal?600:400,color:row.isTotal?'#0f766e':'#374151'}}>{row.label}</span>
+                    <span style={{fontSize:row.isTotal?13:12,fontWeight:row.isTotal?700:400,
+                      color:row.isTotal?'#0f766e':'#0f172a'}}>
+                      {typeof row.val === 'number' ? row.val.toLocaleString('ru-RU',{maximumFractionDigits:0})+' ₸' : row.val}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -5351,53 +6033,117 @@ function CalcTaxTab({ doCalc }) {
   const [busy,   setBusy]   = useState(false)
   const [err,    setErr]    = useState('')
 
+  const fmt = n => Math.round(n||0).toLocaleString('ru-RU') + ' ₸'
+
   async function calc() {
-    setErr(''); if (!salary || +salary <= 0) { setErr('Укажите зарплату больше нуля'); return }
+    setErr('')
+    const s = +String(salary).replace(/\s/g,'')
+    if (!s || s <= 0) { setErr('Укажите зарплату больше нуля'); return }
     setBusy(true); setResult(null)
     try {
-      const res = await doCalc('buh', { type, salary: +salary })
+      const res = await doCalc('buh', { type, salary: s })
       if (res?.ok) setResult(res)
       else setErr(res?.message || 'Не удалось рассчитать')
     } finally { setBusy(false) }
   }
 
-  const fmtM = n => Math.round(n||0).toLocaleString('ru-RU') + ' ₸'
-
   return (
     <div>
-      <div style={{background:'#f8fafc',borderRadius:12,padding:14,marginBottom:12}}>
-        <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Тип договора</div>
-        <select value={type} onChange={e=>{setType(e.target.value);setResult(null);setErr('')}}
-          style={{width:'100%',padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a',marginBottom:10}}>
-          <option value="Трудовой">Трудовой договор</option>
-          <option value="ГПХ">ГПХ</option>
-        </select>
-        <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Начисленная зарплата (₸)</div>
-        <input type="number" value={salary} onChange={e=>{setSalary(e.target.value);setResult(null);setErr('')}}
-          onKeyDown={e=>e.key==='Enter'&&calc()}
-          placeholder="300 000"
-          style={{width:'100%',padding:'9px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,background:'#fff',color:'#0f172a'}}/>
+      <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:10,padding:'10px 13px',marginBottom:14,fontSize:12,color:'#1e40af',lineHeight:1.5}}>
+        Введите начисленную зарплату — увидите все налоги и отчисления, и сколько реально получите на руки.
       </div>
 
-      {err && <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:10,padding:'9px 12px',marginBottom:10,fontSize:12,color:'#dc2626'}}>⚠️ {err}</div>}
+      <div style={{marginBottom:12}}>
+        <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>Тип договора</label>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+          {['Трудовой','ГПХ'].map(t=>(
+            <button key={t} onClick={()=>{setType(t);setResult(null);setErr('')}}
+              style={{padding:'10px',border:`2px solid ${type===t?'#3b82f6':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
+                background:type===t?'#eff6ff':'#fff',color:type===t?'#1d4ed8':'#64748b',
+                fontSize:13,fontWeight:type===t?700:400}}>
+              {t==='Трудовой'?'📋 Трудовой договор':'📄 ГПХ'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>
+          Начисленная зарплата (до вычетов)
+        </label>
+        <div style={{position:'relative'}}>
+          <input type="number" value={salary}
+            onChange={e=>{setSalary(e.target.value);setResult(null);setErr('')}}
+            onKeyDown={e=>e.key==='Enter'&&calc()}
+            placeholder="300 000"
+            style={{width:'100%',padding:'12px 50px 12px 14px',border:`1.5px solid ${err?'#fca5a5':'#e2e8f0'}`,
+              borderRadius:12,fontSize:16,background:'#fff',color:'#0f172a',fontWeight:500}}/>
+          <span style={{position:'absolute',right:14,top:'50%',transform:'translateY(-50%)',
+            fontSize:14,color:'#94a3b8',pointerEvents:'none',fontWeight:500}}>₸</span>
+        </div>
+        {salary > 0 && (
+          <div style={{fontSize:11,color:'#64748b',marginTop:5}}>
+            {Number(salary).toLocaleString('ru-RU')} ₸ = {(salary/1000000).toFixed(2).replace('.00','')} млн ₸
+          </div>
+        )}
+        {err && <div style={{fontSize:12,color:'#dc2626',marginTop:5}}>⚠️ {err}</div>}
+      </div>
 
       <button onClick={calc} disabled={busy}
-        style={{width:'100%',padding:12,border:'none',borderRadius:12,background:busy?'#93c5fd':'#3b82f6',color:'#fff',fontSize:14,fontWeight:600,cursor:busy?'default':'pointer',marginBottom:12,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
-        {busy ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Считаю...</> : <><i className="ti ti-receipt" style={{fontSize:16}}/>Рассчитать налоги</>}
+        style={{width:'100%',padding:13,border:'none',borderRadius:12,
+          background:busy?'#93c5fd':'#3b82f6',color:'#fff',fontSize:14,fontWeight:700,
+          cursor:busy?'default':'pointer',marginBottom:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+        {busy
+          ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Считаю...</>
+          : <><i className="ti ti-receipt" style={{fontSize:16}}/>Рассчитать налоги</>}
       </button>
 
       {result?.ok && result.breakdown?.length > 0 && (
-        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden'}}>
-          {result.breakdown.map((row,i)=>(
-            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',
-              background:row.isTotal?'#f0fdf4':'transparent',borderBottom:i<result.breakdown.length-1?'1px solid #f1f5f9':'none'}}>
-              <span style={{fontSize:row.isTotal?13:12,fontWeight:row.isTotal?600:400,color:row.isTotal?'#16a34a':'#374151'}}>{row.label}</span>
-              <span style={{fontSize:row.isTotal?14:12,fontWeight:row.isTotal?700:500,color:row.isTotal?'#16a34a':'#0f172a'}}>{fmtM(row.val)}</span>
-            </div>
-          ))}
-          <div style={{background:'#f0fdf4',padding:'10px 14px',fontSize:11,color:'#16a34a',fontWeight:600,borderTop:'1px solid #dcfce7'}}>
-            <i className="ti ti-bulb" style={{marginRight:5}}/>
-            ОПВ = {fmtM(Math.round(+salary*0.10))} → это сумма для расчёта средней ЗП в банке
+        <div>
+          {/* Главная цифра */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+            {(() => {
+              const gross = result.breakdown.find(r=>r.isGross)
+              const net   = result.breakdown.find(r=>r.isTotal||r.isNet)
+              return [
+                {l:'Начислено',  v:gross?fmt(gross.val):fmt(salary), bg:'#f8fafc', c:'#0f172a'},
+                {l:'На руки',    v:net  ?fmt(net.val)  :'—',         bg:'#f0fdf4', c:'#0f766e'},
+              ].map(({l,v,bg,c})=>(
+                <div key={l} style={{background:bg,borderRadius:12,padding:'14px',
+                  border:`1.5px solid ${c}22`,textAlign:'center'}}>
+                  <div style={{fontSize:11,color:'#64748b',marginBottom:4,fontWeight:600}}>{l}</div>
+                  <div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div>
+                </div>
+              ))
+            })()}
+          </div>
+
+          {/* Детализация */}
+          <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden'}}>
+            <div style={{padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',
+              fontSize:12,fontWeight:600,color:'#374151'}}>Детализация ({type})</div>
+            {result.breakdown.map((row,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                padding:'10px 14px',borderBottom:i<result.breakdown.length-1?'1px solid #f8fafc':'none',
+                background:row.isTotal||row.isNet?'#f0fdf4':row.isGross?'#f8fafc':'transparent'}}>
+                <span style={{fontSize:12,fontWeight:(row.isTotal||row.isNet||row.isGross)?600:400,
+                  color:(row.isTotal||row.isNet)?'#0f766e':row.isGross?'#374151':'#64748b'}}>
+                  {row.label}
+                </span>
+                <span style={{fontSize:(row.isTotal||row.isNet)?14:12,
+                  fontWeight:(row.isTotal||row.isNet||row.isGross)?700:400,
+                  color:(row.isTotal||row.isNet)?'#0f766e':row.isGross?'#0f172a':'#374151',
+                  fontFamily:'monospace'}}>
+                  {typeof row.val === 'number'
+                    ? (row.val < 0 ? '-' : '') + Math.abs(Math.round(row.val)).toLocaleString('ru-RU') + ' ₸'
+                    : row.val}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:'#94a3b8',marginTop:8,padding:'0 4px'}}>
+            <i className="ti ti-info-circle" style={{marginRight:4}}/>
+            ОПВ ({fmt(Math.round(+salary*0.10))}) = 10% от начисленной. Используется банком для расчёта средней ЗП.
           </div>
         </div>
       )}
