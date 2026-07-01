@@ -5517,6 +5517,7 @@ function CalcMortgageResult({ result, mode, prog }) {
 
   if (!result?.ok) return null
 
+  // ── mode=salary ──────────────────────────────────────────────────────────
   if (mode === 'salary' && result.approved) {
     return (
       <div style={{marginTop:4}}>
@@ -5572,46 +5573,73 @@ function CalcMortgageResult({ result, mode, prog }) {
     )
   }
 
+  // ── mode=price ───────────────────────────────────────────────────────────
+  // Примечание: result.calc содержит данные по доходу (approved, method1, method2, kd)
+  // variantsByPrice[i].monthly — платёж/мес, .canAfford — доступность по доходу
   if (mode === 'price') {
-    const vars = result.variantsByPrice || []
+    const vars      = result.variantsByPrice || []
+    const calc      = result.calc || {}
+    const approved  = calc.approved   // true если доход позволяет хотя бы один вариант
+    const noSalary  = !calc.totalIncome || calc.totalIncome === 0
+
     return (
       <div>
-        {result.approved
-          ? <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:12,padding:12,marginBottom:10}}>
-              <div style={{fontSize:13,color:'#16a34a',fontWeight:700,marginBottom:6}}>✅ {result.prog?.name}</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7}}>
-                {[['Платёж/мес',fmtMoney(result.payment)],['Взнос',fmtMoney(result.downPayment)],
-                  ['Сумма займа',fmtMoney(result.loanAmount)],['КД',fmtKd(result.kd)],
-                  ['Метод 1 (КД)',fmtMoney(result.method1)],['Метод 2 (ПМ)',fmtMoney(result.method2)]
-                ].map(([l,v])=>(
-                  <div key={l} style={{background:'#fff',borderRadius:8,padding:8}}>
-                    <div style={{fontSize:10,color:'#64748b',marginBottom:1}}>{l}</div>
-                    <div style={{fontSize:13,fontWeight:600}}>{v}</div>
-                  </div>
-                ))}
+        {/* Статусный баннер */}
+        {noSalary
+          ? <div style={{background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:12,padding:12,marginBottom:10}}>
+              <div style={{fontSize:13,color:'#92400e',fontWeight:700}}>💡 Введите зарплату для проверки доступности</div>
+              <div style={{fontSize:11,color:'#78350f',marginTop:4}}>Платежи по всем вариантам показаны ниже — введите доход чтобы узнать, одобрят ли банк</div>
+            </div>
+          : approved
+            ? <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:12,padding:12,marginBottom:10}}>
+                <div style={{fontSize:13,color:'#16a34a',fontWeight:700}}>✅ {result.prog?.name} — платёж по доходу доступен</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginTop:8}}>
+                  {[['Сумма займа',fmtMoney(vars[0]?.loanAmount)],['Взнос',fmtMoney(vars[0]?.downPayment)],
+                    ['Метод 1 (КД)',fmtMoney(calc.method1)],['Метод 2 (ПМ)',fmtMoney(calc.method2)]
+                  ].map(([l,v])=>(
+                    <div key={l} style={{background:'#fff',borderRadius:8,padding:8}}>
+                      <div style={{fontSize:10,color:'#64748b',marginBottom:1}}>{l}</div>
+                      <div style={{fontSize:13,fontWeight:600}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          : <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:12,padding:12,marginBottom:10}}>
-              <div style={{fontSize:13,color:'#dc2626',fontWeight:700}}>❌ Платёж превышает доступный по доходу</div>
-            </div>
+            : <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:12,padding:12,marginBottom:10}}>
+                <div style={{fontSize:13,color:'#dc2626',fontWeight:700}}>❌ Платёж превышает доступный по доходу</div>
+                <div style={{fontSize:11,color:'#64748b',marginTop:4}}>
+                  Макс. платёж по доходу: {fmtMoney(calc.maxPayment > 0 ? calc.maxPayment : 0)} ·
+                  КД: {fmtKd(calc.kd)}
+                </div>
+              </div>
         }
+
+        {/* Все варианты ставок */}
         {vars.length > 0 && (
           <div>
             <div style={{fontSize:12,fontWeight:600,color:'#64748b',marginBottom:6}}>Все варианты ставок:</div>
-            {vars.map((v,i)=>(
-              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 10px',
-                border:`1.5px solid ${v.approved?'#86efac':'#fecaca'}`,borderRadius:10,marginBottom:5,
-                background:v.approved?'#f0fdf4':'#fef2f2'}}>
-                <div>
-                  <div style={{fontSize:12,fontWeight:500}}>{v.label}</div>
-                  <div style={{fontSize:10,color:'#64748b'}}>КД {fmtKd(v.kd)}</div>
+            {vars.map((v,i)=>{
+              const canAfford = !noSalary && v.canAfford
+              const isUnknown = noSalary
+              return (
+                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 10px',
+                  border:`1.5px solid ${isUnknown?'#e2e8f0':canAfford?'#86efac':'#fecaca'}`,borderRadius:10,marginBottom:5,
+                  background:isUnknown?'#f8fafc':canAfford?'#f0fdf4':'#fef2f2'}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:500}}>{v.label}</div>
+                    <div style={{fontSize:10,color:'#64748b'}}>КД {fmtKd(v.kd)}</div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    {/* v.monthly — платёж/мес из calcMortgageByPrice */}
+                    <div style={{fontSize:14,fontWeight:700,color:isUnknown?'#0f172a':canAfford?'#16a34a':'#dc2626'}}>
+                      {fmtMoney(v.monthly)}/мес
+                    </div>
+                    <div style={{fontSize:10,color:'#94a3b8'}}>
+                      {isUnknown ? '—' : canAfford ? '✅ одобрят' : '❌ откажут'}
+                    </div>
+                  </div>
                 </div>
-                <div style={{textAlign:'right'}}>
-                  <div style={{fontSize:14,fontWeight:700,color:v.approved?'#16a34a':'#dc2626'}}>{fmtMoney(v.payment)}/мес</div>
-                  <div style={{fontSize:10,color:'#94a3b8'}}>{v.approved?'✅ одобрят':'❌ откажут'}</div>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
