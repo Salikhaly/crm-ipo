@@ -236,18 +236,30 @@ describe('calcOpvVar', () => {
   test('считает среднюю ЗП из ОПВ', () => {
     const r = calcOpvVar({ opv12:[30000,31000,29000,28000,32000,30000] })
     expect(r.ok).toBe(true)
-    expect(r.avgSalary).toBeGreaterThan(0)
+    expect(r.result.currentAvg).toBeGreaterThan(0)
   })
 
   test('строит план при указании target', () => {
     const r = calcOpvVar({ opv12:[20000,21000,22000], target:400000 })
-    expect(Array.isArray(r.targetPlan)).toBe(true)
-    expect(r.targetPlan.length).toBe(6)
+    expect(Array.isArray(r.result.plan)).toBe(true)
+    expect(r.result.plan.length).toBe(6)
   })
 
   test('нет плана если target <= текущей ЗП', () => {
     const r = calcOpvVar({ opv12:[40000,41000,42000,43000,44000,45000], target:100000 })
-    expect(r.targetPlan).toBeNull()
+    expect(r.result.plan).toBeNull()
+  })
+
+  test('gap = target - currentAvg', () => {
+    const r = calcOpvVar({ opv12:[20000,21000,22000], target:400000 })
+    expect(r.result.gap).toBe(Math.max(0, 400000 - r.result.currentAvg))
+  })
+
+  test('buh заполняется только при salary+type', () => {
+    const without = calcOpvVar({ opv12:[20000,21000,22000] })
+    const withBuh = calcOpvVar({ opv12:[20000,21000,22000], salary:300000, type:'Трудовой' })
+    expect(without.result.buh).toBeNull()
+    expect(withBuh.result.buh.find(b=>b.isTotal).val).toBeGreaterThan(0)
   })
 })
 
@@ -255,14 +267,14 @@ describe('calcOpvEq', () => {
   test('рассчитывает равномерные платежи', () => {
     const r = calcOpvEq({ income:300000, months:6 })
     expect(r.ok).toBe(true)
-    expect(r.payments.length).toBe(6)
-    expect(r.payments.every(p => p > 0)).toBe(true)
-    expect(r.avgSalary).toBeGreaterThan(0)
+    expect(r.result.payments.length).toBe(6)
+    expect(r.result.payments.every(p => p > 0)).toBe(true)
+    expect(r.result.currentAvg).toBeGreaterThan(0)
   })
 
   test('все платежи равны между собой', () => {
     const r = calcOpvEq({ income:300000, months:6 })
-    const uniq = new Set(r.payments)
+    const uniq = new Set(r.result.payments)
     expect(uniq.size).toBe(1)
   })
 })

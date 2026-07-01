@@ -46,11 +46,18 @@ const makeRes = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn() })
 
 beforeEach(() => {
   jest.clearAllMocks()
-  // dashboard calls: from('clients'), from('managers'), from('wa_chats')
+  // dashboard делает 4 вызова from() в Promise.all:
+  // 1) from('clients') .select(...).gte(...)              — основная выборка клиентов
+  // 2) from('clients') .select('id',{count,head}).gte(...)— trueTotal (только count)
+  // 3) from('managers').select(...).eq('active',true)
+  // 4) from('wa_chats').select(...).eq('status','new')
+  const trueTotalChain = makeFullChain([])
+  trueTotalChain.count = 5  // совпадает с mockClients.length
   mockFrom
-    .mockReturnValueOnce(makeFullChain(mockClients))             // clients
-    .mockReturnValueOnce(makeFullChain([{ id: 'm1', name: 'A', color: '#fff' }])) // managers
-    .mockReturnValueOnce(makeFullChain([{ id: 'w1', unread_count: 3, status: 'new' }])) // waChats
+    .mockReturnValueOnce(makeFullChain(mockClients))               // 1 clients
+    .mockReturnValueOnce(trueTotalChain)                           // 2 trueTotal
+    .mockReturnValueOnce(makeFullChain([{ id: 'm1', name: 'A', color: '#fff' }])) // 3 managers
+    .mockReturnValueOnce(makeFullChain([{ id: 'w1', unread_count: 3, status: 'new' }])) // 4 waChats
 })
 
 describe('GET /api/dashboard', () => {
@@ -102,10 +109,12 @@ describe('GET /api/dashboard', () => {
   test('менеджер фильтруется через eq — total соответствует его клиентам', async () => {
     mockFrom.mockReset()  // clear beforeEach queue, start fresh
     const m1Clients = mockClients.filter(c => c.manager === 'm1')
+    const trueTotalChain2 = makeFullChain([]); trueTotalChain2.count = m1Clients.length
     mockFrom
-      .mockReturnValueOnce(makeFullChain(m1Clients))
-      .mockReturnValueOnce(makeFullChain([{ id: 'm1', name: 'A', color: '#fff' }]))
-      .mockReturnValueOnce(makeFullChain([]))
+      .mockReturnValueOnce(makeFullChain(m1Clients))                              // clients
+      .mockReturnValueOnce(trueTotalChain2)                                       // trueTotal
+      .mockReturnValueOnce(makeFullChain([{ id: 'm1', name: 'A', color: '#fff' }])) // managers
+      .mockReturnValueOnce(makeFullChain([]))                                     // wa_chats
     const res = makeRes()
     await handler({
       method: 'GET',

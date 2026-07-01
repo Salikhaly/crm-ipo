@@ -36,7 +36,8 @@ const makeFullChain = (resolveData) => {
 }
 
 let currentChain
-const mockFrom = jest.fn(() => {
+const mockFrom = jest.fn((table) => {
+  if (table === 'users') return makeUserAuthChain()
   currentChain = makeFullChain([])
   return currentChain
 })
@@ -47,11 +48,26 @@ jest.mock('../../lib/supabase', () => ({
   clientToDb:  (c) => c,
 }))
 
+// Динамический мок withAuth: возвращает role/manager_id текущего теста
+let _authRow = { role: 'admin', manager_id: null }
+const makeUserAuthChain = () => {
+  const c = {}
+  c.select      = jest.fn().mockReturnValue(c)
+  c.eq          = jest.fn().mockReturnValue(c)
+  c.maybeSingle = jest.fn().mockImplementation(() =>
+    Promise.resolve({ data: { role: _authRow.role, manager_id: _authRow.manager_id }, error: null })
+  )
+  return c
+}
+
+
 const indexHandler = require('../../pages/api/clients/index').default
 const idHandler    = require('../../pages/api/clients/[id]').default
 
-const makeToken = (role, manager_id = null) =>
-  `Bearer ${signToken({ id: 'u1', name: 'Test', role, manager_id, login: 'test' })}`
+const makeToken = (role, manager_id = null) => {
+  _authRow = { role, manager_id: manager_id || null }
+  return `Bearer ${signToken({ id: 'u1', name: 'Test', role, manager_id, login: 'test' })}`
+}
 const makeRes = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn() })
 
 beforeEach(() => jest.clearAllMocks())

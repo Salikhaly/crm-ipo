@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Head from 'next/head'
 import { api } from '../lib/api'
+import { avgSalary } from '../lib/calcEngine'
 
 // ═══ КОНСТАНТЫ ═══════════════════════════════════════════════════
 // ─── WhatsApp polling ─────────────────────────────────────────────
@@ -5765,8 +5766,10 @@ function CalcOpvTab({ doCalc }) {
   const opvList = parseOpv(opvStr)
   const opvTotal = opvList.reduce((s,v)=>s+v, 0)
   const opvAvg   = opvList.length ? opvTotal / opvList.length : 0
-  // ОПВ = 10% от ЗП → ЗП = ОПВ / 0.10
-  const salaryFromOpv = opvAvg / 0.10
+  // Та же формула, что в lib/calcEngine.js avgSalary() — ОПВ*7.9/6 с отсечением
+  // min/max при n>=3. Раньше тут было упрощённое opvAvg/0.10, которое давало
+  // другое число, чем итоговый расчёт после нажатия «Рассчитать ОПВ»
+  const salaryFromOpv = avgSalary(opvList)
 
   return (
     <div>
@@ -5825,7 +5828,7 @@ function CalcOpvTab({ doCalc }) {
                   {[
                     ['Месяцев', opvList.length + ' мес.', '#374151'],
                     ['Ср. ОПВ/мес', opvAvg.toLocaleString('ru-RU',{maximumFractionDigits:0}) + ' ₸', '#1d4ed8'],
-                    ['Ср. ЗП (÷0.10)', salaryFromOpv.toLocaleString('ru-RU',{maximumFractionDigits:0}) + ' ₸', '#0f766e'],
+                    ['Ср. ЗП (расчёт банка)', salaryFromOpv.toLocaleString('ru-RU',{maximumFractionDigits:0}) + ' ₸', '#0f766e'],
                   ].map(([l,v,c])=>(
                     <div key={l} style={{background:'#fff',borderRadius:8,padding:'8px 10px',border:'1px solid #e2e8f0'}}>
                       <div style={{fontSize:10,color:'#94a3b8',marginBottom:2}}>{l}</div>
@@ -5928,11 +5931,15 @@ function CalcOpvTab({ doCalc }) {
           <div>
             {/* Основные метрики */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:14}}>
-              {[
+              {(mode === 'var' ? [
                 {l:'Средняя ЗП', v: fmt(r.currentAvg), sub:'по данным ОПВ', c:'#0f766e', bg:'#f0fdfa'},
                 {l:'Цель', v: r.target ? fmt(r.target) : '—', sub:'целевая зарплата', c:'#1d4ed8', bg:'#eff6ff'},
-                {l:'Разница', v: r.gap > 0 ? fmt(r.gap) : '✅ Достигнута', sub:r.gap>0?'нужно добрать':'цель достигнута', c:r.gap>0?'#854F0B':'#0f766e', bg:r.gap>0?'#fefce8':'#f0fdfa'},
-              ].map(({l,v,sub,c,bg})=>(
+                {l:'Разница', v: r.target > 0 ? (r.gap > 0 ? fmt(r.gap) : '✅ Достигнута') : '—', sub:r.gap>0?'нужно добрать':'цель достигнута', c:r.gap>0?'#854F0B':'#0f766e', bg:r.gap>0?'#fefce8':'#f0fdfa'},
+              ] : [
+                {l:'ОПВ / месяц', v: r.payments?.length ? fmt(r.payments[0]) : '—', sub:'платить каждый месяц', c:'#854F0B', bg:'#fefce8'},
+                {l:'Срок', v: r.payments?.length ? r.payments.length + ' мес.' : '—', sub:'на протяжении', c:'#1d4ed8', bg:'#eff6ff'},
+                {l:'Средняя ЗП', v: fmt(r.currentAvg), sub:'получится у банка', c:'#0f766e', bg:'#f0fdfa'},
+              ]).map(({l,v,sub,c,bg})=>(
                 <div key={l} style={{background:bg,borderRadius:12,padding:'12px 14px',border:`1.5px solid ${c}33`}}>
                   <div style={{fontSize:10,color:'#64748b',marginBottom:4,fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em'}}>{l}</div>
                   <div style={{fontSize:16,fontWeight:800,color:c,marginBottom:2}}>{v}</div>

@@ -1,5 +1,19 @@
 // __tests__/lib/auth.test.js
-process.env.JWT_SECRET = 'test-secret-for-jest-only-32chars!!'
+process.env.JWT_SECRET           = 'test-secret-for-jest-only-32chars!!'
+process.env.SUPABASE_URL         = 'https://test.supabase.co'
+process.env.SUPABASE_SERVICE_KEY = 'test-key'
+// JEST_SKIP_AUTH_DB=1 уже задан в jest.setup.js — DB не трогается совсем
+
+// Мок supabase нужен только чтобы lib/supabase.js не упал при импорте
+jest.mock('../../lib/supabase', () => ({
+  getSupabase: () => ({
+    from: () => ({
+      select: function () { return this },
+      eq:     function () { return this },
+      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+    }),
+  }),
+}))
 
 const { signToken, verifyToken, withAuth, withRole } = require('../../lib/auth')
 
@@ -58,7 +72,6 @@ describe('withAuth middleware', () => {
   test('401 без заголовка', async () => {
     const handler = jest.fn()
     await withAuth(handler)(makeReq(undefined), makeRes())
-    // just verify handler not called
     expect(handler).not.toHaveBeenCalled()
   })
 
