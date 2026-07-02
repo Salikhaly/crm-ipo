@@ -3,6 +3,7 @@
 // PUT  /api/checklists        → обновить шаблон (только admin)
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -14,7 +15,7 @@ export default withAuth(async function handler(req, res) {
       .from('checklist_templates')
       .select('*')
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
 
     // Превращаем в { 'Сбор документов': [...items] }
     const map = {}
@@ -33,7 +34,7 @@ export default withAuth(async function handler(req, res) {
       .from('checklist_templates')
       .upsert({ stage_name, items: items || [] }, { onConflict: 'stage_name' })
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     return res.status(200).json({ ok: true })
   }
 

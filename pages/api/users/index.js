@@ -3,6 +3,7 @@
 // POST /api/users  → создать пользователя (только admin)
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import bcrypt          from 'bcryptjs'
 import { withAuth } from '../../../lib/auth'
 
@@ -16,7 +17,7 @@ export default withAuth(async function handler(req, res) {
 
   if (req.method === 'GET') {
     const { data, error } = await sb.from('users').select('id, name, login, role, manager_id, created_at').order('created_at')
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     return res.status(200).json({ users: data })
   }
 
@@ -51,7 +52,7 @@ export default withAuth(async function handler(req, res) {
       .select()
       .single()
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     const { pwd_hash: _, ...safeUser } = data  // не возвращаем хеш клиенту
     return res.status(201).json({ user: safeUser })
   }

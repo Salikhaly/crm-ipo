@@ -4,6 +4,7 @@
 // Body: { chatId, phone, text, author }
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -89,6 +90,6 @@ export default withAuth(async function handler(req, res) {
     })
   } catch (err) {
     console.error('send-wa error:', err)
-    return res.status(500).json({ error: err.message })
+    return apiError(res, err)
   }
 })

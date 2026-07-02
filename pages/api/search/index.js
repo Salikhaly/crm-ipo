@@ -3,6 +3,7 @@
 // Поиск клиентов по ИИН, имени, телефону, городу
 
 import { getSupabase, dbToClient } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 // Экранирует спецсимволы PostgreSQL ILIKE: %, _, \
@@ -40,7 +41,7 @@ export default withAuth(async function handler(req, res) {
   }
 
   const { data, error } = await query.limit(50)
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) return apiError(res, error)
 
   return res.status(200).json({
     results: (data || []).map(dbToClient),

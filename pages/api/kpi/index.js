@@ -3,6 +3,7 @@
 // Возвращает статистику по менеджерам
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -48,8 +49,8 @@ export default withAuth(async function handler(req, res) {
     sb.from('managers').select('*').eq('active', true),
   ])
 
-  if (clientsRes.error) return res.status(500).json({ error: clientsRes.error.message })
-  if (managersRes.error) return res.status(500).json({ error: managersRes.error.message })
+  if (clientsRes.error) return apiError(res, clientsRes.error)
+  if (managersRes.error) return apiError(res, managersRes.error)
 
   const clients  = clientsRes.data  || []
   const managers = managersRes.data || []

@@ -1,7 +1,68 @@
 /** @type {import('next').NextConfig} */
+
+// ─── HTTP Security Headers ───────────────────────────────────────────────────
+// Закрывает аудит C3: нет CSP, HSTS, X-Frame-Options и других заголовков.
+const securityHeaders = [
+  // Запрет встраивания в iframe → защита от clickjacking
+  {
+    key: 'X-Frame-Options',
+    value: 'DENY',
+  },
+  // Запрет MIME sniffing
+  {
+    key: 'X-Content-Type-Options',
+    value: 'nosniff',
+  },
+  // Политика referrer
+  {
+    key: 'Referrer-Policy',
+    value: 'strict-origin-when-cross-origin',
+  },
+  // HSTS: браузер 2 года использует только HTTPS
+  {
+    key: 'Strict-Transport-Security',
+    value: 'max-age=63072000; includeSubDomains; preload',
+  },
+  // Отключаем лишние браузерные API
+  {
+    key: 'Permissions-Policy',
+    value: 'camera=(), microphone=(), geolocation=()',
+  },
+  // Content Security Policy
+  // unsafe-inline нужен пока используются inline-styles (весь index.js)
+  // После рефакторинга на CSS-модули — убрать 'unsafe-inline'
+  {
+    key: 'Content-Security-Policy',
+    value: [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
+      "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net",
+      "img-src 'self' data: https: blob:",
+      "connect-src 'self' https://*.supabase.co https://api.green-api.com https://sentry.io",
+      "media-src 'self' blob:",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+    ].join('; '),
+  },
+]
+
 const nextConfig = {
-  reactStrictMode: false,
+  // Включить Strict Mode (скрывался баги с двойными useEffect)
+  // Закрывает аудит M4
+  reactStrictMode: true,
+
   swcMinify: true,
-  images: { unoptimized: true },
+
+  async headers() {
+    return [
+      {
+        // Применяем заголовки ко всем маршрутам
+        source: '/(.*)',
+        headers: securityHeaders,
+      },
+    ]
+  },
 }
+
 module.exports = nextConfig

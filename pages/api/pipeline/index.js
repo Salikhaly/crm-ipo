@@ -3,6 +3,7 @@
 // PUT  /api/pipeline  → обновить всю воронку (только admin)
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -15,7 +16,7 @@ export default withAuth(async function handler(req, res) {
       .select('*')
       .order('sort_order')
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     return res.status(200).json({
       pipeline: data.map(p => ({ id: p.id, l: p.label, c: p.color }))
     })
@@ -62,7 +63,7 @@ export default withAuth(async function handler(req, res) {
 
     // Upsert оставшихся / новых этапов
     const { error } = await sb.from('pipeline_stages').upsert(rows, { onConflict: 'id' })
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
 
     return res.status(200).json({ ok: true, pipeline: stages })
   }

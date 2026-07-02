@@ -3,6 +3,7 @@
 // DELETE /api/managers/:id  → удалить (только admin)
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -29,7 +30,7 @@ export default withAuth(async function handler(req, res) {
       .select()
       .single()
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     return res.status(200).json({ manager: data })
   }
 
@@ -67,7 +68,7 @@ export default withAuth(async function handler(req, res) {
     }
 
     const { error } = await sb.from('managers').delete().eq('id', id)
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     return res.status(200).json({ ok: true })
   }
 

@@ -2,6 +2,7 @@
 // GET /api/tasks?status=open|all  → задачи по всем клиентам
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -17,7 +18,7 @@ export default withAuth(async function handler(req, res) {
   if (role === 'specialist' && mid) query = query.eq('responsible_manager', mid)
 
   const { data, error } = await query
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) return apiError(res, error)
 
   // Разворачиваем задачи
   const allTasks = (data || []).flatMap(c =>

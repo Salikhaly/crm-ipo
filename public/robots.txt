@@ -1,0 +1,7 @@
+# Mortgage CRM — закрытый внутренний инструмент
+# Все страницы закрыты от индексации
+
+User-agent: *
+Disallow: /
+
+Sitemap: none

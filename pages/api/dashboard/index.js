@@ -2,6 +2,7 @@
 // GET /api/dashboard  → все метрики для дашборда
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -38,7 +39,7 @@ export default withAuth(async function handler(req, res) {
     trueTotalQuery,
   ])
 
-  if (clientsRes.error) return res.status(500).json({ error: clientsRes.error.message })
+  if (clientsRes.error) return apiError(res, clientsRes.error)
 
   const clients  = clientsRes.data  || []
   const managers = managersRes.data || []

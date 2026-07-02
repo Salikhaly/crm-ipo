@@ -1,0 +1,39 @@
+name: CI — Tests & Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+        env:
+          # Тест-окружение: авторизация без реальной БД
+          NODE_ENV: test
+          JEST_SKIP_AUTH_DB: '1'
+          JWT_SECRET: 'ci-test-secret-for-github-actions-only-32chars!!'
+          SUPABASE_URL: 'https://test.supabase.co'
+          SUPABASE_SERVICE_KEY: 'test-service-key'
+
+      # Vercel деплоит автоматически после успеха этого job.
+      # Если тесты упали — деплой не произойдёт (GitHub блокирует).
+      # Настройка: Vercel Dashboard → Git → "Required checks" → добавить "Run Tests"

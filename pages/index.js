@@ -221,7 +221,7 @@ export default function CRM() {
   function toast$(msg, type='ok') {
     setToast({ msg, type })
     clearTimeout(toastRef.current)
-    toastRef.current = setTimeout(() => setToast(null), 3000)
+    toastRef.current = setTimeout(() => setToast(null), 4500)
   }
 
   // ─── AUTH ────────────────────────────────────────────────
@@ -945,7 +945,7 @@ export default function CRM() {
       )}
 
       {toast && (
-        <div className={`toast${toast.type==='err'?' err':''}`}>
+        <div role="alert" aria-live="polite" className={`toast${toast.type==='err'?' err':''}`}>
           {toast.msg}
         </div>
       )}
@@ -1878,7 +1878,7 @@ function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend
         <>
           {/* Chat header */}
           <div style={{padding:'10px 14px',borderBottom:'1px solid #e2e8f0',background:'#075e54',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-            <button onClick={backToList} style={{border:'none',background:'rgba(255,255,255,.15)',color:'#fff',borderRadius:8,width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
+            <button aria-label="Назад к списку чатов" onClick={backToList} style={{border:'none',background:'rgba(255,255,255,.15)',color:'#fff',borderRadius:8,width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
               <i className="ti ti-arrow-left" style={{fontSize:18}}/>
             </button>
             <div style={{width:38,height:38,borderRadius:'50%',background:'rgba(255,255,255,.2)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:16,flexShrink:0}}>
@@ -3034,7 +3034,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
         {/* Sidebar */}
         <div className={"sidebar" + (showStageDrawer ? " mobile-open" : "")} style={{width:220,background:'#0f172a',display:'flex',flexDirection:'column',position:'sticky',top:0,height:'100vh',overflowY:'auto',flexShrink:0}}>
           {/* Кнопка закрытия — только мобильный */}
-          <button className="sidebar-close-mobile" onClick={()=>setShowStageDrawer(false)}
+          <button aria-label="Закрыть меню" className="sidebar-close-mobile" onClick={()=>setShowStageDrawer(false)}
             style={{display:'none',position:'absolute',top:10,right:10,width:32,height:32,borderRadius:8,border:'none',background:'rgba(255,255,255,.08)',color:'#fff',fontSize:18,cursor:'pointer',alignItems:'center',justifyContent:'center',zIndex:10}}>
             ×
           </button>
@@ -3044,7 +3044,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
             <div style={{fontSize:10,color:'#475569',marginTop:2}}>Карточка клиента</div>
           </div>
           <div style={{padding:'9px 8px',flex:1,display:'flex',flexDirection:'column',gap:2}}>
-            <button onClick={onBack} style={{display:'flex',alignItems:'center',gap:8,padding:'9px 11px',borderRadius:9,color:'#64748b',background:'transparent',fontSize:12.5,width:'100%',textAlign:'left',border:'none',cursor:'pointer',fontFamily:'inherit'}}>
+            <button aria-label="Назад к списку клиентов" onClick={onBack} style={{display:'flex',alignItems:'center',gap:8,padding:'9px 11px',borderRadius:9,color:'#64748b',background:'transparent',fontSize:12.5,width:'100%',textAlign:'left',border:'none',cursor:'pointer',fontFamily:'inherit'}}>
               <i className="ti ti-arrow-left" style={{fontSize:16,width:17}}/>Назад к списку
             </button>
             <div style={{padding:'8px 10px 3px',fontSize:9,fontWeight:700,letterSpacing:'.09em',color:'#374151',textTransform:'uppercase',marginTop:6}}>Этап воронки</div>
@@ -3073,7 +3073,7 @@ function ClientDetail({ client, managers, pipeline, checklists, user, onSave, on
         <div className="main-area">
           <div className="topbar">
             <Btn size="sm" onClick={onBack}><i className="ti ti-arrow-left"/><span className="btn-text-desktop">Назад</span></Btn>
-            <button className="stage-drawer-toggle" onClick={()=>setShowStageDrawer(true)}
+            <button aria-label="Открыть этапы сделки" className="stage-drawer-toggle" onClick={()=>setShowStageDrawer(true)}
               style={{display:'none',width:36,height:36,borderRadius:9,border:'1.5px solid #e2e8f0',background:'#f8fafc',color:'#64748b',cursor:'pointer',alignItems:'center',justifyContent:'center',flexShrink:0}}>
               <i className="ti ti-list-details" style={{fontSize:17}}/>
             </button>
@@ -4047,15 +4047,16 @@ function HistoryTab({ c, setC, user }) {
 // ─── SIMPLE MODALS ───────────────────────────────────────────────
 function ModalWrap({ title, sub, onClose, children, footer, size='md' }) {
   const widths = { sm:400, md:500, lg:660, xl:980 }
+  const titleId = `modal-title-${Math.random().toString(36).slice(2,7)}`
   return (
-    <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.52)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:14,backdropFilter:'blur(4px)'}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:'#fff',borderRadius:18,boxShadow:'0 24px 80px rgba(0,0,0,.22)',width:widths[size],maxWidth:'100%',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+    <div role="presentation" style={{position:'fixed',inset:0,background:'rgba(15,23,42,.52)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:14,backdropFilter:'blur(4px)'}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div role="dialog" aria-modal="true" aria-labelledby={titleId} style={{background:'#fff',borderRadius:18,boxShadow:'0 24px 80px rgba(0,0,0,.22)',width:widths[size],maxWidth:'100%',maxHeight:'92vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'15px 19px',borderBottom:'1.5px solid #e2e8f0'}}>
           <div>
-            <div style={{fontSize:16,fontWeight:800,letterSpacing:'-.3px'}}>{title}</div>
+            <div id={titleId} style={{fontSize:16,fontWeight:800,letterSpacing:'-.3px'}}>{title}</div>
             {sub && <div style={{fontSize:11,color:'#64748b',marginTop:2}}>{sub}</div>}
           </div>
-          <Btn onClick={onClose}><i className="ti ti-x"/></Btn>
+          <Btn aria-label="Закрыть диалог" onClick={onClose}><i className="ti ti-x"/></Btn>
         </div>
         <div className='modal-body'>{children}</div>
         {footer && <div className='modal-ft'>{footer}</div>}
@@ -5976,15 +5977,15 @@ function CalcOpvTab({ doCalc }) {
               ))}
             </div>
 
-            {/* Разбивка по месяцам */}
-            {mode==='var' && r.breakdown && (
+            {/* Разбивка по месяцам (бухгалтерия) — показывается в режиме var при наличии данных */}
+            {r.buh && (
               <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:14}}>
                 <div style={{padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontSize:12,fontWeight:600,color:'#374151'}}>
                   📅 Разбивка по месяцам
                 </div>
-                {r.breakdown.map((row,i)=>(
+                {(r.buh||[]).map((row,i)=>(
                   <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
-                    padding:'9px 14px',borderBottom:i<r.breakdown.length-1?'1px solid #f8fafc':'none',
+                    padding:'9px 14px',borderBottom:i<(r.buh||[]).length-1?'1px solid #f8fafc':'none',
                     background:row.isTotal?'#f0fdf4':row.isAvg?'#eff6ff':'transparent'}}>
                     <span style={{fontSize:12,fontWeight:row.isTotal||row.isAvg?600:400,
                       color:row.isTotal?'#0f766e':row.isAvg?'#1d4ed8':'#374151'}}>{row.label}</span>

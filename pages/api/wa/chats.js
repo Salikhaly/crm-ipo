@@ -4,6 +4,7 @@
 // PATCH /api/wa/chats             → назначить менеджера или сменить статус
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 import { VALID_CHAT_STATUSES } from '../../../lib/waConstants'
 
@@ -35,7 +36,7 @@ export default withAuth(async function handler(req, res) {
       }
 
       const { data: messages, error } = await query
-      if (error) return res.status(500).json({ error: error.message })
+      if (error) return apiError(res, error)
 
       if (mark_read === '1') {
         await sb.from('wa_chats').update({ unread_count: 0 }).eq('id', id)
@@ -59,7 +60,7 @@ export default withAuth(async function handler(req, res) {
     if (assigned_to)                   query = query.eq('assigned_to', assigned_to)
 
     const { data: chats, error } = await query
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
 
     let result = chats || []
 
@@ -103,7 +104,7 @@ export default withAuth(async function handler(req, res) {
       .select()
       .maybeSingle()
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     if (!data) return res.status(404).json({ error: 'Чат не найден' })
 
     return res.status(200).json({ ok: true, chat: data })

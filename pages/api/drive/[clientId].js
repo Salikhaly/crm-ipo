@@ -9,6 +9,7 @@
 //   GOOGLE_DRIVE_ROOT_FOLDER_ID   — ID корневой папки "CRM — Клиенты"
 
 import { google }   from 'googleapis'
+import { apiError } from '../../../lib/apiError'
 import formidable   from 'formidable'
 import fs           from 'fs'
 import { withAuth } from '../../../lib/auth'
@@ -180,8 +181,8 @@ export default withAuth(async function handler(req, res) {
         files:         list.data.files || [],
       })
     } catch (err) {
-      console.error('Drive GET error:', err.message)
-      return res.status(500).json({ error: err.message })
+      console.error('[drive] GET error:', err.message)
+      return apiError(res, err)
     }
   }
 
@@ -244,8 +245,8 @@ export default withAuth(async function handler(req, res) {
         managerFolder: managerFolder.name,
       })
     } catch (err) {
-      console.error('Drive POST error:', err.message)
-      return res.status(500).json({ error: err.message })
+      console.error('[drive] POST error:', err.message)
+      return apiError(res, err)
     }
   }
 
@@ -264,8 +265,8 @@ export default withAuth(async function handler(req, res) {
       await drive.files.delete({ fileId })
       return res.status(200).json({ ok: true })
     } catch (err) {
-      console.error('Drive DELETE error:', err.message)
-      return res.status(500).json({ error: err.message })
+      console.error('[drive] DELETE error:', err.message)
+      return apiError(res, err)
     }
   }
 

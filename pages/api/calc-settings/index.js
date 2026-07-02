@@ -4,6 +4,7 @@
 // DELETE — удалить программу или быстрый ответ (только admin)
 
 import { getSupabase }  from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth }     from '../../../lib/auth'
 
 export default withAuth(async function handler(req, res) {
@@ -42,7 +43,7 @@ export default withAuth(async function handler(req, res) {
         kd:         settings.kd         || undefined,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'id' })
-      if (error) errs.push({ section: 'settings', error: error.message })
+      if (error) errs.push({ section: 'settings', error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
     }
 
     // Программы (upsert по key)
@@ -59,7 +60,7 @@ export default withAuth(async function handler(req, res) {
           variants:   p.variants   || [],
           updated_at: new Date().toISOString(),
         }, { onConflict: 'key' })
-        if (error) errs.push({ section: 'program:' + p.key, error: error.message })
+        if (error) errs.push({ section: 'program:' + p.key, error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
       }
     }
 
@@ -76,7 +77,7 @@ export default withAuth(async function handler(req, res) {
         }
         if (r.id && !r.id.startsWith('reply_')) row.id = r.id  // сохраняем UUID если он настоящий
         const { error } = await sb.from('wa_quick_replies').upsert(row, { onConflict: 'id' })
-        if (error) errs.push({ section: 'reply:' + r.trigger, error: error.message })
+        if (error) errs.push({ section: 'reply:' + r.trigger, error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
       }
     }
 
@@ -91,12 +92,12 @@ export default withAuth(async function handler(req, res) {
 
     if (replyId) {
       const { error } = await sb.from('wa_quick_replies').delete().eq('id', replyId)
-      if (error) return res.status(500).json({ error: error.message })
+      if (error) return apiError(res, error)
     }
     if (programKey) {
       // Деактивируем, не удаляем — чтобы не ломать расчёты по старым клиентам
       const { error } = await sb.from('calc_programs').update({ active: false }).eq('key', programKey)
-      if (error) return res.status(500).json({ error: error.message })
+      if (error) return apiError(res, error)
     }
     return res.status(200).json({ ok: true })
   }

@@ -3,6 +3,7 @@
 // Загружает актуальные настройки из БД (calc_settings + calc_programs)
 
 import { withAuth }    from '../../../lib/auth'
+import { apiError } from '../../../lib/apiError'
 import { getSupabase } from '../../../lib/supabase'
 import {
   calcMortgageByPrice,
@@ -97,7 +98,7 @@ export default withAuth(async function handler(req, res) {
     const result = ACTIONS[action](payload || {})
     return res.status(200).json(result)
   } catch (err) {
-    console.error(`[calc/${action}]`, err.message)
-    return res.status(500).json({ error: err.message })
+    console.error(`[calc/${action}]`, err.message)  // server log — не передаётся клиенту
+    return apiError(res, err)
   }
 })

@@ -3,6 +3,7 @@
 // Отправляет медиафайл через Green API sendFileByUpload
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth }    from '../../../lib/auth'
 import formidable      from 'formidable'
 import fs              from 'fs'
@@ -109,6 +110,6 @@ export default withAuth(async function handler(req, res) {
     return res.status(200).json({ ok: true, messageId: greenData.idMessage })
   } catch (err) {
     console.error('sendMedia error:', err)
-    return res.status(500).json({ error: err.message })
+    return apiError(res, err)
   }
 })

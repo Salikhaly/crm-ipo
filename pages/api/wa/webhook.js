@@ -8,6 +8,7 @@
 //   (WEBHOOK_SECRET = значение из .env WEBHOOK_SECRET)
 
 import { getSupabase } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { VALID_CHAT_STATUSES } from '../../../lib/waConstants'
 
 // VALID_CHAT_STATUSES импортируется из lib/waConstants — не дублируйте здесь
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
           .from('wa_messages')
           .update({ status: mapped })
           .eq('id', msgId)
-        if (error) console.error('Status update error:', error.message)
+        if (error) console.error('[webhook] status update error:', error.message)
       }
       return res.status(200).json({ ok: true, handled: 'status' })
     }
@@ -259,6 +260,7 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('WA webhook error:', err)
     // Возвращаем 200 Green API чтобы не получить повторные попытки
-    return res.status(200).json({ ok: false, error: err.message })
+    console.error('[webhook]', err.message)
+    return res.status(200).json({ ok: false, error: 'Ошибка обработки webhook' })
   }
 }

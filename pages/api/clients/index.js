@@ -3,6 +3,7 @@
 // POST /api/clients        → создать клиента
 
 import { getSupabase, dbToClient, clientToDb } from '../../../lib/supabase'
+import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
 // Экранирует спецсимволы PostgreSQL ILIKE: %, _, \
@@ -46,7 +47,7 @@ export default withAuth(async function handler(req, res) {
 
     const { data, error } = await query
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     return res.status(200).json({
       clients:  data.map(dbToClient),
       page,
@@ -74,7 +75,7 @@ export default withAuth(async function handler(req, res) {
       .select()
       .single()
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) return apiError(res, error)
     return res.status(201).json({ client: dbToClient(data) })
   }
 
