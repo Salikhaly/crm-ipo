@@ -2552,14 +2552,539 @@ AdminPage = React.memo(AdminPage)
 
 // ─── ПАНЕЛЬ НАСТРОЕК КАЛЬКУЛЯТОРА (техник) ────────────────────────────────────
 function CalcSettingsPanel() {
+  // Дефолтные программы (fallback если БД пустая — до запуска migration 005)
+  const DEFAULT_PROGS_UI = [
+    { key:'5050',     name:'Ипотека 50/50',      icon:'🏛️', downRatio:0.50, desc:'Взнос 50%',  active:true, sortOrder:0, isNauryz:false,
+      variants:[{label:'8.5% — 8 лет',coeff:0.0080522},{label:'5% — 6 лет',coeff:0.0080525}] },
+    { key:'3070',     name:'Программа 30/70',    icon:'🏠', downRatio:0.30, desc:'Взнос 30%',  active:true, sortOrder:1, isNauryz:false,
+      variants:[{label:'~10-12 лет',  coeff:0.00886788}] },
+    { key:'nauryz20', name:'Наурыз 20%',          icon:'🌸', downRatio:0.20, desc:'Взнос 20%',  active:true, sortOrder:2, isNauryz:true,
+      variants:[{label:'7% — 19 лет', coeff:0.00843335},{label:'9% — 19 лет',coeff:0.0101}] },
+    { key:'nauryz10', name:'Наурыз 10%',          icon:'🌷', downRatio:0.10, desc:'Взнос 10%',  active:true, sortOrder:3, isNauryz:true,
+      variants:[{label:'7% — 19 лет', coeff:0.00943335},{label:'9% — 19 лет',coeff:0.0111}] },
+    { key:'jasyl',    name:'Жасыл Ипотека',      icon:'🌿', downRatio:0.20, desc:'Взнос 20%',  active:true, sortOrder:4, isNauryz:false,
+      variants:[{label:'7% очередники',coeff:0.00783333},{label:'11% военные',coeff:0.01116667},{label:'15% все',coeff:0.01241667}] },
+    { key:'askeri',   name:'Наурыз Аскери',      icon:'🎖️', downRatio:0.00, desc:'Взнос 0%',   active:true, sortOrder:5, isNauryz:true,
+      variants:[{label:'1-8 лет',     coeff:0.0127},{label:'9-19 лет',coeff:0.00376}] },
+  ]
+
+  const DEFAULT_KD = { p1:40, p2:65, p3:90, v1:40, v2:50, v3:60, v4:70 }
+
   const [loading,  setLoading]  = useState(true)
   const [saving,   setSaving]   = useState(false)
   const [cfg,      setCfg]      = useState({ mrp:4325, pmNauryz:10, pmOther:13 })
+  const [kd,       setKd]       = useState(DEFAULT_KD)
   const [programs, setPrograms] = useState([])
   const [editKey,  setEditKey]  = useState(null)
   const [msg,      setMsg]      = useState('')
 
-  const toast = (t) => { setMsg(t); setTimeout(()=>setMsg(''), 3500) }
+  const toast = (t,ok=true) => { setMsg({t,ok}); setTimeout(()=>setMsg(''), 4000) }
+
+  useEffect(() => {
+    api.getCalcSettings().then(d => {
+      if (d?.settings) {
+        setCfg({
+          mrp:      d.settings.mrp        || 4325,
+          pmNauryz: d.settings.pm_nauryz  || 10,
+          pmOther:  d.settings.pm_other   || 13,
+        })
+        // КД пороги из БД или дефолт
+        if (d.settings.kd) {
+          const k = d.settings.kd
+          setKd({
+            p1: Math.round((k.p1||40)*1), p2: Math.round((k.p2||65)*1), p3: Math.round((k.p3||90)*1),
+            v1: Math.round((k.v1||0.40)*100), v2: Math.round((k.v2||0.50)*100),
+            v3: Math.round((k.v3||0.60)*100), v4: Math.round((k.v4||0.70)*100),
+          })
+        }
+      }
+      if (d?.settings?.progs_data?.length)     setProgsNew(d.settings.progs_data)
+      if (d?.settings?.expense_otbasy?.length)  setExpOtbasy(d.settings.expense_otbasy)
+      if (d?.settings?.expense_other?.length)   setExpOther(d.settings.expense_other)
+      if (d?.settings?.mrp_ref?.length)         setMrpRef(d.settings.mrp_ref)
+      if (d?.settings?.deal_steps?.length)      setDealSteps(d.settings.deal_steps)
+      if (d?.settings?.insurance_pct)           setInsPct(+(d.settings.insurance_pct * 100).toFixed(2))
+      // Если программ в БД нет — используем дефолты (до migration 005)
+      if (d?.programs?.length) {
+        setPrograms(d.programs.map(p => ({
+          key:       p.key,
+          name:      p.name,
+          icon:      p.icon         || '🏠',
+          downRatio: parseFloat(p.down_ratio) || 0.20,
+          desc:      p.desc_text    || '',
+          active:    p.active       !== false,
+          sortOrder: p.sort_order   || 0,
+          isNauryz:  p.is_nauryz    || false,
+          variants:  Array.isArray(p.variants) ? p.variants : [],
+        })))
+      } else {
+        // БД пустая — подгружаем дефолты чтобы показать и дать отредактировать
+        setPrograms(DEFAULT_PROGS_UI)
+        toast('ℹ️ Программы загружены из defaults — нажмите Сохранить чтобы записать в БД', true)
+      }
+      setLoading(false)
+    }).catch(() => { setPrograms(DEFAULT_PROGS_UI); setLoading(false) })
+  }, [])
+
+  const setCfgF   = (k,v) => setCfg(s=>({...s,[k]:v}))
+  const setKdF    = (k,v) => setKd(s=>({...s,[k]:+v||0}))
+  const setProg   = (key,field,val) => setPrograms(ps => ps.map(p => p.key===key ? {...p,[field]:val} : p))
+  const setVar    = (key,vi,field,val) => setPrograms(ps => ps.map(p => p.key===key
+    ? {...p, variants: p.variants.map((v,i)=>i===vi?{...v,[field]:field==='coeff'?+val:val}:v)} : p))
+  const addVar    = (key) => setPrograms(ps => ps.map(p => p.key===key
+    ? {...p, variants:[...p.variants,{label:'',coeff:0.01}]} : p))
+  const removeVar = (key,vi) => setPrograms(ps => ps.map(p => p.key===key
+    ? {...p, variants:p.variants.filter((_,i)=>i!==vi)} : p))
+
+  function addProgram() {
+    const key = 'prog_'+Date.now()
+    setPrograms(ps=>[...ps,{key,name:'Новая программа',icon:'🏠',downRatio:0.20,desc:'',active:true,sortOrder:ps.length,isNauryz:false,
+      variants:[{label:'7% — 25 лет',coeff:0.00783333}]}])
+    setEditKey(key)
+  }
+
+  async function deleteProgram(key) {
+    if (!window.confirm('Деактивировать программу? Старые расчёты не пострадают.')) return
+    await api.deleteCalcProgram(key).catch(()=>{})
+    setPrograms(ps=>ps.filter(p=>p.key!==key))
+    toast('🗑 Программа удалена')
+  }
+
+  const [expOtbasy,  setExpOtbasy]  = useState([])
+  const [expOther,   setExpOther]   = useState([])
+  const [mrpRef,     setMrpRef]     = useState([])
+  const [dealSteps,  setDealSteps]  = useState([])
+  const [progsNew,   setProgsNew]   = useState([])
+  const [insPct,     setInsPct]     = useState(0.3)
+  const [activeSection, setActiveSection] = useState('main') // main|progs_api|progs_new|expenses|steps|mrp
+
+  async function saveAll() {
+    setSaving(true)
+    try {
+      const kdToSave = {
+        p1: kd.p1, p2: kd.p2, p3: kd.p3,
+        v1: kd.v1/100, v2: kd.v2/100, v3: kd.v3/100, v4: kd.v4/100,
+      }
+      const programsToSave = programs.map((p,i) => ({...p, sortOrder: i}))
+      const res = await api.saveCalcSettings({
+        settings: {
+          ...cfg, kd: kdToSave,
+          progs_data:     progsNew,
+          expense_otbasy: expOtbasy,
+          expense_other:  expOther,
+          mrp_ref:        mrpRef,
+          deal_steps:     dealSteps,
+          insurance_pct:  insPct / 100,
+        },
+        programs: programsToSave,
+      })
+      await api.invalidateCalcCache().catch(()=>{})
+      if (res?.ok) toast('✅ Настройки сохранены и применены сразу!')
+      else toast('⚠️ Сохранено с ошибками — проверьте данные', false)
+    } catch(e) { toast('❌ ' + e.message, false) }
+    setSaving(false)
+  }
+
+  if (loading) return <div style={{textAlign:'center',padding:40,color:'#94a3b8',fontSize:14}}>⏳ Загрузка...</div>
+
+  const inp = (val, onChange, extra={}) => (
+    <input value={val} onChange={e=>onChange(e.target.value)} {...extra}
+      style={{padding:'8px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:13,
+        background:'#fff',color:'#0f172a',width:'100%',fontFamily:'inherit',boxSizing:'border-box',
+        ...(extra.style||{})}}/>
+  )
+
+  const numInp = (val, onChange, extra={}) => inp(val, onChange, {type:'number', ...extra})
+
+  return (
+    <div style={{position:'relative'}}>
+      {/* Toast */}
+      {msg && (
+        <div style={{position:'fixed',top:20,right:20,zIndex:9999,
+          background: msg.ok!==false ? '#0f172a' : '#dc2626',
+          color:'#fff',padding:'10px 18px',borderRadius:10,
+          fontSize:13,boxShadow:'0 4px 20px rgba(0,0,0,.3)',maxWidth:320}}>
+          {msg.t}
+        </div>
+      )}
+
+      {/* ── Базовые показатели ── */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:'#0f172a',display:'flex',alignItems:'center',gap:8}}>
+          <span style={{background:'#eff6ff',padding:'4px 8px',borderRadius:7,fontSize:12}}>📊</span>
+          Базовые показатели (МРП и ПМ)
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:10}}>
+          {[
+            {k:'mrp',      label:'МРП (₸)',                  hint:'2026 = 4 325 ₸'},
+            {k:'pmNauryz', label:'ПМ × МРП (Наурыз)',        hint:'обычно 10'},
+            {k:'pmOther',  label:'ПМ × МРП (остальные)',     hint:'обычно 13'},
+          ].map(({k,label,hint}) => (
+            <div key={k}>
+              <div style={{fontSize:11,color:'#64748b',marginBottom:4,fontWeight:500}}>{label}</div>
+              {numInp(cfg[k], v=>setCfgF(k,+v), {placeholder:hint})}
+              <div style={{fontSize:10,color:'#94a3b8',marginTop:3}}>{hint}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{background:'#f0fdf4',borderRadius:9,padding:'8px 12px',fontSize:12,color:'#166534'}}>
+          💡 ПМ Наурыз: {cfg.pmNauryz} × {cfg.mrp} = <b>{(cfg.pmNauryz * cfg.mrp).toLocaleString('ru-RU')} ₸</b>
+          &nbsp;·&nbsp;
+          ПМ остальные: {cfg.pmOther} × {cfg.mrp} = <b>{(cfg.pmOther * cfg.mrp).toLocaleString('ru-RU')} ₸</b>
+        </div>
+      </div>
+
+      {/* ── КД таблица ── */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:4,color:'#0f172a',display:'flex',alignItems:'center',gap:8}}>
+          <span style={{background:'#fef9c3',padding:'4px 8px',borderRadius:7,fontSize:12}}>📐</span>
+          Коэффициент долговой нагрузки (КД)
+        </div>
+        <div style={{fontSize:11,color:'#64748b',marginBottom:12}}>
+          КД определяет максимальный % дохода на ипотеку. Пороги задаются в МРП, КД — в процентах.
+        </div>
+        <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+            <thead>
+              <tr style={{background:'#f8fafc'}}>
+                <th style={{padding:'8px 10px',textAlign:'left',border:'1px solid #e2e8f0',color:'#475569',fontWeight:600}}>Порог (МРП кратных)</th>
+                <th style={{padding:'8px 10px',textAlign:'center',border:'1px solid #e2e8f0',color:'#475569',fontWeight:600}}>КД (%)</th>
+                <th style={{padding:'8px 10px',textAlign:'left',border:'1px solid #e2e8f0',color:'#475569',fontWeight:600}}>При ЗП</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                {range:`до ${kd.p1} МРП`, vField:'v1', pField:'p1', label:`до ${(kd.p1*cfg.mrp).toLocaleString('ru-RU')} ₸`},
+                {range:`${kd.p1}–${kd.p2} МРП`, vField:'v2', pField:'p2', label:`${(kd.p1*cfg.mrp).toLocaleString('ru-RU')} – ${(kd.p2*cfg.mrp).toLocaleString('ru-RU')} ₸`},
+                {range:`${kd.p2}–${kd.p3} МРП`, vField:'v3', pField:'p3', label:`${(kd.p2*cfg.mrp).toLocaleString('ru-RU')} – ${(kd.p3*cfg.mrp).toLocaleString('ru-RU')} ₸`},
+                {range:`выше ${kd.p3} МРП`, vField:'v4', pField:null, label:`выше ${(kd.p3*cfg.mrp).toLocaleString('ru-RU')} ₸`},
+              ].map(({range,vField,pField,label},i) => (
+                <tr key={i} style={{background:i%2?'#f8fafc':'#fff'}}>
+                  <td style={{padding:'8px 10px',border:'1px solid #e2e8f0'}}>
+                    <div style={{fontWeight:500}}>{range}</div>
+                    {pField && (
+                      <div style={{display:'flex',alignItems:'center',gap:5,marginTop:4}}>
+                        <span style={{fontSize:10,color:'#94a3b8'}}>порог:</span>
+                        <input type="number" value={kd[pField]} onChange={e=>setKdF(pField,e.target.value)}
+                          style={{width:60,padding:'3px 6px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:11,textAlign:'center'}}/>
+                        <span style={{fontSize:10,color:'#94a3b8'}}>МРП</span>
+                      </div>
+                    )}
+                  </td>
+                  <td style={{padding:'8px 10px',border:'1px solid #e2e8f0',textAlign:'center'}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+                      <input type="number" min="10" max="90" value={kd[vField]} onChange={e=>setKdF(vField,e.target.value)}
+                        style={{width:55,padding:'4px 6px',border:'1.5px solid #3b82f6',borderRadius:7,
+                          fontSize:14,fontWeight:700,textAlign:'center',color:'#1d4ed8'}}/>
+                      <span style={{fontSize:12,color:'#64748b'}}>%</span>
+                    </div>
+                  </td>
+                  <td style={{padding:'8px 10px',border:'1px solid #e2e8f0',fontSize:11,color:'#64748b'}}>{label}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{background:'#fef9c3',borderRadius:8,padding:'7px 11px',fontSize:11,color:'#854d0e',marginTop:8}}>
+          ⚠️ КД = максимальный платёж / доход. Пример при КД 50%: доход 500 000 ₸ → платёж не более 250 000 ₸.
+          Меняется только при изменении законодательства РК.
+        </div>
+      </div>
+
+      {/* ── Ипотечные программы ── */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,color:'#0f172a',display:'flex',alignItems:'center',gap:8}}>
+            <span style={{background:'#eff6ff',padding:'4px 8px',borderRadius:7,fontSize:12}}>🏠</span>
+            Ипотечные программы ({programs.length})
+          </div>
+          <button onClick={addProgram}
+            style={{padding:'7px 14px',border:'1.5px solid #3b82f6',borderRadius:8,
+              background:'#eff6ff',color:'#1d4ed8',fontSize:12,fontWeight:600,cursor:'pointer'}}>
+            + Добавить
+          </button>
+        </div>
+
+        {programs.map(p => (
+          <div key={p.key}
+            style={{border:`1.5px solid ${editKey===p.key?'#3b82f6':'#e2e8f0'}`,
+              borderRadius:11,marginBottom:9,overflow:'hidden',
+              opacity:p.active?1:0.55,transition:'opacity .2s'}}>
+
+            {/* Заголовок программы */}
+            <div onClick={()=>setEditKey(editKey===p.key?null:p.key)}
+              style={{display:'flex',alignItems:'center',gap:10,padding:'10px 13px',
+                cursor:'pointer',background:editKey===p.key?'#eff6ff':'#f8fafc',userSelect:'none'}}>
+              <span style={{fontSize:20}}>{p.icon}</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13,display:'flex',alignItems:'center',gap:6}}>
+                  {p.name}
+                  {p.isNauryz && <span style={{fontSize:10,background:'#fef9c3',color:'#854d0e',padding:'1px 6px',borderRadius:5,fontWeight:500}}>Наурыз ПМ</span>}
+                </div>
+                <div style={{fontSize:11,color:'#64748b'}}>
+                  ПВ {Math.round(p.downRatio*100)}% · {p.variants.length} вариант(ов)
+                  {!p.active && <span style={{color:'#ef4444',marginLeft:8,fontWeight:600}}>⛔ отключена</span>}
+                </div>
+              </div>
+              <div style={{display:'flex',gap:5}}>
+                <button onClick={e=>{e.stopPropagation();setProg(p.key,'active',!p.active)}}
+                  style={{padding:'3px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:10,
+                    fontWeight:600,cursor:'pointer',
+                    background:p.active?'#e1f5ee':'#fef2f2',
+                    color:p.active?'#0f766e':'#991b1b'}}>
+                  {p.active?'✅ Активна':'❌ Откл.'}
+                </button>
+                <button onClick={e=>{e.stopPropagation();deleteProgram(p.key)}}
+                  style={{padding:'3px 8px',border:'1px solid #fecaca',borderRadius:6,
+                    background:'#fef2f2',color:'#dc2626',fontSize:11,cursor:'pointer'}}>🗑</button>
+              </div>
+            </div>
+
+            {/* Редактор программы */}
+            {editKey === p.key && (
+              <div style={{padding:14,background:'#fff',borderTop:'1px solid #e2e8f0'}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 64px 64px',gap:9,marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Название</div>
+                    {inp(p.name, v=>setProg(p.key,'name',v))}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Описание</div>
+                    {inp(p.desc, v=>setProg(p.key,'desc',v), {placeholder:'Взнос 20%'})}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Иконка</div>
+                    {inp(p.icon, v=>setProg(p.key,'icon',v), {placeholder:'🏠',style:{textAlign:'center',fontSize:18}})}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>ПВ %</div>
+                    <input type="number" min="0" max="100" step="5"
+                      value={Math.round(p.downRatio*100)}
+                      onChange={e=>setProg(p.key,'downRatio',+e.target.value/100)}
+                      style={{padding:'8px 6px',border:'1.5px solid #e2e8f0',borderRadius:9,
+                        fontSize:13,width:'100%',textAlign:'center',background:'#fff',color:'#0f172a',boxSizing:'border-box'}}/>
+                  </div>
+                </div>
+
+                {/* Флаг Наурыз ПМ */}
+                <label style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,cursor:'pointer',fontSize:13}}>
+                  <input type="checkbox" checked={!!p.isNauryz} onChange={e=>setProg(p.key,'isNauryz',e.target.checked)}
+                    style={{width:16,height:16,cursor:'pointer'}}/>
+                  <span>Использовать <b>Наурыз ПМ</b> (облегчённый прожиточный минимум × {cfg.pmNauryz} МРП)</span>
+                </label>
+
+                {/* Варианты ставок */}
+                <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:7}}>Варианты ставок:</div>
+                {p.variants.map((v, vi) => (
+                  <div key={vi} style={{display:'grid',gridTemplateColumns:'1fr 1fr 32px',gap:7,marginBottom:6,alignItems:'start'}}>
+                    <div>
+                      <div style={{fontSize:10,color:'#64748b',marginBottom:2}}>Название</div>
+                      <input value={v.label} placeholder="напр. 7% — 19 лет"
+                        onChange={e=>setVar(p.key,vi,'label',e.target.value)}
+                        style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,width:'100%',background:'#fff',color:'#0f172a',boxSizing:'border-box'}}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:10,color:'#64748b',marginBottom:2}}>Коэффициент аннуитета</div>
+                      <input type="number" step="0.0000001" value={v.coeff}
+                        onChange={e=>setVar(p.key,vi,'coeff',e.target.value)}
+                        placeholder="0.00843335"
+                        style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,width:'100%',background:'#fff',color:'#0f172a',boxSizing:'border-box'}}/>
+                      {v.coeff > 0 && (
+                        <div style={{fontSize:9,color:'#94a3b8',marginTop:2}}>
+                          При цене 30М → платёж ≈ {Math.round(30000000*v.coeff).toLocaleString('ru')} ₸/мес
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={()=>removeVar(p.key,vi)}
+                      style={{width:32,height:32,marginTop:18,border:'1px solid #fecaca',borderRadius:7,
+                        background:'#fef2f2',color:'#dc2626',cursor:'pointer',fontSize:14,
+                        display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                  </div>
+                ))}
+                <button onClick={()=>addVar(p.key)}
+                  style={{padding:'5px 12px',border:'1.5px dashed #cbd5e1',borderRadius:8,
+                    background:'transparent',color:'#64748b',fontSize:11,cursor:'pointer',marginTop:3}}>
+                  + Добавить вариант ставки
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Навигация по разделам ── */}
+      <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:14,background:'#f8fafc',padding:5,borderRadius:10,border:'1px solid #e2e8f0'}}>
+        {[
+          {id:'main',      l:'📊 Базовые'},
+          {id:'progs_api', l:'🏦 API-программы'},
+          {id:'progs_new', l:'🏠 Программы (новый)'},
+          {id:'expenses',  l:'💸 Расходы'},
+          {id:'steps',     l:'📋 Этапы'},
+          {id:'mrp',       l:'📌 МРП справочник'},
+        ].map(s=>(
+          <button key={s.id} onClick={()=>setActiveSection(s.id)}
+            style={{padding:'5px 10px',border:'none',borderRadius:7,cursor:'pointer',fontSize:11,fontWeight:500,
+              background:activeSection===s.id?'#3b82f6':'transparent',
+              color:activeSection===s.id?'#fff':'#64748b'}}>
+            {s.l}
+          </button>
+        ))}
+      </div>
+
+      {/* Показываем нужную секцию */}
+      {(activeSection==='main') && (<>
+        {/* ── Базовые показатели (МРП и ПМ) ── уже рендерится выше ──*/}
+      </>)}
+
+      {/* ── Новый калькулятор: программы ── */}
+      {activeSection==='progs_new' && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:'#0f172a'}}>🏠 Программы нового калькулятора (вкладка «Программы»)</div>
+          <div style={{fontSize:11,color:'#64748b',marginBottom:10}}>
+            Это программы во вкладке «Программы» с ползунками. Поля: id (не менять), n — название, r — ставка %, t — срок лет, d — ПВ (0.20 = 20%), grp — «g» госпрограмма / «c» коммерческий, note — описание.
+          </div>
+          {progsNew.map((p,i) => (
+            <div key={p.id||i} style={{display:'grid',gridTemplateColumns:'90px 1fr 50px 50px 50px 30px 1fr 30px',gap:6,marginBottom:7,alignItems:'center'}}>
+              <input value={p.id||''} onChange={e=>{const a=[...progsNew];a[i]={...a[i],id:e.target.value};setProgsNew(a)}}
+                placeholder="id" style={{padding:'5px 7px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:11,background:'#f8fafc',color:'#64748b'}}/>
+              <input value={p.n||''} onChange={e=>{const a=[...progsNew];a[i]={...a[i],n:e.target.value};setProgsNew(a)}}
+                placeholder="Название" style={{padding:'5px 7px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:12}}/>
+              <input type="number" step="0.1" value={p.r||''} onChange={e=>{const a=[...progsNew];a[i]={...a[i],r:+e.target.value};setProgsNew(a)}}
+                placeholder="%" title="Ставка %" style={{padding:'5px 4px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:11,textAlign:'center'}}/>
+              <input type="number" value={p.t||''} onChange={e=>{const a=[...progsNew];a[i]={...a[i],t:+e.target.value};setProgsNew(a)}}
+                placeholder="лет" title="Макс срок лет" style={{padding:'5px 4px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:11,textAlign:'center'}}/>
+              <input type="number" step="0.01" value={p.d||''} onChange={e=>{const a=[...progsNew];a[i]={...a[i],d:+e.target.value};setProgsNew(a)}}
+                placeholder="ПВ" title="ПВ (0.20=20%)" style={{padding:'5px 4px',border:'1.5px solid #3b82f6',borderRadius:7,fontSize:11,textAlign:'center',color:'#1d4ed8'}}/>
+              <select value={p.grp||'g'} onChange={e=>{const a=[...progsNew];a[i]={...a[i],grp:e.target.value};setProgsNew(a)}}
+                style={{padding:'5px 2px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:10,background:'#fff'}}>
+                <option value="g">Гос</option><option value="c">Ком</option>
+              </select>
+              <input value={p.note||''} onChange={e=>{const a=[...progsNew];a[i]={...a[i],note:e.target.value};setProgsNew(a)}}
+                placeholder="Описание / условия" style={{padding:'5px 7px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:11}}/>
+              <button onClick={()=>setProgsNew(ps=>ps.filter((_,j)=>j!==i))}
+                style={{width:28,height:28,border:'1px solid #fecaca',borderRadius:6,background:'#fef2f2',color:'#dc2626',cursor:'pointer',fontSize:13}}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>setProgsNew(ps=>[...ps,{id:'new_'+Date.now(),n:'',r:9,t:20,d:0.20,grp:'g',note:''}])}
+            style={{padding:'5px 12px',border:'1.5px dashed #cbd5e1',borderRadius:8,background:'transparent',color:'#64748b',fontSize:11,cursor:'pointer',marginTop:4}}>
+            + Добавить программу
+          </button>
+        </div>
+      )}
+
+      {/* ── Расходы на оформление ── */}
+      {activeSection==='expenses' && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:4,color:'#0f172a'}}>💸 Расходы на оформление (вкладка «Расходы»)</div>
+          <div style={{fontSize:11,color:'#64748b',marginBottom:12}}>
+            Сумма страховки считается автоматически от цены квартиры × % страховки.
+            marr:true — показывать только в браке, marr:false — только не в браке.
+            regType:«fast» — ускоренная, regType:«slow» — обычная регистрация.
+          </div>
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:600,color:'#0f172a',marginBottom:5}}>Страховка</div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <input type="number" step="0.01" min="0.1" max="2" value={insPct}
+                onChange={e=>setInsPct(+e.target.value)}
+                style={{width:80,padding:'6px 10px',border:'1.5px solid #3b82f6',borderRadius:8,fontSize:13,textAlign:'center',color:'#1d4ed8',fontWeight:700}}/>
+              <span style={{fontSize:12,color:'#64748b'}}>% от цены квартиры в год</span>
+            </div>
+          </div>
+          {[
+            {title:'Отбасы банк', data:expOtbasy, setData:setExpOtbasy},
+            {title:'Другие банки (Халык и др.)', data:expOther, setData:setExpOther},
+          ].map(({title,data,setData}) => (
+            <div key={title} style={{marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:6,paddingTop:4,borderTop:'1px solid #e2e8f0'}}>{title}</div>
+              {data.map((r,i) => (
+                <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 90px 32px',gap:6,marginBottom:5}}>
+                  <input value={r.k||''} onChange={e=>{const a=[...data];a[i]={...a[i],k:e.target.value};setData(a)}}
+                    placeholder="Название строки" style={{padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:12}}/>
+                  <input type="number" value={r.v||0} onChange={e=>{const a=[...data];a[i]={...a[i],v:+e.target.value};setData(a)}}
+                    placeholder="₸" style={{padding:'5px 6px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:12,textAlign:'right'}}/>
+                  <button onClick={()=>setData(d=>d.filter((_,j)=>j!==i))}
+                    style={{width:30,height:30,border:'1px solid #fecaca',borderRadius:6,background:'#fef2f2',color:'#dc2626',cursor:'pointer'}}>✕</button>
+                </div>
+              ))}
+              <button onClick={()=>setData(d=>[...d,{k:'',v:0,req:true}])}
+                style={{padding:'4px 10px',border:'1.5px dashed #cbd5e1',borderRadius:7,background:'transparent',color:'#64748b',fontSize:11,cursor:'pointer'}}>
+                + Добавить строку
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Этапы сделки ── */}
+      {activeSection==='steps' && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:'#0f172a'}}>📋 Этапы сделки (вкладка «Этапы»)</div>
+          {dealSteps.map((s,i) => (
+            <div key={i} style={{border:'1.5px solid #e2e8f0',borderRadius:9,padding:10,marginBottom:7}}>
+              <div style={{display:'flex',gap:6,marginBottom:6}}>
+                <span style={{minWidth:22,height:22,background:'#0f172a',color:'#fff',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,flexShrink:0}}>{i+1}</span>
+                <input value={s.n||''} onChange={e=>{const a=[...dealSteps];a[i]={...a[i],n:e.target.value};setDealSteps(a)}}
+                  placeholder="Название этапа"
+                  style={{flex:1,padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:12,fontWeight:600}}/>
+                <button onClick={()=>setDealSteps(d=>d.filter((_,j)=>j!==i))}
+                  style={{width:28,height:28,border:'1px solid #fecaca',borderRadius:6,background:'#fef2f2',color:'#dc2626',cursor:'pointer',fontSize:12,flexShrink:0}}>✕</button>
+              </div>
+              <input value={s.sub||''} onChange={e=>{const a=[...dealSteps];a[i]={...a[i],sub:e.target.value};setDealSteps(a)}}
+                placeholder="Описание / документы"
+                style={{width:'100%',padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:11,boxSizing:'border-box',marginBottom:5,color:'#64748b'}}/>
+              <input value={s.cost||''} onChange={e=>{const a=[...dealSteps];a[i]={...a[i],cost:e.target.value};setDealSteps(a)}}
+                placeholder="Стоимость (например: 21 600 ₸)"
+                style={{width:'100%',padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:11,boxSizing:'border-box',color:'#854d0e'}}/>
+            </div>
+          ))}
+          <button onClick={()=>setDealSteps(d=>[...d,{n:'',sub:'',cost:''}])}
+            style={{padding:'5px 12px',border:'1.5px dashed #cbd5e1',borderRadius:8,background:'transparent',color:'#64748b',fontSize:11,cursor:'pointer'}}>
+            + Добавить этап
+          </button>
+        </div>
+      )}
+
+      {/* ── МРП справочник ── */}
+      {activeSection==='mrp' && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:4,color:'#0f172a'}}>📌 МРП / МЗП / ВПМ справочник (вкладка «Расходы»)</div>
+          <div style={{fontSize:11,color:'#64748b',marginBottom:10}}>Обновляйте каждый январь когда выходят новые значения МРП, МЗП и тарифов нотариусов.</div>
+          {mrpRef.map((r,i) => (
+            <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 1fr 30px',gap:6,marginBottom:5}}>
+              <input value={r.k||''} onChange={e=>{const a=[...mrpRef];a[i]={...a[i],k:e.target.value};setMrpRef(a)}}
+                placeholder="Название (МРП 2026)" style={{padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:12}}/>
+              <input value={r.v||''} onChange={e=>{const a=[...mrpRef];a[i]={...a[i],v:e.target.value};setMrpRef(a)}}
+                placeholder="Значение (4 325 ₸)" style={{padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:7,fontSize:12}}/>
+              <button onClick={()=>setMrpRef(d=>d.filter((_,j)=>j!==i))}
+                style={{width:28,height:28,border:'1px solid #fecaca',borderRadius:6,background:'#fef2f2',color:'#dc2626',cursor:'pointer',fontSize:12}}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>setMrpRef(d=>[...d,{k:'',v:''}])}
+            style={{padding:'4px 10px',border:'1.5px dashed #cbd5e1',borderRadius:7,background:'transparent',color:'#64748b',fontSize:11,cursor:'pointer',marginTop:4}}>
+            + Добавить строку
+          </button>
+        </div>
+      )}
+
+      {/* Кнопка сохранить */}
+      <button onClick={saveAll} disabled={saving}
+        style={{width:'100%',padding:13,border:'none',borderRadius:12,fontWeight:700,fontSize:14,
+          cursor:saving?'not-allowed':'pointer',marginBottom:4,
+          background:saving?'#93c5fd':'linear-gradient(135deg,#3b82f6,#1d4ed8)',
+          color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+          boxShadow:saving?'none':'0 4px 14px rgba(59,130,246,.4)'}}>
+        {saving
+          ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Сохраняю...</>
+          : <><i className="ti ti-device-floppy" style={{fontSize:16}}/>Сохранить все настройки калькулятора</>}
+      </button>
+      <div style={{fontSize:11,color:'#94a3b8',textAlign:'center',marginTop:5}}>
+        Изменения применяются сразу после сохранения
+      </div>
+    </div>
+  )
+}
+
+
 
   useEffect(() => {
     api.getCalcSettings().then(d => {
@@ -2603,193 +3128,6 @@ function CalcSettingsPanel() {
     setPrograms(ps=>ps.filter(p=>p.key!==key))
     toast('🗑 Программа удалена')
   }
-
-  async function saveAll() {
-    setSaving(true)
-    try {
-      const res = await api.saveCalcSettings({ settings: cfg, programs })
-      await api.invalidateCalcCache().catch(()=>{})
-      if (res?.ok) toast('✅ Настройки сохранены и применены!')
-      else toast('⚠️ Сохранено с ошибками — проверьте данные')
-    } catch(e) { toast('❌ ' + e.message) }
-    setSaving(false)
-  }
-
-  if (loading) return <div style={{textAlign:'center',padding:40,color:'#94a3b8',fontSize:14}}>⏳ Загрузка...</div>
-
-  const inp = (val, onChange, extra={}) => (
-    <input value={val} onChange={e=>onChange(e.target.value)} {...extra}
-      style={{padding:'8px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:13,
-        background:'#fff',color:'#0f172a',width:'100%',fontFamily:'inherit',
-        ...(extra.style||{})}}/>
-  )
-
-  return (
-    <div style={{position:'relative'}}>
-      {msg && (
-        <div style={{position:'fixed',top:20,right:20,zIndex:9999,
-          background:'#0f172a',color:'#fff',padding:'10px 18px',borderRadius:10,
-          fontSize:13,boxShadow:'0 4px 20px rgba(0,0,0,.3)'}}>
-          {msg}
-        </div>
-      )}
-
-      {/* Базовые показатели */}
-      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:14}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:'#0f172a',
-          display:'flex',alignItems:'center',gap:8}}>
-          <span style={{background:'#eff6ff',padding:'4px 8px',borderRadius:7,fontSize:12}}>📊</span>
-          Базовые показатели
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:10}}>
-          {[
-            {k:'mrp',      label:'МРП (₸)',                    hint:'2025 = 4 325 ₸'},
-            {k:'pmNauryz', label:'ПМ Наурыз (кол-во МРП)',     hint:'обычно 10'},
-            {k:'pmOther',  label:'ПМ остальные (кол-во МРП)',  hint:'обычно 13'},
-          ].map(({k,label,hint}) => (
-            <div key={k}>
-              <div style={{fontSize:11,color:'#64748b',marginBottom:4,fontWeight:500}}>{label}</div>
-              {inp(cfg[k], v=>setCfgF(k,+v), {type:'number',placeholder:hint})}
-              <div style={{fontSize:10,color:'#94a3b8',marginTop:3}}>{hint}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{background:'#f0fdf4',borderRadius:9,padding:'9px 12px',fontSize:12,color:'#166534'}}>
-          💡 ПМ (прожиточный минимум) = МРП × коэфф. Используется в расчёте одобрения (Метод 2).
-          <br/>Наурыз: {cfg.pmNauryz} × {cfg.mrp} = <b>{(cfg.pmNauryz * cfg.mrp).toLocaleString('ru-RU')} ₸</b> · 
-          Остальные: {cfg.pmOther} × {cfg.mrp} = <b>{(cfg.pmOther * cfg.mrp).toLocaleString('ru-RU')} ₸</b>
-        </div>
-      </div>
-
-      {/* Программы */}
-      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:14}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-          <div style={{fontWeight:700,fontSize:14,color:'#0f172a',display:'flex',alignItems:'center',gap:8}}>
-            <span style={{background:'#eff6ff',padding:'4px 8px',borderRadius:7,fontSize:12}}>🏠</span>
-            Ипотечные программы ({programs.length})
-          </div>
-          <button onClick={addProgram}
-            style={{padding:'7px 14px',border:'1.5px solid #3b82f6',borderRadius:8,
-              background:'#eff6ff',color:'#1d4ed8',fontSize:12,fontWeight:600,cursor:'pointer'}}>
-            + Добавить
-          </button>
-        </div>
-
-        {programs.map(p => (
-          <div key={p.key}
-            style={{border:`1.5px solid ${editKey===p.key?'#3b82f6':'#e2e8f0'}`,
-              borderRadius:11,marginBottom:9,overflow:'hidden',
-              opacity:p.active?1:0.55,transition:'opacity .2s'}}>
-
-            {/* Заголовок */}
-            <div onClick={()=>setEditKey(editKey===p.key?null:p.key)}
-              style={{display:'flex',alignItems:'center',gap:10,padding:'10px 13px',
-                cursor:'pointer',background:editKey===p.key?'#eff6ff':'#f8fafc',
-                userSelect:'none'}}>
-              <span style={{fontSize:20}}>{p.icon}</span>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
-                <div style={{fontSize:11,color:'#64748b'}}>
-                  ПВ {Math.round(p.downRatio*100)}% · {p.variants.length} вариант(ов)
-                  {!p.active && <span style={{color:'#ef4444',marginLeft:8,fontWeight:600}}>⛔ отключена</span>}
-                </div>
-              </div>
-              <div style={{display:'flex',gap:5}}>
-                <button onClick={e=>{e.stopPropagation();setProg(p.key,'active',!p.active)}}
-                  style={{padding:'3px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:10,
-                    fontWeight:600,cursor:'pointer',
-                    background:p.active?'#e1f5ee':'#fef2f2',
-                    color:p.active?'#0f766e':'#991b1b'}}>
-                  {p.active?'Активна':'Откл.'}
-                </button>
-                <button onClick={e=>{e.stopPropagation();deleteProgram(p.key)}}
-                  style={{padding:'3px 8px',border:'1px solid #fecaca',borderRadius:6,
-                    background:'#fef2f2',color:'#dc2626',fontSize:11,cursor:'pointer'}}>
-                  🗑
-                </button>
-              </div>
-            </div>
-
-            {/* Редактор */}
-            {editKey === p.key && (
-              <div style={{padding:14,background:'#fff',borderTop:'1px solid #e2e8f0'}}>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 80px 60px',gap:9,marginBottom:12}}>
-                  <div>
-                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Название</div>
-                    {inp(p.name, v=>setProg(p.key,'name',v))}
-                  </div>
-                  <div>
-                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Описание (краткое)</div>
-                    {inp(p.desc, v=>setProg(p.key,'desc',v), {placeholder:'Взнос 20%'})}
-                  </div>
-                  <div>
-                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Иконка</div>
-                    {inp(p.icon, v=>setProg(p.key,'icon',v), {placeholder:'🏠',style:{textAlign:'center',fontSize:18}})}
-                  </div>
-                  <div>
-                    <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>ПВ %</div>
-                    <input type="number" min="0" max="100" step="5"
-                      value={Math.round(p.downRatio*100)}
-                      onChange={e=>setProg(p.key,'downRatio',+e.target.value/100)}
-                      style={{padding:'8px 6px',border:'1.5px solid #e2e8f0',borderRadius:9,
-                        fontSize:13,width:'100%',textAlign:'center',background:'#fff',color:'#0f172a'}}/>
-                  </div>
-                </div>
-
-                {/* Варианты ставок */}
-                <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:7}}>
-                  Варианты ставок:
-                </div>
-                {p.variants.map((v, vi) => (
-                  <div key={vi} style={{display:'grid',gridTemplateColumns:'1fr 200px 34px',gap:7,marginBottom:6,alignItems:'center'}}>
-                    <input value={v.label} placeholder="напр. 8.5% — 8 лет"
-                      onChange={e=>setVar(p.key,vi,'label',e.target.value)}
-                      style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,background:'#fff',color:'#0f172a'}}/>
-                    <div>
-                      <input type="number" step="0.0000001" value={v.coeff}
-                        onChange={e=>setVar(p.key,vi,'coeff',e.target.value)}
-                        placeholder="коэффициент"
-                        style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,width:'100%',background:'#fff',color:'#0f172a'}}/>
-                      {v.coeff > 0 && (
-                        <div style={{fontSize:9,color:'#94a3b8',marginTop:2}}>
-                          платёж ≈ цена × {v.coeff} · для 30М = {Math.round(30000000*v.coeff).toLocaleString('ru')} ₸/мес
-                        </div>
-                      )}
-                    </div>
-                    <button onClick={()=>removeVar(p.key,vi)}
-                      style={{width:32,height:32,border:'1px solid #fecaca',borderRadius:7,
-                        background:'#fef2f2',color:'#dc2626',cursor:'pointer',fontSize:14,
-                        display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
-                  </div>
-                ))}
-                <button onClick={()=>addVar(p.key)}
-                  style={{padding:'5px 12px',border:'1.5px dashed #cbd5e1',borderRadius:8,
-                    background:'transparent',color:'#64748b',fontSize:11,cursor:'pointer',marginTop:3}}>
-                  + Добавить вариант ставки
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <button onClick={saveAll} disabled={saving}
-        style={{width:'100%',padding:13,border:'none',borderRadius:12,fontWeight:700,fontSize:14,
-          cursor:saving?'not-allowed':'pointer',marginBottom:4,
-          background:saving?'#93c5fd':'linear-gradient(135deg,#3b82f6,#1d4ed8)',
-          color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
-          boxShadow:saving?'none':'0 4px 14px rgba(59,130,246,.4)'}}>
-        {saving
-          ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/>Сохраняю...</>
-          : <><i className="ti ti-device-floppy" style={{fontSize:16}}/>Сохранить настройки калькулятора</>}
-      </button>
-      <div style={{fontSize:11,color:'#94a3b8',textAlign:'center',marginTop:5}}>
-        Изменения применяются в течение 30 секунд (кэш сервера)
-      </div>
-    </div>
-  )
-}
-
 // ─── ПАНЕЛЬ БЫСТРЫХ ОТВЕТОВ WA (техник) ───────────────────────────────────────
 function WaRepliesPanel() {
   const [loading, setLoading] = useState(true)
@@ -4511,8 +4849,16 @@ function CalcPage({ user, clients, toast$ }) {
     { id:'opv',      l:'📊 ОПВ',       icon:'ti-chart-bar' },
     { id:'tax',      l:'🧾 Бухгалтер', icon:'ti-calculator' },
   ]
-  const [tab, setTab]   = useState('prog')
-  const [busy, setBusy] = useState(false)
+  const [tab, setTab]       = useState('prog')
+  const [busy, setBusy]     = useState(false)
+  // Настройки из БД — загружаем один раз при открытии калькулятора
+  const [calcCfg, setCalcCfg] = useState(null)
+
+  useEffect(() => {
+    api.getCalcSettings().then(d => {
+      if (d?.settings) setCalcCfg(d.settings)
+    }).catch(() => {})
+  }, [])
 
   async function doCalc(action, payload) {
     setBusy(true)
@@ -4571,15 +4917,15 @@ function CalcPage({ user, clients, toast$ }) {
       </div>
 
       {/* Новые вкладки */}
-      {tab==='prog'     && <CalcProgTab  toast$={toast$} clients={clients}/>}
-      {tab==='exp'      && <CalcExpTab   toast$={toast$}/>}
+      {tab==='prog'     && <CalcProgTab  toast$={toast$} clients={clients} calcCfg={calcCfg}/>}
+      {tab==='exp'      && <CalcExpTab   toast$={toast$} calcCfg={calcCfg}/>}
       {tab==='t50'      && <Calc50Tab/>}
       {tab==='pay'      && <CalcPayTab/>}
       {tab==='cmp'      && <CalcCmpTab/>}
       {tab==='early'    && <CalcEarlyTab/>}
       {tab==='inc'      && <CalcIncTab/>}
       {tab==='rent'     && <CalcRentTab/>}
-      {tab==='steps'    && <CalcStepsTab toast$={toast$}/>}
+      {tab==='steps'    && <CalcStepsTab toast$={toast$} calcCfg={calcCfg}/>}
 
       {/* Старые вкладки — через API */}
       <div style={['mortgage','bank','opv','tax'].includes(tab) ? {} : {display:'none'}}>
@@ -4621,13 +4967,21 @@ const Srow = ({ label, val, id, min, max, step, onInput }) => (
 )
 
 // ─── TAB: ПРОГРАММЫ ───────────────────────────────────────────────
-function CalcProgTab({ toast$, clients }) {
-  const [selP, setSelP]   = useState('n20')
+function CalcProgTab({ toast$, clients, calcCfg }) {
+  // Берём программы из БД если загружены, иначе хардкод
+  const progsData = (calcCfg?.progs_data?.length ? calcCfg.progs_data : PROGS_DATA)
+  const [selP, setSelP]   = useState(null)
   const [price, setPrice] = useState(30000000)
   const [term, setTerm]   = useState(17)
   const [inc, setInc]     = useState(500000)
   const [res, setRes]     = useState(null)
-  const p = PROGS_DATA.find(x => x.id === selP)
+
+  // Выбираем первую программу при первом рендере или когда данные загрузились
+  useEffect(() => {
+    if (!selP && progsData.length) setSelP(progsData[0].id)
+  }, [progsData])
+
+  const p = progsData.find(x => x.id === selP)
 
   useEffect(() => { if (p) recalc() }, [selP, price, term, inc])
 
@@ -4655,7 +5009,7 @@ function CalcProgTab({ toast$, clients }) {
     <div>
       {/* Program grid */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,marginBottom:10}}>
-        {PROGS_DATA.filter(x=>x.grp==='g').map(pg => (
+        {progsData.filter(x=>x.grp==='g').map(pg => (
           <button key={pg.id} onClick={() => setSelP(pg.id)}
             style={{padding:'8px 7px',border:`1px solid ${selP===pg.id?'#1D9E75':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
               background:selP===pg.id?'#E1F5EE':'#fff',textAlign:'left',transition:'all .15s'}}>
@@ -4667,7 +5021,7 @@ function CalcProgTab({ toast$, clients }) {
       </div>
       <div style={{fontSize:10,fontWeight:600,color:'#64748b',marginBottom:4,marginTop:4}}>КОММЕРЧЕСКИЕ БАНКИ</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,marginBottom:12}}>
-        {PROGS_DATA.filter(x=>x.grp==='c').map(pg => (
+        {progsData.filter(x=>x.grp==='c').map(pg => (
           <button key={pg.id} onClick={() => setSelP(pg.id)}
             style={{padding:'8px 7px',border:`1px solid ${selP===pg.id?'#f97316':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
               background:selP===pg.id?'#fff7ed':'#fff',textAlign:'left',transition:'all .15s'}}>
@@ -4758,7 +5112,7 @@ function CalcProgTab({ toast$, clients }) {
 }
 
 // ─── TAB: РАСХОДЫ ─────────────────────────────────────────────────
-function CalcExpTab({ toast$ }) {
+function CalcExpTab({ toast$, calcCfg }) {
   const [price, setPrice]  = useState(30000000)
   const [dnPct, setDnPct]  = useState(20)
   const [bank, setBank]    = useState('otbasy')
@@ -4767,31 +5121,51 @@ function CalcExpTab({ toast$ }) {
   const [sq, setSq]        = useState(60)
 
   const down = Math.round(price * dnPct / 100)
+  const insurancePct = calcCfg?.insurance_pct || 0.003
 
-  const rowsOtbasy = [
-    { k:'Оценка недвижимости (1-2 дня)', v:21600, req:true },
-    { k:'ДКП нотариус', v:51900, req:true },
-    { k:'Заявление', v:2292, req:true },
-    { k:'Согласие супруги', v:marr?6488:0, req:marr, note:marr?'':'не требуется' },
+  // Расходы из БД или хардкод
+  const buildRows = (items) => (items || []).map(r => {
+    if (r.marr !== undefined && r.marr !== marr) return null
+    if (r.regType && r.regType !== reg) return null
+    return { k: r.k, v: r.k.toLowerCase().includes('страховка') ? Math.round(price * insurancePct) : r.v, req: r.req }
+  }).filter(Boolean)
+
+  const rowsOtbasyCfg = calcCfg?.expense_otbasy?.length ? buildRows(calcCfg.expense_otbasy) : null
+  const rowsOtbasy = rowsOtbasyCfg || [
+    { k:'Оценка недвижимости (1-2 дня)',  v:21600,  req:true },
+    { k:'ДКП нотариус',                   v:51900,  req:true },
+    { k:'Заявление',                      v:2292,   req:true },
+    { k:'Согласие супруги',               v:marr?6488:0, req:marr, note:marr?'':'не требуется' },
     { k:'Регистрация ДКП ' + (reg==='fast'?'ускоренно (2ч)':'обычная (1.5 дня)'), v:reg==='fast'?7085:1555, req:true },
-    { k:'Регистрация ДЗНИ', v:23788, req:true },
-    { k:'Заявление ДЗНИ', v:2292, req:true },
-    { k:'Согласие ДЗНИ', v:marr?6488:0, req:marr, note:marr?'':'не требуется' },
-    { k:'Страховка 1-й год (~0.3%/год)', v:Math.round(price*0.003), req:true, note:'ежегодно' },
+    { k:'Регистрация ДЗНИ',               v:23788,  req:true },
+    { k:'Заявление ДЗНИ',                 v:2292,   req:true },
+    { k:'Согласие ДЗНИ',                  v:marr?6488:0, req:marr, note:marr?'':'не требуется' },
+    { k:`Страховка 1-й год (~${(insurancePct*100).toFixed(1)}%/год)`, v:Math.round(price*insurancePct), req:true, note:'ежегодно' },
   ]
-  const rowsOther = [
-    { k:'Оценка недвижимости (1-2 дня)', v:21600, req:true },
-    { k:'Ипотечный договор', v:15728, req:true },
-    { k:'Согласие супруги', v:marr?5898:0, req:marr, note:marr?'':'не требуется' },
-    { k:'Заявление о не браке', v:marr?0:2084, req:!marr, note:marr?'не требуется':'' },
-    { k:'ДКП нотариус', v:47184, req:true },
+
+  const rowsOtherCfg = calcCfg?.expense_other?.length ? buildRows(calcCfg.expense_other) : null
+  const rowsOther = rowsOtherCfg || [
+    { k:'Оценка недвижимости (1-2 дня)',  v:21600,  req:true },
+    { k:'Ипотечный договор',              v:15728,  req:true },
+    { k:'Согласие супруги',               v:marr?5898:0,  req:marr,  note:marr?'':'не требуется' },
+    { k:'Заявление о не браке',           v:marr?0:2084,  req:!marr, note:marr?'не требуется':'' },
+    { k:'ДКП нотариус',                   v:47184,  req:true },
     { k:'Регистрация ДКП ' + (reg==='fast'?'ускоренный (2ч)':'обычный'), v:reg==='fast'?6222:1555, req:true },
-    { k:'Регистрация залога', v:7864, req:true },
-    { k:'Страховка 1-й год (~0.3%/год)', v:Math.round(price*0.003), req:true, note:'ежегодно' },
+    { k:'Регистрация залога',             v:7864,   req:true },
+    { k:`Страховка 1-й год (~${(insurancePct*100).toFixed(1)}%/год)`, v:Math.round(price*insurancePct), req:true, note:'ежегодно' },
   ]
-  const rows = bank==='otbasy' ? rowsOtbasy : rowsOther
-  const oblig = rows.filter(r=>r.req&&r.v>0).reduce((s,r)=>s+r.v,0)
-  const need = down + oblig
+
+  const mrpRef = calcCfg?.mrp_ref?.length ? calcCfg.mrp_ref : [
+    {k:'МРП 2026', v:'4 325 ₸'},{k:'МЗП 2026', v:'85 000 ₸'},
+    {k:'ВМП (прожит. мин.) 2026', v:'46 228 ₸'},{k:'Жилищные выплаты 2026', v:'74 000 ₸'},
+    {k:'Мин. пенсия 2026', v:'62 771 ₸'},{k:'ДКП нотариус — Отбасы', v:'51 900 ₸'},
+    {k:'ДКП нотариус — другие банки', v:'47 184 ₸'},
+    {k:'Регистрация залога (др. банк)', v:'7 864 ₸'},{k:'Ипотека договор (др. банк)', v:'15 728 ₸'},
+  ]
+
+  const rows   = bank==='otbasy' ? rowsOtbasy : rowsOther
+  const oblig  = rows.filter(r=>r.req&&r.v>0).reduce((s,r)=>s+r.v,0)
+  const need   = down + oblig
 
   function waShareExp() {
     const txt = `💸 Расходы на оформление ипотеки\n\n🏠 Цена: ${fmtM(price)}\n📥 Взнос (${dnPct}%): ${fmtM(down)}\n📋 Расходы: ${fmtM(oblig)}\n✅ ИТОГО на руках: ${fmtM(need)}`
@@ -4866,10 +5240,8 @@ function CalcExpTab({ toast$ }) {
       </div>
 
       <div style={C.card}>
-        <div style={C.sec}>Справочник МРП / МЗП / ВПМ (2025)</div>
-        {[['МРП 2025','3 932 ₸'],['МЗП 2025','85 000 ₸'],['ВМП (прожит. мин.) 2025','46 228 ₸'],['Жилищные выплаты 2025','74 000 ₸'],['Мин. пенсия 2025','62 771 ₸'],
-          ['ДКП нотариус — Отбасы','51 900 ₸'],['ДКП нотариус — другие банки','47 184 ₸'],['Регистрация залога (др. банк)','7 864 ₸'],['Ипотека договор (др. банк)','15 728 ₸']
-        ].map(([k,v])=>(
+        <div style={C.sec}>Справочник МРП / МЗП / ВПМ</div>
+        {mrpRef.map(({k,v})=>(
           <div key={k} style={{...C.row,borderBottom:'1px solid #f8fafc'}}><span style={C.rk}>{k}</span><span style={C.rv}>{v}</span></div>
         ))}
       </div>
@@ -5341,7 +5713,8 @@ function CalcRentTab() {
 }
 
 // ─── TAB: ЭТАПЫ СДЕЛКИ ────────────────────────────────────────────
-function CalcStepsTab({ toast$ }) {
+function CalcStepsTab({ toast$, calcCfg }) {
+  const steps = calcCfg?.deal_steps?.length ? calcCfg.deal_steps : DEAL_STEPS
   const [done, setDone] = useState(new Set())
 
   function toggle(i) {
@@ -5353,14 +5726,14 @@ function CalcStepsTab({ toast$ }) {
   }
 
   function copyAll() {
-    const txt = DEAL_STEPS.map((s,i) => `${i+1}. ${s.n}${s.cost?' ['+s.cost+']':''}`).join('\n')
+    const txt = steps.map((s,i) => `${i+1}. ${s.n}${s.cost?' ['+s.cost+']':''}`).join('\n')
     navigator.clipboard?.writeText(txt).then(() => toast$('✅ Скопировано'))
   }
 
   return (
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <div style={{fontSize:12,color:'#64748b'}}>Отмечено: {done.size} / {DEAL_STEPS.length}</div>
+        <div style={{fontSize:12,color:'#64748b'}}>Отмечено: {done.size} / {steps.length}</div>
         <div style={{display:'flex',gap:6}}>
           <button onClick={()=>setDone(new Set())}
             style={{padding:'5px 10px',border:'1px solid #e2e8f0',borderRadius:8,cursor:'pointer',fontSize:11,background:'#fff',color:'#64748b'}}>
@@ -5374,12 +5747,12 @@ function CalcStepsTab({ toast$ }) {
       </div>
 
       <div style={{height:4,background:'#f1f5f9',borderRadius:2,overflow:'hidden',marginBottom:12}}>
-        <div style={{width:(done.size/DEAL_STEPS.length*100).toFixed(1)+'%',height:'100%',background:'#1D9E75',borderRadius:2,transition:'width .3s'}}/>
+        <div style={{width:(done.size/steps.length*100).toFixed(1)+'%',height:'100%',background:'#1D9E75',borderRadius:2,transition:'width .3s'}}/>
       </div>
 
       <div style={C.card}>
-        {DEAL_STEPS.map((s,i) => (
-          <div key={i} style={{display:'flex',gap:10,padding:'8px 0',borderBottom:i<DEAL_STEPS.length-1?'1px solid #f8fafc':'none'}}>
+        {steps.map((s,i) => (
+          <div key={i} style={{display:'flex',gap:10,padding:'8px 0',borderBottom:i<steps.length-1?'1px solid #f8fafc':'none'}}>
             <div onClick={()=>toggle(i)}
               style={{width:22,height:22,borderRadius:'50%',flexShrink:0,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:500,transition:'all .15s',
                 background:done.has(i)?'#1D9E75':'#E1F5EE',color:done.has(i)?'#fff':'#0F6E56',border:'1px solid '+(done.has(i)?'#1D9E75':'#5DCAA5')}}>
@@ -5622,26 +5995,65 @@ function CalcMortgageResult({ result, mode, prog }) {
               const canAfford = !noSalary && v.canAfford
               const isUnknown = noSalary
               return (
-                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 10px',
-                  border:`1.5px solid ${isUnknown?'#e2e8f0':canAfford?'#86efac':'#fecaca'}`,borderRadius:10,marginBottom:5,
+                <div key={i} style={{padding:'10px 12px',
+                  border:`1.5px solid ${isUnknown?'#e2e8f0':canAfford?'#86efac':'#fecaca'}`,borderRadius:10,marginBottom:6,
                   background:isUnknown?'#f8fafc':canAfford?'#f0fdf4':'#fef2f2'}}>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:500}}>{v.label}</div>
-                    <div style={{fontSize:10,color:'#64748b'}}>КД {fmtKd(v.kd)}</div>
-                  </div>
-                  <div style={{textAlign:'right'}}>
-                    {/* v.monthly — платёж/мес из calcMortgageByPrice */}
-                    <div style={{fontSize:14,fontWeight:700,color:isUnknown?'#0f172a':canAfford?'#16a34a':'#dc2626'}}>
-                      {fmtMoney(v.monthly)}/мес
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:600}}>{v.label}</div>
+                      <div style={{fontSize:10,color:'#64748b',marginTop:2}}>КД {fmtKd(v.kd)}</div>
                     </div>
-                    <div style={{fontSize:10,color:'#94a3b8'}}>
-                      {isUnknown ? '—' : canAfford ? '✅ одобрят' : '❌ откажут'}
+                    <div style={{textAlign:'right'}}>
+                      <div style={{fontSize:15,fontWeight:700,color:isUnknown?'#0f172a':canAfford?'#16a34a':'#dc2626'}}>
+                        {fmtMoney(v.monthly)}/мес
+                      </div>
+                      <div style={{fontSize:10,color:'#94a3b8',marginTop:1}}>
+                        {isUnknown ? '—' : canAfford ? '✅ одобрят' : '❌ откажут'}
+                      </div>
                     </div>
                   </div>
+                  {/* Нужная ЗП — показываем если нет дохода или не хватает */}
+                  {(isUnknown || !canAfford) && v.requiredSalary > 0 && (
+                    <div style={{marginTop:7,padding:'6px 10px',background:'#fef9c3',borderRadius:7,
+                      border:'1px solid #fde68a',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:11,color:'#854d0e',fontWeight:500}}>💡 Нужна средняя ЗП:</span>
+                      <span style={{fontSize:13,fontWeight:700,color:'#854d0e'}}>
+                        {fmtMoney(v.requiredSalary)}/мес
+                      </span>
+                    </div>
+                  )}
                 </div>
               )
             })}
           </div>
+        )}
+
+        {/* Кнопка копировать */}
+        {vars.length > 0 && (
+          <button onClick={()=>{
+            const lines = [`🏠 Расчёт ипотеки — ${result.prog?.name || ''}`,'']
+            if (vars[0]) {
+              lines.push(`💵 Первоначальный взнос: ${fmtMoney(vars[0].downPayment)}`)
+              lines.push(`🏦 Сумма займа: ${fmtMoney(vars[0].loanAmount)}`)
+            }
+            lines.push('')
+            lines.push('📊 Варианты ставок:')
+            vars.forEach(v => {
+              const needStr = (!noSalary && !v.canAfford && v.requiredSalary) ? ` | нужна ЗП: ${fmtMoney(v.requiredSalary)}` : ''
+              const status = noSalary ? '' : (v.canAfford ? ' ✅' : ' ❌')
+              lines.push(`• ${v.label}: ${fmtMoney(v.monthly)}/мес${status}${needStr}`)
+            })
+            navigator.clipboard?.writeText(lines.join('\n')).catch(()=>{})
+              .then ? void 0 : void 0
+            const text = lines.join('\n')
+            try { navigator.clipboard.writeText(text) } catch(e) {}
+            window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank')
+          }}
+            style={{width:'100%',marginTop:8,padding:'9px',border:'none',borderRadius:9,
+              background:'#25D366',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
+            <i className="ti ti-brand-whatsapp"/>Отправить клиенту в WhatsApp
+          </button>
         )}
       </div>
     )
@@ -6063,11 +6475,12 @@ function CalcOpvTab({ doCalc }) {
 }
 
 function CalcTaxTab({ doCalc }) {
-  const [type,   setType]   = useState('Трудовой')
-  const [salary, setSalary] = useState('')
-  const [result, setResult] = useState(null)
-  const [busy,   setBusy]   = useState(false)
-  const [err,    setErr]    = useState('')
+  const [type,    setType]    = useState('Трудовой')
+  const [salary,  setSalary]  = useState('')
+  const [buhFee,  setBuhFee]  = useState('')   // комиссия бухгалтеру
+  const [result,  setResult]  = useState(null)
+  const [busy,    setBusy]    = useState(false)
+  const [err,     setErr]     = useState('')
 
   const fmt = n => Math.round(n||0).toLocaleString('ru-RU') + ' ₸'
 
@@ -6083,10 +6496,33 @@ function CalcTaxTab({ doCalc }) {
     } finally { setBusy(false) }
   }
 
+  const netVal = result?.breakdown?.find(r=>r.isTotal||r.isNet)?.val || 0
+  const feeVal = +String(buhFee).replace(/\s/g,'') || 0
+  const toCard = Math.max(0, netVal - feeVal)
+
+  function sendWA() {
+    if (!result) return
+    const gross = result.breakdown?.find(r=>r.isGross)?.val || +salary
+    const lines = [
+      `🧾 Расчёт зарплаты (${type})`,
+      '',
+      `📥 Начислено: *${fmt(gross)}*`,
+    ]
+    result.breakdown?.filter(r => !r.isGross && !r.isTotal && !r.isNet && r.val !== 0)
+      .forEach(r => lines.push(`  ${r.label}: -${fmt(Math.abs(r.val))}`))
+    lines.push(`💳 На руки: *${fmt(netVal)}*`)
+    if (feeVal > 0) {
+      lines.push(`  └ Бухгалтеру: -${fmt(feeVal)}`)
+      lines.push(`  └ На карту: *${fmt(toCard)}*`)
+    }
+    lines.push('', `💡 ОПВ ${fmt(Math.round(+salary*0.10))} = 10% — банк использует для расчёта ср. ЗП`)
+    window.open('https://wa.me/?text='+encodeURIComponent(lines.join('\n')),'_blank')
+  }
+
   return (
     <div>
       <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:10,padding:'10px 13px',marginBottom:14,fontSize:12,color:'#1e40af',lineHeight:1.5}}>
-        Введите начисленную зарплату — увидите все налоги и отчисления, и сколько реально получите на руки.
+        Введите начисленную зарплату — увидите все налоги, что уходит бухгалтеру и что реально приходит на карту.
       </div>
 
       <div style={{marginBottom:12}}>
@@ -6103,7 +6539,7 @@ function CalcTaxTab({ doCalc }) {
         </div>
       </div>
 
-      <div style={{marginBottom:14}}>
+      <div style={{marginBottom:12}}>
         <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>
           Начисленная зарплата (до вычетов)
         </label>
@@ -6113,16 +6549,32 @@ function CalcTaxTab({ doCalc }) {
             onKeyDown={e=>e.key==='Enter'&&calc()}
             placeholder="300 000"
             style={{width:'100%',padding:'12px 50px 12px 14px',border:`1.5px solid ${err?'#fca5a5':'#e2e8f0'}`,
-              borderRadius:12,fontSize:16,background:'#fff',color:'#0f172a',fontWeight:500}}/>
+              borderRadius:12,fontSize:16,background:'#fff',color:'#0f172a',fontWeight:500,boxSizing:'border-box'}}/>
           <span style={{position:'absolute',right:14,top:'50%',transform:'translateY(-50%)',
             fontSize:14,color:'#94a3b8',pointerEvents:'none',fontWeight:500}}>₸</span>
         </div>
-        {salary > 0 && (
-          <div style={{fontSize:11,color:'#64748b',marginTop:5}}>
-            {Number(salary).toLocaleString('ru-RU')} ₸ = {(salary/1000000).toFixed(2).replace('.00','')} млн ₸
+        {err && <div style={{fontSize:12,color:'#dc2626',marginTop:5}}>⚠️ {err}</div>}
+      </div>
+
+      {/* Комиссия бухгалтеру */}
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>
+          Комиссия бухгалтеру (₸) <span style={{fontWeight:400,color:'#94a3b8'}}>— необязательно</span>
+        </label>
+        <div style={{position:'relative'}}>
+          <input type="number" value={buhFee}
+            onChange={e=>setBuhFee(e.target.value)}
+            placeholder="0 — если нет комиссии"
+            style={{width:'100%',padding:'10px 50px 10px 14px',border:'1.5px solid #e2e8f0',
+              borderRadius:10,fontSize:14,background:'#fff',color:'#0f172a',boxSizing:'border-box'}}/>
+          <span style={{position:'absolute',right:14,top:'50%',transform:'translateY(-50%)',
+            fontSize:13,color:'#94a3b8',pointerEvents:'none'}}>₸</span>
+        </div>
+        {feeVal > 0 && netVal > 0 && (
+          <div style={{fontSize:11,color:'#64748b',marginTop:4}}>
+            На карту = {fmt(netVal)} − {fmt(feeVal)} = <b style={{color:'#0f766e'}}>{fmt(toCard)}</b>
           </div>
         )}
-        {err && <div style={{fontSize:12,color:'#dc2626',marginTop:5}}>⚠️ {err}</div>}
       </div>
 
       <button onClick={calc} disabled={busy}
@@ -6136,26 +6588,46 @@ function CalcTaxTab({ doCalc }) {
 
       {result?.ok && result.breakdown?.length > 0 && (
         <div>
-          {/* Главная цифра */}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+          {/* Главные цифры */}
+          <div style={{display:'grid',gridTemplateColumns:feeVal>0?'1fr 1fr 1fr':'1fr 1fr',gap:8,marginBottom:12}}>
             {(() => {
               const gross = result.breakdown.find(r=>r.isGross)
-              const net   = result.breakdown.find(r=>r.isTotal||r.isNet)
-              return [
-                {l:'Начислено',  v:gross?fmt(gross.val):fmt(salary), bg:'#f8fafc', c:'#0f172a'},
-                {l:'На руки',    v:net  ?fmt(net.val)  :'—',         bg:'#f0fdf4', c:'#0f766e'},
-              ].map(({l,v,bg,c})=>(
-                <div key={l} style={{background:bg,borderRadius:12,padding:'14px',
+              const cards = [
+                {l:'Начислено',   v:gross?fmt(gross.val):fmt(salary), bg:'#f8fafc', c:'#0f172a'},
+                {l:'На руки',     v:fmt(netVal),                       bg:'#f0fdf4', c:'#0f766e'},
+              ]
+              if (feeVal > 0) cards.push({l:'На карту', v:fmt(toCard), bg:'#eff6ff', c:'#1d4ed8'})
+              return cards.map(({l,v,bg,c})=>(
+                <div key={l} style={{background:bg,borderRadius:12,padding:'12px',
                   border:`1.5px solid ${c}22`,textAlign:'center'}}>
                   <div style={{fontSize:11,color:'#64748b',marginBottom:4,fontWeight:600}}>{l}</div>
-                  <div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div>
+                  <div style={{fontSize:16,fontWeight:900,color:c}}>{v}</div>
                 </div>
               ))
             })()}
           </div>
 
+          {/* Если есть комиссия — показываем разбивку */}
+          {feeVal > 0 && (
+            <div style={{background:'#fef9c3',border:'1.5px solid #fde68a',borderRadius:10,
+              padding:'10px 14px',marginBottom:12}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
+                <span style={{fontSize:12,color:'#854d0e'}}>На руки (до вычета бухгалтера)</span>
+                <span style={{fontSize:13,fontWeight:700,color:'#854d0e'}}>{fmt(netVal)}</span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
+                <span style={{fontSize:12,color:'#854d0e'}}>− Комиссия бухгалтеру</span>
+                <span style={{fontSize:13,fontWeight:700,color:'#dc2626'}}>−{fmt(feeVal)}</span>
+              </div>
+              <div style={{borderTop:'1px solid #fde68a',paddingTop:6,display:'flex',justifyContent:'space-between'}}>
+                <span style={{fontSize:13,fontWeight:700,color:'#0f172a'}}>= На карту</span>
+                <span style={{fontSize:16,fontWeight:900,color:'#0f766e'}}>{fmt(toCard)}</span>
+              </div>
+            </div>
+          )}
+
           {/* Детализация */}
-          <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden'}}>
+          <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:10}}>
             <div style={{padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',
               fontSize:12,fontWeight:600,color:'#374151'}}>Детализация ({type})</div>
             {result.breakdown.map((row,i)=>(
@@ -6177,20 +6649,23 @@ function CalcTaxTab({ doCalc }) {
               </div>
             ))}
           </div>
-          <div style={{fontSize:11,color:'#94a3b8',marginTop:8,padding:'0 4px'}}>
+
+          <div style={{fontSize:11,color:'#94a3b8',marginBottom:10,padding:'0 4px'}}>
             <i className="ti ti-info-circle" style={{marginRight:4}}/>
-            ОПВ ({fmt(Math.round(+salary*0.10))}) = 10% от начисленной. Используется банком для расчёта средней ЗП.
+            ОПВ ({fmt(Math.round(+salary*0.10))}) = 10% от начисленной. Банк использует для расчёта средней ЗП.
           </div>
+
+          <button onClick={sendWA}
+            style={{width:'100%',padding:10,border:'none',borderRadius:10,background:'#25D366',color:'#fff',
+              fontSize:13,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
+            <i className="ti ti-brand-whatsapp"/>Отправить расчёт клиенту в WhatsApp
+          </button>
         </div>
       )}
     </div>
   )
 }
 
-// ════════════════════════════════════════════════════════════════
-//  КАЛЬКУЛЯТОР В КАРТОЧКЕ КЛИЕНТА
-//  Данные клиента подставляются автоматически
-// ════════════════════════════════════════════════════════════════
 function ClientCalcTab({ c, user, toast$ }) {
   const [program,  setProgram]  = useState('nauryz20')
   const [price,    setPrice]    = useState(c.contractAmount > 0 ? String(c.contractAmount) : '')

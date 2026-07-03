@@ -1,106 +1,79 @@
 // pages/api/calc-settings/index.js
-// GET  — загрузить настройки (все роли)
-// PUT  — сохранить настройки (только admin)
-// DELETE — удалить программу или быстрый ответ (только admin)
+// GET  → все настройки калькулятора (API + новый)
+// POST → сохранить настройки
 
-import { getSupabase }  from '../../../lib/supabase'
-import { apiError } from '../../../lib/apiError'
-import { withAuth }     from '../../../lib/auth'
+import { withRole }  from '../../../lib/auth'
+import { getSupabase } from '../../../lib/supabase'
+import { apiError, apiErrors } from '../../../lib/apiError'
 
-export default withAuth(async function handler(req, res) {
-  const sb   = getSupabase()
-  const role = req.user?.role
+async function handler(req, res) {
+  const sb = getSupabase()
 
-  // ── GET ──────────────────────────────────────────────────────────────────
+  // ── GET: вернуть все настройки ──────────────────────────────────
   if (req.method === 'GET') {
-    const [settRes, progRes, qrRes] = await Promise.all([
-      sb.from('calc_settings').select('*').eq('id', 'main').maybeSingle(),
+    const [settRes, progRes] = await Promise.all([
+      sb.from('calc_settings').select('*').eq('id', 'main').single(),
       sb.from('calc_programs').select('*').eq('active', true).order('sort_order'),
-      sb.from('wa_quick_replies').select('*').eq('active', true).order('sort_order'),
     ])
     return res.status(200).json({
       ok:       true,
-      settings: settRes.data || null,
-      programs: progRes.data || [],
-      replies:  qrRes.data   || [],
+      settings: settRes.data  || null,
+      programs: progRes.data  || [],
     })
   }
 
-  // ── PUT — только admin ───────────────────────────────────────────────────
-  if (req.method === 'PUT') {
-    if (role !== 'admin') return res.status(403).json({ error: 'Только техник (admin)' })
-
-    const { settings, programs, replies } = req.body || {}
+  // ── POST: сохранить настройки ───────────────────────────────────
+  if (req.method === 'POST') {
+    const { settings, programs } = req.body || {}
     const errs = []
 
-    // Основные настройки МРП / ПМ / КД
+    // Сохранение настроек (основные + расширенные)
     if (settings) {
-      const { error } = await sb.from('calc_settings').upsert({
-        id:         'main',
-        mrp:        +settings.mrp       || 4325,
-        pm_nauryz:  +settings.pmNauryz  || 10,
-        pm_other:   +settings.pmOther   || 13,
-        kd:         settings.kd         || undefined,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' })
+      const {
+        mrp, pm_nauryz, pm_other, kd,
+        progs_data, expense_otbasy, expense_other,
+        mrp_ref, deal_steps, insurance_pct,
+      } = settings
+
+      const row = { id: 'main', updated_at: new Date().toISOString() }
+      if (mrp         != null) row.mrp           = +mrp
+      if (pm_nauryz   != null) row.pm_nauryz      = +pm_nauryz
+      if (pm_other    != null) row.pm_other        = +pm_other
+      if (kd          != null) row.kd             = kd
+      if (progs_data  != null) row.progs_data      = progs_data
+      if (expense_otbasy != null) row.expense_otbasy = expense_otbasy
+      if (expense_other  != null) row.expense_other  = expense_other
+      if (mrp_ref     != null) row.mrp_ref         = mrp_ref
+      if (deal_steps  != null) row.deal_steps       = deal_steps
+      if (insurance_pct != null) row.insurance_pct  = +insurance_pct
+
+      const { error } = await sb.from('calc_settings').upsert(row)
       if (error) errs.push({ section: 'settings', error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
     }
 
-    // Программы (upsert по key)
+    // Сохранение программ API-калькулятора
     if (Array.isArray(programs)) {
       for (const p of programs) {
         const { error } = await sb.from('calc_programs').upsert({
           key:        p.key,
           name:       p.name,
-          icon:       p.icon       || '🏠',
-          down_ratio: +p.downRatio || 0.20,
-          desc_text:  p.desc       || '',
-          active:     p.active     !== false,
-          sort_order: +p.sortOrder || 0,
-          variants:   p.variants   || [],
+          icon:       p.icon        || '🏠',
+          down_ratio: p.downRatio   ?? 0.20,
+          desc_text:  p.desc        || '',
+          active:     p.active      !== false,
+          sort_order: p.sortOrder   || 0,
+          is_nauryz:  p.isNauryz    || false,
+          variants:   p.variants    || [],
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'key' })
+        })
         if (error) errs.push({ section: 'program:' + p.key, error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
       }
     }
 
-    // Быстрые ответы (upsert по id)
-    if (Array.isArray(replies)) {
-      for (const r of replies) {
-        const row = {
-          trigger:    r.trigger,
-          title:      r.title,
-          body:       r.body,
-          category:   r.category   || 'general',
-          active:     r.active     !== false,
-          sort_order: +r.sortOrder || 0,
-        }
-        if (r.id && !r.id.startsWith('reply_')) row.id = r.id  // сохраняем UUID если он настоящий
-        const { error } = await sb.from('wa_quick_replies').upsert(row, { onConflict: 'id' })
-        if (error) errs.push({ section: 'reply:' + r.trigger, error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
-      }
-    }
-
-    return res.status(errs.length ? 207 : 200).json({ ok: !errs.length, errors: errs })
+    return res.status(200).json({ ok: errs.length === 0, errors: errs })
   }
 
-  // ── DELETE ───────────────────────────────────────────────────────────────
-  if (req.method === 'DELETE') {
-    if (role !== 'admin') return res.status(403).json({ error: 'Только техник (admin)' })
+  return apiErrors.methodNotAllowed(res)
+}
 
-    const { replyId, programKey } = req.body || {}
-
-    if (replyId) {
-      const { error } = await sb.from('wa_quick_replies').delete().eq('id', replyId)
-      if (error) return apiError(res, error)
-    }
-    if (programKey) {
-      // Деактивируем, не удаляем — чтобы не ломать расчёты по старым клиентам
-      const { error } = await sb.from('calc_programs').update({ active: false }).eq('key', programKey)
-      if (error) return apiError(res, error)
-    }
-    return res.status(200).json({ ok: true })
-  }
-
-  return res.status(405).json({ error: 'Метод не поддерживается' })
-})
+export default withRole('admin', 'head')(handler)
