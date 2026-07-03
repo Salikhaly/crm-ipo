@@ -4,7 +4,20 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Head from 'next/head'
 import { api } from '../lib/api'
-import { avgSalary } from '../lib/calcEngine'
+
+// Инлайним avgSalary здесь вместо import из lib/calcEngine
+// (import ESM-модуля в pages/ вызывает ошибку хуков при сборке Next.js)
+function avgSalary(opvList) {
+  const list = (opvList || []).map(Number).filter(v => isFinite(v) && v > 0)
+  if (!list.length) return 0
+  const n   = list.length
+  const sum = list.reduce((a, b) => a + b, 0)
+  const s1  = sum * 7.9 / 6
+  if (n < 3) return Math.round(s1)
+  const mx = Math.max(...list)
+  const mn = Math.min(...list)
+  return Math.round((s1 + (sum - mx - mn) * 7.9 / (n - 2)) / 2)
+}
 
 // ═══ КОНСТАНТЫ ═══════════════════════════════════════════════════
 // ─── WhatsApp polling ─────────────────────────────────────────────
