@@ -3098,49 +3098,6 @@ function CalcSettingsPanel() {
 }
 
 
-
-  useEffect(() => {
-    api.getCalcSettings().then(d => {
-      if (d?.settings) setCfg({
-        mrp:      d.settings.mrp        || 4325,
-        pmNauryz: d.settings.pm_nauryz  || 10,
-        pmOther:  d.settings.pm_other   || 13,
-      })
-      if (d?.programs?.length) setPrograms(d.programs.map(p => ({
-        key:       p.key,
-        name:      p.name,
-        icon:      p.icon         || '🏠',
-        downRatio: parseFloat(p.down_ratio) || 0.20,
-        desc:      p.desc_text    || '',
-        active:    p.active       !== false,
-        sortOrder: p.sort_order   || 0,
-        variants:  Array.isArray(p.variants) ? p.variants : [],
-      })))
-      setLoading(false)
-    }).catch(() => setLoading(false))
-  }, [])
-
-  const setCfgF   = (k,v) => setCfg(s=>({...s,[k]:v}))
-  const setProg   = (key,field,val) => setPrograms(ps => ps.map(p => p.key===key ? {...p,[field]:val} : p))
-  const setVar    = (key,vi,field,val) => setPrograms(ps => ps.map(p => p.key===key
-    ? {...p, variants: p.variants.map((v,i)=>i===vi?{...v,[field]:field==='coeff'?+val:val}:v)} : p))
-  const addVar    = (key) => setPrograms(ps => ps.map(p => p.key===key
-    ? {...p, variants:[...p.variants,{label:'',coeff:0.01}]} : p))
-  const removeVar = (key,vi) => setPrograms(ps => ps.map(p => p.key===key
-    ? {...p, variants:p.variants.filter((_,i)=>i!==vi)} : p))
-
-  function addProgram() {
-    const key = 'prog_'+Date.now()
-    setPrograms(ps=>[...ps,{key,name:'Новая программа',icon:'🏠',downRatio:0.20,desc:'',active:true,sortOrder:ps.length,variants:[{label:'7% — 25 лет',coeff:0.00783333}]}])
-    setEditKey(key)
-  }
-
-  async function deleteProgram(key) {
-    if (!window.confirm('Удалить программу?')) return
-    await api.deleteCalcProgram(key).catch(()=>{})
-    setPrograms(ps=>ps.filter(p=>p.key!==key))
-    toast('🗑 Программа удалена')
-  }
 // ─── ПАНЕЛЬ БЫСТРЫХ ОТВЕТОВ WA (техник) ───────────────────────────────────────
 function WaRepliesPanel() {
   const [loading, setLoading] = useState(true)
