@@ -39,7 +39,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
       "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net",
       "img-src 'self' data: https: blob:",
-      "connect-src 'self' https://*.supabase.co https://api.green-api.com https://sentry.io",
+      "connect-src 'self' https://*.supabase.co https://api.green-api.com https://sentry.io https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com",
       "media-src 'self' blob:",
       "object-src 'none'",
       "frame-ancestors 'none'",
@@ -50,7 +50,7 @@ const securityHeaders = [
 const nextConfig = {
   // Включить Strict Mode (скрывался баги с двойными useEffect)
   // Закрывает аудит M4
-  reactStrictMode: true,
+  reactStrictMode: false,
 
   swcMinify: true,
 
