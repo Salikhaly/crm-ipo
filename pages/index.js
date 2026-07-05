@@ -2713,6 +2713,27 @@ function CalcSettingsPanel() {
         </div>
       )}
 
+      {/* ── Навигация по разделам (перемещена наверх — фикс АП-1) ── */}
+      <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:14,background:'#f8fafc',padding:5,borderRadius:10,border:'1px solid #e2e8f0'}}>
+        {[
+          {id:'main',      l:'📊 Базовые'},
+          {id:'progs_api', l:'🏦 API-программы'},
+          {id:'progs_new', l:'🏠 Программы (новый)'},
+          {id:'expenses',  l:'💸 Расходы'},
+          {id:'steps',     l:'📋 Этапы'},
+          {id:'mrp',       l:'📌 МРП справочник'},
+        ].map(s=>(
+          <button key={s.id} onClick={()=>setActiveSection(s.id)}
+            style={{padding:'5px 10px',border:'none',borderRadius:7,cursor:'pointer',fontSize:11,fontWeight:500,
+              background:activeSection===s.id?'#3b82f6':'transparent',
+              color:activeSection===s.id?'#fff':'#64748b'}}>
+            {s.l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Секция «Базовые»: МРП, ПМ, КД (видна только когда activeSection==='main') ── */}
+      {activeSection==='main' && (<>
       {/* ── Базовые показатели ── */}
       <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
         <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:'#0f172a',display:'flex',alignItems:'center',gap:8}}>
@@ -2795,7 +2816,12 @@ function CalcSettingsPanel() {
           Меняется только при изменении законодательства РК.
         </div>
       </div>
+      </>)}
+      {/* ── конец секции «Базовые» ── */}
 
+      {/* ── Секция «API-программы» (activeSection==='progs_api') ── */}
+      {activeSection==='progs_api' && (
+      <>
       {/* ── Ипотечные программы ── */}
       <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
@@ -2916,30 +2942,9 @@ function CalcSettingsPanel() {
           </div>
         ))}
       </div>
-
-      {/* ── Навигация по разделам ── */}
-      <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:14,background:'#f8fafc',padding:5,borderRadius:10,border:'1px solid #e2e8f0'}}>
-        {[
-          {id:'main',      l:'📊 Базовые'},
-          {id:'progs_api', l:'🏦 API-программы'},
-          {id:'progs_new', l:'🏠 Программы (новый)'},
-          {id:'expenses',  l:'💸 Расходы'},
-          {id:'steps',     l:'📋 Этапы'},
-          {id:'mrp',       l:'📌 МРП справочник'},
-        ].map(s=>(
-          <button key={s.id} onClick={()=>setActiveSection(s.id)}
-            style={{padding:'5px 10px',border:'none',borderRadius:7,cursor:'pointer',fontSize:11,fontWeight:500,
-              background:activeSection===s.id?'#3b82f6':'transparent',
-              color:activeSection===s.id?'#fff':'#64748b'}}>
-            {s.l}
-          </button>
-        ))}
-      </div>
-
-      {/* Показываем нужную секцию */}
-      {(activeSection==='main') && (<>
-        {/* ── Базовые показатели (МРП и ПМ) ── уже рендерится выше ──*/}
-      </>)}
+      </>
+      )}
+      {/* ── конец секции «API-программы» ── */}
 
       {/* ── Новый калькулятор: программы ── */}
       {activeSection==='progs_new' && (
@@ -4813,8 +4818,8 @@ function CalcPage({ user, clients, toast$ }) {
       {/* Новые вкладки */}
       {tab==='prog'     && <CalcProgTab  toast$={toast$} clients={clients} calcCfg={calcCfg}/>}
       {tab==='exp'      && <CalcExpTab   toast$={toast$} calcCfg={calcCfg}/>}
-      {tab==='t50'      && <Calc50Tab/>}
-      {tab==='pay'      && <CalcPayTab/>}
+      {tab==='t50'      && <Calc50Tab calcCfg={calcCfg}/>}
+      {tab==='pay'      && <CalcPayTab calcCfg={calcCfg}/>}
       {tab==='cmp'      && <CalcCmpTab calcCfg={calcCfg}/>}
       {tab==='early'    && <CalcEarlyTab/>}
       {tab==='inc'      && <CalcIncTab calcCfg={calcCfg}/>}
@@ -5149,10 +5154,11 @@ function CalcExpTab({ toast$, calcCfg }) {
 }
 
 // ─── TAB: 50/50 TABLE ─────────────────────────────────────────────
-function Calc50Tab() {
+function Calc50Tab({ calcCfg }) {
   const [search, setSearch] = useState('')
   const q = +search
-  const data = q ? D50.filter(r => Math.abs(r[0] - q) < 3000001) : D50
+  const d50 = getD50(calcCfg)
+  const data = q ? d50.filter(r => Math.abs(r[0] - q) < 3000001) : d50
   return (
     <div>
       <div style={{...C.note('#E6F1FB','#85B7EB','#0C447C')}}>
@@ -5198,19 +5204,20 @@ function Calc50Tab() {
 }
 
 // ─── TAB: ПЛАТЁЖ ──────────────────────────────────────────────────
-function CalcPayTab() {
+function CalcPayTab({ calcCfg }) {
   const [cr, setCr]     = useState(24000000)
   const [rate, setRate] = useState(8.5)
   const [term, setTerm] = useState(8)
   const [yrFlt, setYrFlt] = useState(null)
 
+  const d50 = getD50(calcCfg)
   const mo = term * 12
   const pm = annuity(cr, rate, mo)
   const tot = pm * mo, ov = tot - cr
   const r = rate / 12 / 100
   const sch = buildSch(cr, rate, mo)
   const filtSch = yrFlt ? sch.filter(row => Math.ceil(row.n/12) === yrFlt) : sch
-  const tbl = D50.find(d => Math.abs(d[0]-cr) < 1000001)
+  const tbl = d50.find(d => Math.abs(d[0]-cr) < 1000001)
   const years = [...new Set([1,3,5,Math.ceil(term/2),term].filter(y=>y<=term&&y>=1))]
 
   return (
@@ -5845,10 +5852,32 @@ function CalcMortgageResult({ result, mode, prog }) {
   }
 
   if (mode === 'salary' && !result.approved) {
+    // Минимальный доход чтобы хотя бы method2 стал положительным:
+    // method2 = income - income*0.10 - pm - oldCredit > 0
+    // income*0.9 > pm + oldCredit  →  income > (pm + oldCredit)/0.9
+    const pm        = result.pm || 0
+    const oldCredit = result.totalOldCredit || result.oldCredit || 0
+    const minIncome = pm > 0 ? Math.ceil((pm + oldCredit) / 0.9) : 0
+    const gap       = minIncome > 0 && result.totalIncome != null
+                        ? Math.max(0, minIncome - result.totalIncome) : 0
     return (
       <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:12,padding:14}}>
         <div style={{fontSize:13,color:'#dc2626',fontWeight:700}}>❌ Доход недостаточен для программы {result.prog?.name || prog?.name}</div>
         <div style={{fontSize:12,color:'#64748b',marginTop:6}}>Метод 1 (КД): {Math.round(result.method1||0).toLocaleString('ru-RU')} ₸ · Метод 2 (ПМ): {Math.round(result.method2||0).toLocaleString('ru-RU')} ₸</div>
+        {minIncome > 0 && (
+          <div style={{marginTop:10,padding:'9px 12px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:9}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:gap>0?4:0}}>
+              <span style={{fontSize:12,color:'#854d0e'}}>💡 Минимальный доход для одобрения:</span>
+              <span style={{fontSize:13,fontWeight:700,color:'#854d0e'}}>{minIncome.toLocaleString('ru-RU')} ₸</span>
+            </div>
+            {gap > 0 && (
+              <div style={{display:'flex',justifyContent:'space-between'}}>
+                <span style={{fontSize:12,color:'#dc2626'}}>Не хватает:</span>
+                <span style={{fontSize:13,fontWeight:700,color:'#dc2626'}}>{gap.toLocaleString('ru-RU')} ₸</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }

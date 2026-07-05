@@ -33,6 +33,7 @@ async function handler(req, res) {
         mrp, pm_nauryz, pm_other, kd,
         progs_data, expense_otbasy, expense_other,
         mrp_ref, deal_steps, insurance_pct,
+        d50_table, rate_presets,
       } = settings
 
       const row = { id: 'main', updated_at: new Date().toISOString() }
@@ -45,6 +46,8 @@ async function handler(req, res) {
       if (expense_other  != null) row.expense_other  = expense_other
       if (mrp_ref     != null) row.mrp_ref         = mrp_ref
       if (deal_steps  != null) row.deal_steps       = deal_steps
+      if (d50_table   != null) row.d50_table        = d50_table
+      if (rate_presets != null) row.rate_presets    = rate_presets
       if (insurance_pct != null) row.insurance_pct  = +insurance_pct
 
       const { error } = await sb.from('calc_settings').upsert(row)

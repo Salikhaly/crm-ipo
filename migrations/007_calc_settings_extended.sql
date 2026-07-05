@@ -11,6 +11,8 @@ ALTER TABLE calc_settings
   ADD COLUMN IF NOT EXISTS expense_other  jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS mrp_ref        jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS deal_steps     jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS d50_table      jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS rate_presets   jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS insurance_pct  numeric(5,4) DEFAULT 0.003;
 
 -- Seed: программы нового калькулятора (PROGS_DATA)
