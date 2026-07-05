@@ -35,6 +35,7 @@ async function loadCfg(sb) {
     const pgs = progRes.data || []
 
     const programs = {}
+    const nauryzKeys = []
     pgs.forEach(p => {
       programs[p.key] = {
         key:       p.key,
@@ -44,6 +45,9 @@ async function loadCfg(sb) {
         desc:      p.desc_text || '',
         variants:  Array.isArray(p.variants) ? p.variants : [],
       }
+      // Собираем nauryzKeys из БД (колонка is_nauryz), а не из хардкода.
+      // Иначе галочка «Наурыз ПМ» в админке игнорировалась и ПМ считался неверно.
+      if (p.is_nauryz) nauryzKeys.push(p.key)
     })
 
     _cfgCache = {
@@ -52,7 +56,8 @@ async function loadCfg(sb) {
       pmOther:    s?.pm_other   || DEFAULT_CFG.pmOther,
       kd:         s?.kd         || DEFAULT_CFG.kd,
       programs:   Object.keys(programs).length > 0 ? programs : DEFAULT_PROGRAMS,
-      nauryzKeys: ['nauryz10','nauryz20'],
+      // Если в БD есть программы — берём их nauryzKeys; иначе дефолтные
+      nauryzKeys: Object.keys(programs).length > 0 ? nauryzKeys : DEFAULT_CFG.nauryzKeys,
     }
     _cfgCachedAt = Date.now()
     return _cfgCache

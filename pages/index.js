@@ -4,20 +4,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Head from 'next/head'
 import { api } from '../lib/api'
-
-// Инлайним avgSalary здесь вместо import из lib/calcEngine
-// (import ESM-модуля в pages/ вызывает ошибку хуков при сборке Next.js)
-function avgSalary(opvList) {
-  const list = (opvList || []).map(Number).filter(v => isFinite(v) && v > 0)
-  if (!list.length) return 0
-  const n   = list.length
-  const sum = list.reduce((a, b) => a + b, 0)
-  const s1  = sum * 7.9 / 6
-  if (n < 3) return Math.round(s1)
-  const mx = Math.max(...list)
-  const mn = Math.min(...list)
-  return Math.round((s1 + (sum - mx - mn) * 7.9 / (n - 2)) / 2)
-}
+import {
+  PROGRAMS_FALLBACK, getPrograms,
+  annuity, buildSch, fmtMoney, fmtK, fmtM,
+  kdColor, kdText, avgSalary,
+  D50_FALLBACK, getD50,
+} from '../lib/calcData'
 
 // ═══ КОНСТАНТЫ ═══════════════════════════════════════════════════
 // ─── WhatsApp polling ─────────────────────────────────────────────
@@ -4705,63 +4697,13 @@ function DriveTab({ c, setC, user }) {
 //  СТРАНИЦА КАЛЬКУЛЯТОРА
 // ════════════════════════════════════════════════════════════════════
 
-const PROGRAMS = [
-  { key:'5050',     name:'Ипотека 50/50',      icon:'🏛️', downRatio:0.50 },
-  { key:'3070',     name:'30/70',               icon:'🏠', downRatio:0.30 },
-  { key:'nauryz20', name:'Наурыз 20%',           icon:'🌸', downRatio:0.20 },
-  { key:'nauryz10', name:'Наурыз 10%',           icon:'🌷', downRatio:0.10 },
-  { key:'jasyl',    name:'Жасыл',                icon:'🌿', downRatio:0.20 },
-  { key:'askeri',   name:'Аскери',               icon:'🎖️', downRatio:0.00 },
-]
+// PROGRAMS / PROGS_DATA / D50 / fmtMoney / annuity и др. — теперь в lib/calcData.js
+// Здесь только алиасы для обратной совместимости со старым кодом вкладок.
+const PROGS_DATA = PROGRAMS_FALLBACK
+const PROGRAMS   = PROGRAMS_FALLBACK
+const D50        = D50_FALLBACK
 
-const CONTRACT_TYPES = ['Трудовой', 'ГПХ']
-
-function fmtMoney(n) {
-  if (!n && n !== 0) return '—'
-  return new Intl.NumberFormat('ru').format(Math.round(n)) + ' ₸'
-}
-
-// ─── DATA ────────────────────────────────────────────────────────
-const PROGS_DATA = [
-  {id:'5050p', n:'50/50 Промзаём', r:8.5,  t:8,  d:0.50, grp:'g', note:'ОП=5 мес · взнос 50% · платёж по таблице'},
-  {id:'5050zh',n:'50/50 Жилзаём',  r:5,    t:9,  d:0.50, grp:'g', note:'ОП=16 мес · взнос 50% · пониженная ставка'},
-  {id:'720',   n:'7-20-25',        r:7,    t:25, d:0.20, grp:'g', note:'Взнос 20% · только первичка · макс 25 млн ₸ кредита'},
-  {id:'otau',  n:'Отау',           r:9,    t:19, d:0.20, grp:'g', note:'Взнос 20% · молодёжь до 35 лет'},
-  {id:'n20',   n:'Наурыз 20%',    r:9,    t:19, d:0.20, grp:'g', note:'Взнос 20%'},
-  {id:'n10',   n:'Наурыз 10%',    r:9,    t:19, d:0.10, grp:'g', note:'Взнос 10%'},
-  {id:'jsyl',  n:'Жасыл',         r:12.5, t:25, d:0.20, grp:'g', note:'Взнос 20% · эко-сертиф. ЖК'},
-  {id:'shan',  n:'Шаңырақ',       r:5,    t:20, d:0.10, grp:'g', note:'Взнос 10% · только очередники акиматов'},
-  {id:'baqyt', n:'Бақытты отбасы',r:2,    t:20, d:0.20, grp:'g', note:'2% · многодетные · соц. уязвимые'},
-  {id:'umay',  n:'Умай ♀',        r:14.4, t:25, d:0.20, grp:'g', note:'Женщины · запуск II пол. 2026 · макс 50 млн займа'},
-  {id:'ask',   n:'Аскери',        r:5,    t:20, d:0.00, grp:'g', note:'Взнос 0% · военнослужащие'},
-  {id:'halyk', n:'Халык Банк',    r:20,   t:25, d:0.20, grp:'c', note:'Коммерч. · первичка · партнёры застройщики'},
-  {id:'forte', n:'ForteBank',     r:21,   t:25, d:0.20, grp:'c', note:'Коммерч. · первичка и вторичка'},
-  {id:'free',  n:'Freedom Bank',  r:20,   t:25, d:0.20, grp:'c', note:'Коммерч. · цифровая ипотека'},
-]
-
-const D50 = [
-  [10000000,50000,80523,160000,80573],[11000000,55000,88575,176000,88572],[12000000,60000,96627,192000,96627],
-  [13000000,65000,104679,208000,104679],[14000000,70000,112731,224000,112731],[15000000,75000,120783,240000,120783],
-  [16000000,80000,128836,256000,128836],[17000000,85000,136888,272000,136888],[18000000,90000,144941,288000,144940],
-  [19000000,95000,152993,304000,152993],[20000000,100000,161045,320000,161045],[21000000,105000,169098,336000,169098],
-  [22000000,110000,177150,352000,177150],[23000000,115000,185202,368000,185202],[24000000,120000,193255,384000,193255],
-  [25000000,125000,201307,400000,201307],[26000000,130000,209359,416000,209359],[27000000,135000,217411,432000,217411],
-  [28000000,140000,225464,448000,225464],[29000000,145000,233516,464000,233516],[30000000,150000,241568,480000,241568],
-  [31000000,155000,249620,496000,249620],[32000000,160000,257673,512000,257673],[33000000,165000,265725,528000,265725],
-  [34000000,170000,273777,544000,273777],[35000000,175000,281829,560000,281829],[36000000,180000,289882,576000,289882],
-  [37000000,185000,297934,592000,297934],[38000000,190000,305986,608000,305986],[39000000,195000,314039,624000,314039],
-  [40000000,200000,322091,640000,322091],[41000000,205000,330143,656000,330143],[42000000,210000,338195,672000,338195],
-  [43000000,215000,346248,688000,346248],[44000000,220000,354300,704000,354300],[45000000,225000,362352,720000,362352],
-  [46000000,230000,370404,736000,370404],[47000000,235000,378457,752000,378457],[48000000,240000,386509,768000,386509],
-  [49000000,245000,394561,784000,394561],[50000000,250000,402614,800000,402614],[51000000,255000,410666,816000,410666],
-  [52000000,260000,418718,832000,418718],[53000000,265000,426770,848000,426770],[54000000,270000,434823,864000,434823],
-  [55000000,275000,442875,880000,442875],[56000000,280000,450927,896000,450927],[57000000,285000,458979,912000,458979],
-  [58000000,290000,467032,928000,467032],[59000000,295000,475084,944000,475084],[60000000,300000,483136,960000,483136],
-  [61000000,305000,491189,976000,491189],[62000000,310000,499241,992000,499241],[63000000,315000,507293,1008000,507293],
-  [64000000,320000,515345,1024000,515345],[65000000,325000,523398,1040000,523398],[66000000,330000,531450,1056000,531450],
-  [67000000,335000,539502,1072000,539502],
-]
-
+// Этапы сделки (fallback для CalcStepsTab когда calcCfg.deal_steps пуст)
 const DEAL_STEPS = [
   {n:'Предварительное одобрение', sub:'Подача заявки, проверка кредитной истории', cost:''},
   {n:'Поиск квартиры', sub:'После одобрения — ищем подходящий объект', cost:''},
@@ -4776,33 +4718,15 @@ const DEAL_STEPS = [
   {n:'Регистрация ДКП', sub:'Ускоренно 2ч — 7 085 ₸ · Обычная 1.5 дня — 1 555 ₸', cost:'1 555–7 085 ₸'},
   {n:'Получить Форму 2', sub:'Согласие супруги строго по образцу Отбасы банка', cost:''},
   {n:'Сдача документов в банк для ДЗНИ', sub:'а) ДКП  б) ТП  в) УГР  г) Форма 2  д) Согласие', cost:''},
-  {n:'Подписание договоров ДЗНИ, ДБЗ, ДЗЖСС', sub:'Блок чейн таырасо · Форма 2 уверенное · документы до 13:00', cost:''},
+  {n:'Подписание договоров ДЗНИ, ДБЗ, ДЗЖСС', sub:'Форма 2 · документы до 13:00', cost:''},
   {n:'Вынесение текущего счёта, комиссия банка', sub:'', cost:''},
   {n:'Регистрация ДЗНИ у нотариуса', sub:'Регистрация 23 788 + Заявление 2 292 + Согласие 6 488', cost:'32 568 ₸ (+ ускоренно 7 085 ₸)'},
-  {n:'Выдача — перевод денег продавцу', sub:'Страховка · Календарь и график берегите клиента · После одобрения — базар', cost:'Страховка ~0.3%/год от цены'},
+  {n:'Выдача — перевод денег продавцу', sub:'Страховка · Календарь и график · После одобрения — базар', cost:'Страховка ~0.3%/год от цены'},
 ]
 
-// ─── HELPERS ─────────────────────────────────────────────────────
-function annuity(pr, ra, mo) {
-  if (!ra) return pr / mo
-  const r = ra / 12 / 100
-  return pr * r * Math.pow(1 + r, mo) / (Math.pow(1 + r, mo) - 1)
-}
-function buildSch(pr, ra, mo) {
-  const r = ra / 12 / 100, pm = annuity(pr, ra, mo)
-  let b = pr, ci = 0
-  return Array.from({ length: mo }, (_, i) => {
-    const in_ = b * r, bo = pm - in_
-    b = Math.max(0, b - bo); ci += in_
-    return { n: i + 1, pm, bo, in_, b, ci }
-  })
-}
-function fmtK(n) { return Math.round(n).toLocaleString('ru-KZ') }
-function fmtM(n) { return fmtK(n) + ' ₸' }
-function kdColor(kd) { return kd <= 0.4 ? '#0F6E56' : kd <= 0.5 ? '#854F0B' : '#993C1D' }
-function kdText(kd) { return kd <= 0.4 ? 'Отлично — одобрение вероятно' : kd <= 0.5 ? 'Пограничный КД — нужно подтверждение' : 'КД > 50% — высокий риск отказа' }
+const CONTRACT_TYPES = ['Трудовой', 'ГПХ']
 
-// ─── CALC PAGE ───────────────────────────────────────────────────
+
 function CalcPage({ user, clients, toast$ }) {
   const TABS = [
     { id:'prog',     l:'Программы',    icon:'ti-home' },
@@ -4891,9 +4815,9 @@ function CalcPage({ user, clients, toast$ }) {
       {tab==='exp'      && <CalcExpTab   toast$={toast$} calcCfg={calcCfg}/>}
       {tab==='t50'      && <Calc50Tab/>}
       {tab==='pay'      && <CalcPayTab/>}
-      {tab==='cmp'      && <CalcCmpTab/>}
+      {tab==='cmp'      && <CalcCmpTab calcCfg={calcCfg}/>}
       {tab==='early'    && <CalcEarlyTab/>}
-      {tab==='inc'      && <CalcIncTab/>}
+      {tab==='inc'      && <CalcIncTab calcCfg={calcCfg}/>}
       {tab==='rent'     && <CalcRentTab/>}
       {tab==='steps'    && <CalcStepsTab toast$={toast$} calcCfg={calcCfg}/>}
 
@@ -5394,11 +5318,12 @@ function CalcPayTab() {
 }
 
 // ─── TAB: СРАВНИТЬ ────────────────────────────────────────────────
-function CalcCmpTab() {
+function CalcCmpTab({ calcCfg }) {
   const [price, setPrice] = useState(30000000)
   const [term, setTerm]   = useState(17)
-  const gov = PROGS_DATA.filter(p=>p.grp==='g')
-  const com = PROGS_DATA.filter(p=>p.grp==='c')
+  const progs = getPrograms(calcCfg)
+  const gov = progs.filter(p=>p.grp==='g')
+  const com = progs.filter(p=>p.grp==='c')
 
   function TblRows({ progs }) {
     return progs.map(p => {
@@ -5534,13 +5459,14 @@ function CalcEarlyTab() {
 }
 
 // ─── TAB: ПО ДОХОДУ ───────────────────────────────────────────────
-function CalcIncTab() {
+function CalcIncTab({ calcCfg }) {
   const [inc, setInc]   = useState(500000)
   const [oc, setOc]     = useState(0)
   const [kdL, setKdL]   = useState(50)
   const maxPmt = inc * kdL / 100 - oc
-  const gov = PROGS_DATA.filter(p => p.grp === 'g')
-  const com = PROGS_DATA.filter(p => p.grp === 'c')
+  const progs = getPrograms(calcCfg)
+  const gov = progs.filter(p => p.grp === 'g')
+  const com = progs.filter(p => p.grp === 'c')
 
   function TblRows({ progs }) {
     return progs.map(p => {
@@ -5759,25 +5685,35 @@ function CalcStepsTab({ toast$, calcCfg }) {
 //  Сохранены для полного расчёта с учётом КД, ПМ, ОПВ
 // ════════════════════════════════════════════════════════════════
 
-const OLD_PROGRAMS = [
-  { key:'5050',     name:'Ипотека 50/50',      icon:'🏛️', downRatio:0.50 },
-  { key:'3070',     name:'30/70',               icon:'🏠', downRatio:0.30 },
-  { key:'nauryz20', name:'Наурыз 20%',           icon:'🌸', downRatio:0.20 },
-  { key:'nauryz10', name:'Наурыз 10%',           icon:'🌷', downRatio:0.10 },
-  { key:'jasyl',    name:'Жасыл',                icon:'🌿', downRatio:0.20 },
-  { key:'askeri',   name:'Аскери',               icon:'🎖️', downRatio:0.00 },
-]
+// OLD_PROGRAMS убран — программы грузятся из БД через api.calc('programs').
+// Fallback пока загружается — PROGRAMS_FALLBACK (первые 6 совместимы по ключам).
 
 function CalcMortgageTab({ doCalc, clients }) {
   const [mode,    setMode]    = useState('price')
-  const [program, setProgram] = useState('nauryz20')
+  // Список программ из БД (fallback — PROGRAMS_FALLBACK)
+  const [progList, setProgList] = useState(PROGRAMS_FALLBACK)
+  const [program, setProgram] = useState(PROGRAMS_FALLBACK[0]?.key || '')
   const [price,   setPrice]   = useState('')
   const [salary,  setSalary]  = useState('')
   const [members, setMembers] = useState('1')
   const [oldCred, setOldCred] = useState('')
   const [result,  setResult]  = useState(null)
   const [busy,    setBusy]    = useState(false)
-  const prog = OLD_PROGRAMS.find(p => p.key === program)
+  const prog = progList.find(p => p.key === program)
+
+  // Грузим программы из БД (фикс AK-2 — новые программы из админки доступны)
+  useEffect(() => {
+    doCalc('programs', {}).then(res => {
+      if (res?.ok && Array.isArray(res.programs) && res.programs.length) {
+        setProgList(res.programs)
+        // если текущая выбранная программа исчезла — берём первую
+        if (!res.programs.find(p => p.key === program)) {
+          setProgram(res.programs[0].key)
+        }
+      }
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function calc() {
     setBusy(true); setResult(null)
@@ -5817,12 +5753,12 @@ function CalcMortgageTab({ doCalc, clients }) {
 
       {/* Программы */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,marginBottom:12}}>
-        {OLD_PROGRAMS.map(p=>(
+        {progList.map(p=>(
           <button key={p.key} onClick={()=>setProgram(p.key)}
             style={{padding:'8px 6px',border:`1.5px solid ${program===p.key?'#3b82f6':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
               background:program===p.key?'#eff6ff':'#fff',textAlign:'left'}}>
             <div style={{fontSize:12,fontWeight:500}}>{p.icon} {p.name}</div>
-            <div style={{fontSize:10,color:'#64748b',marginTop:2}}>ПВ {Math.round(p.downRatio*100)}%</div>
+            <div style={{fontSize:10,color:'#64748b',marginTop:2}}>ПВ {Math.round((p.downRatio ?? p.d ?? 0)*100)}%</div>
           </button>
         ))}
       </div>
