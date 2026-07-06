@@ -20,6 +20,9 @@ import {
   annuity, fmtMoney, fmtM, PROGRAMS_FALLBACK,
 } from '../../lib/calcData'
 
+// fmtN — форматирование числа без валюты (₸ добавляется в месте вызова)
+function fmtN(n) { return n ? new Intl.NumberFormat('ru').format(Math.round(n))+' ' : '— ' }
+
 export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing }) {
   const [c,      setC]      = useState(JSON.parse(JSON.stringify(client)))
   const [tab,    setTab]    = useState('profile')
