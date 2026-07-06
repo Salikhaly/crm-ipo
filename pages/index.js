@@ -666,8 +666,10 @@ export default function CRM() {
   const sendWaMsg = useCallback(async function sendWaMsg(chatId, phone, text) {
     if (!text.trim()) return
     try {
-      await api.sendWaMessage(chatId, phone, text, user?.name)
+      const res = await api.sendWaMessage(chatId, phone, text, user?.name)
       await loadWaMessages(chatId)
+      // Предупреждение о приближении к дневному лимиту (защита от бана WhatsApp)
+      if (res?.warn) toast$(res.warn, 'err')
     } catch (e) { toast$('❌ ' + e.message, 'err') }
   }, [user, loadWaMessages])
 
@@ -785,6 +787,8 @@ export default function CRM() {
     { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
     { id:'kpi',       l:'KPI',               i:'ti-chart-bar' },
     ...(isAdmin ? [{ id:'admin', l:'Панель техника', i:'ti-settings-2' }] : []),
+    // head видит только настройки калькулятора, без управления пользователями
+    ...(isHead && !isAdmin ? [{ id:'calcadmin', l:'Настройки калькулятора', i:'ti-adjustments' }] : []),
   ]
 
   // ─── LOADING ─────────────────────────────────────────────
@@ -907,6 +911,15 @@ export default function CRM() {
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod}/>}
             {page==='admin'     && isAdmin && <AdminPage managers={managers} pipeline={pipeline} checklists={checklists} users={users} user={user} onSaveMgr={saveMgr} onDelMgr={delMgr} onSaveUser={saveUser} onDelUser={delUser} onSavePL={savePL} onSaveCL={saveCL} onModal={setModal} reload={loadAll} syncing={syncing}/>}
+            {page==='calcadmin' && isHead && !isAdmin && (
+              <div style={{maxWidth:900,margin:'0 auto',padding:'0 4px'}}>
+                <div style={{marginBottom:16}}>
+                  <div style={{fontSize:20,fontWeight:700,color:'#0f172a'}}>⚙️ Настройки калькулятора</div>
+                  <div style={{fontSize:12,color:'#64748b'}}>Программы, ставки, коэффициенты, расходы</div>
+                </div>
+                <CalcSettingsPanel/>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2684,8 +2697,15 @@ function CalcSettingsPanel() {
         programs: programsToSave,
       })
       await api.invalidateCalcCache().catch(()=>{})
-      if (res?.ok) toast('✅ Настройки сохранены и применены сразу!')
-      else toast('⚠️ Сохранено с ошибками — проверьте данные', false)
+      if (res?.ok) {
+        toast('✅ Настройки сохранены и применены сразу!')
+      } else if (res?.errors?.length) {
+        // Показываем что именно не сохранилось (фикс АП-3)
+        const details = res.errors.map(e => e.section).join(', ')
+        toast(`⚠️ Не сохранились: ${details}. Проверьте данные.`, false)
+      } else {
+        toast('⚠️ Сохранено с ошибками — проверьте данные', false)
+      }
     } catch(e) { toast('❌ ' + e.message, false) }
     setSaving(false)
   }
@@ -5231,7 +5251,10 @@ function CalcPayTab({ calcCfg }) {
         <div style={C.sep}/>
         <div style={C.sec}>Ставка</div>
         <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
-          {[[5,'Жилзаём'],[7,'Наурыз'],[8.5,'Промзаём'],[9,'Отау'],[20,'Коммерч.']].map(([rv,l])=>(
+          {(calcCfg?.rate_presets?.length
+            ? calcCfg.rate_presets.map(p => [p.r ?? p.rate, p.l ?? p.label])
+            : [[5,'Жилзаём'],[7,'Наурыз'],[8.5,'Промзаём'],[9,'Отау'],[20,'Коммерч.']]
+          ).map(([rv,l])=>(
             <button key={rv} onClick={()=>setRate(rv)}
               style={{padding:'4px 8px',border:`1px solid ${rate===rv?'#1D9E75':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
                 background:rate===rv?'#E1F5EE':'#fff',fontSize:10,fontWeight:500,color:rate===rv?'#0F6E56':'#64748b'}}>
@@ -5564,8 +5587,11 @@ function CalcRentTab() {
   const finalP = Math.round(price * Math.pow(1 + grow / 100, term))
   const netI = finalP - tot
   const diff = pm - rent
+  // Депозит с учётом 10% ИПН на проценты (в РК проценты по вкладам физлиц облагаются).
+  // Эффективная ставка = номинальная × (1 - 0.10)
+  const effRate = sav * 0.9
   let savAcc = down
-  for (let m = 0; m < mo; m++) savAcc = savAcc * (1 + sav / 12 / 100) + (diff > 0 ? diff : 0)
+  for (let m = 0; m < mo; m++) savAcc = savAcc * (1 + effRate / 12 / 100) + (diff > 0 ? diff : 0)
   savAcc = Math.round(savAcc)
   const winner = netI > savAcc
 
@@ -5591,7 +5617,7 @@ function CalcRentTab() {
         <div style={C.sep}/>
         <Sl label="Аренда в месяц" min={50000} max={500000} step={5000} val={rent} onChange={setRent} fmt={fmtM}/>
         <div style={C.sep}/>
-        <Sl label="Депозит % год." min={3} max={20} step={0.5} val={sav} onChange={setSav} fmt={v=>v.toFixed(1)+'%'}/>
+        <Sl label="Депозит % год. (−10% налог)" min={3} max={20} step={0.5} val={sav} onChange={setSav} fmt={v=>v.toFixed(1)+'%'}/>
         <div style={C.sep}/>
         <Sl label="Рост цен недвиж. % год." min={0} max={20} step={1} val={grow} onChange={setGrow} fmt={v=>v+'%'}/>
       </div>
