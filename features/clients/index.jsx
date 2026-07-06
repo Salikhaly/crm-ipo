@@ -10,7 +10,7 @@ import Head from 'next/head'
 import { api } from '../../lib/api'
 import {
   today, uid, nowStr, CT, CONTRACTS, ACCOMP, PIPELINE_DEFAULT,
-  SRC, CR, ROLE, MARITAL, CITIES, WORK_T, DOWN_T, CONTACT_ST,
+  SRC, SRCS, CR, CR_ST, ROLE, MARITAL, CITIES, WORK_T, DOWN_T, CONTACT_ST,
   TASK_T, PAY_ST, TI, TC, TB, TL,
 } from '../../lib/constants'
 import {
@@ -1563,21 +1563,37 @@ ${user?.name || 'Менеджер'}`
             </div>
           ))}
 
-          {/* Кнопка отправить в WhatsApp */}
-          {c.phone && (
+          {/* Кнопки: копировать + отправить в WhatsApp */}
+          <div style={{display:'flex',gap:8,marginTop:4}}>
             <button
-              onClick={sendToWA}
-              disabled={sending}
-              style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
-                padding:'12px',borderRadius:12,border:'none',cursor:sending?'not-allowed':'pointer',
-                background: sending ? '#94a3b8' : '#25d366',
-                color:'#fff',fontFamily:'inherit',fontWeight:700,fontSize:14,marginTop:4,transition:'all .15s'}}>
-              {sending
-                ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/> Отправляю...</>
-                : <><i className="ti ti-brand-whatsapp" style={{fontSize:18}}/> Отправить расчёт клиенту в WhatsApp</>
-              }
+              onClick={()=>{
+                const msg = buildWaMsg(result)
+                if (!msg) { toast$('⚠️ Нечего копировать', 'err'); return }
+                try {
+                  navigator.clipboard.writeText(msg)
+                  toast$('✅ Расчёт скопирован — вставьте клиенту')
+                } catch(e) { toast$('❌ Не удалось скопировать', 'err') }
+              }}
+              style={{flex:c.phone?'0 0 auto':'1',display:'flex',alignItems:'center',justifyContent:'center',gap:7,
+                padding:'12px 16px',borderRadius:12,border:'1.5px solid #cbd5e1',cursor:'pointer',
+                background:'#f8fafc',color:'#334155',fontFamily:'inherit',fontWeight:700,fontSize:14}}>
+              <i className="ti ti-copy" style={{fontSize:17}}/> Копировать
             </button>
-          )}
+            {c.phone && (
+              <button
+                onClick={sendToWA}
+                disabled={sending}
+                style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+                  padding:'12px',borderRadius:12,border:'none',cursor:sending?'not-allowed':'pointer',
+                  background: sending ? '#94a3b8' : '#25d366',
+                  color:'#fff',fontFamily:'inherit',fontWeight:700,fontSize:14,transition:'all .15s'}}>
+                {sending
+                  ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/> Отправляю...</>
+                  : <><i className="ti ti-brand-whatsapp" style={{fontSize:18}}/> Отправить в WhatsApp</>
+                }
+              </button>
+            )}
+          </div>
           {!c.phone && (
             <div style={{textAlign:'center',fontSize:12,color:'#94a3b8',marginTop:8}}>
               ⚠️ Укажите телефон в профиле чтобы отправить в WhatsApp

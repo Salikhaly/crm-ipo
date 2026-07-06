@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
-import { ROLE, COLORS, PIPELINE_DEFAULT, ACCOMP, uid } from '../../lib/constants'
+import { ROLE, COLORS, PIPELINE_DEFAULT, ACCOMP, uid, TI, TC, TB } from '../../lib/constants'
 import { Btn, Tag } from '../../components/ui'
 
 export function AdminPage({ managers, pipeline, checklists, users, user, onSaveMgr, onDelMgr, onSaveUser, onDelUser, onSavePL, onSaveCL, onModal, reload, syncing }) {

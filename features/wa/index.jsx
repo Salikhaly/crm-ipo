@@ -3,7 +3,8 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { api } from '../../lib/api'
-import { emptyClient, fmt, MAX_FILE_SIZE_BYTES } from '../../lib/constants'
+import { emptyClient, fmt, fmt as fmtN, MAX_FILE_SIZE_BYTES,
+  CR, CR_ST, CITIES, CONTACT_ST } from '../../lib/constants'
 import { Inp, Sel, Fl } from '../../components/ui'
 
 export function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, user, onOpenClient, mgrById }) {
@@ -19,6 +20,7 @@ export function WAPage({ chats, messages, managers, clients, selChat, onSelChat,
   const [waSearch,        setWaSearch]         = useState('')
   const [quickReplies,    setQuickReplies]     = useState([])
   const [showQuickMenu,   setShowQuickMenu]    = useState(false)
+  const [calcBusy,        setCalcBusy]         = useState(false)
   const [quickFilter,     setQuickFilter]      = useState('')
   const debouncedSearch = useDebounce(waSearch, 150)  // 150ms debounce
   const [waFilter,        setWaFilter]         = useState('all')   // all | new | in_work | done
@@ -601,6 +603,46 @@ export function WAPage({ chats, messages, managers, clients, selChat, onSelChat,
   ), [selChat, messages, showChatView, showAssignDlg, showQR, msgText, sendingFile, managers, linkedClient, showClientPanel, mgrById, showQuickMenu, filteredQuickReplies, quickFilter])
 
   // ── Client panel ──────────────────────────────────────────────
+  // Быстрый расчёт ипотеки по данным связанного клиента → в поле ввода
+  async function quickCalc() {
+    const lc = linkedClient
+    if (!lc) return
+    const income = (+(lc.officialIncome)||0) + (+(lc.extraIncomeConfirmed ? lc.extraIncome : 0)||0)
+    const price  = lc.contractAmount > 0 ? lc.contractAmount : 0
+    if (!income && !price) { setMsgText('⚠️ У клиента не заполнен доход или сумма договора'); return }
+    setCalcBusy(true)
+    try {
+      const name = lc.fio?.split(' ')[0] || 'Уважаемый клиент'
+      let msg = ''
+      if (price > 0) {
+        const res = await api.calc('mortgage_by_price', {
+          program: 'nauryz20', price,
+          members: 1,
+          orgs: [{ income, oldCredit: +(lc.monthlyLoad)||0 }],
+        })
+        const v = res?.variantsByPrice?.[0]
+        if (v) {
+          msg = `Здравствуйте, ${name}! 🏠\n\nРасчёт по квартире ${fmtN(price)} ₸\nПрограмма: Наурыз 20%\n\n💵 Первоначальный взнос: ${fmtN(v.downPayment)} ₸\n🏦 Сумма займа: ${fmtN(v.loanAmount)} ₸\n📅 Платёж: ${fmtN(v.monthly)} ₸/мес`
+          if (!res.calc?.approved && v.requiredSalary) msg += `\n📊 Нужный доход: ${fmtN(v.requiredSalary)} ₸`
+        }
+      } else {
+        const res = await api.calc('mortgage_by_salary', {
+          program: 'nauryz20', salary: income, members: 1, oldCredit: +(lc.monthlyLoad)||0,
+        })
+        if (res?.approved) {
+          msg = `Здравствуйте, ${name}! 🏠\n\nПо доходу ${fmtN(income)} ₸ (Наурыз 20%):\n\n🏠 Макс. цена квартиры: ${fmtN(res.maxPrice)} ₸\n🏦 Сумма займа: ${fmtN(res.maxLoan)} ₸\n💰 Первый взнос: ${fmtN(res.down)} ₸\n📅 Платёж: ${fmtN(res.payment)} ₸/мес`
+        } else {
+          msg = `${name}, по текущему доходу ${fmtN(income)} ₸ одобрение маловероятно. Давайте обсудим варианты 🙏`
+        }
+      }
+      if (msg) setMsgText(msg)
+    } catch(e) {
+      setMsgText('❌ Ошибка расчёта: ' + e.message)
+    } finally {
+      setCalcBusy(false)
+    }
+  }
+
   const ClientPanel = showClientPanel && linkedClient && (
     <div className="wa-client-panel">
       <div style={{padding:'13px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -622,6 +664,17 @@ export function WAPage({ chats, messages, managers, clients, selChat, onSelChat,
         <button onClick={()=>onOpenClient(linkedClient)} style={{width:'100%',marginTop:14,padding:'11px',borderRadius:11,background:'#3b82f6',color:'#fff',border:'none',cursor:'pointer',fontWeight:700,fontSize:14,fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
           <i className="ti ti-external-link"/>Открыть карточку
         </button>
+
+        {/* Быстрый расчёт ипотеки прямо в чате */}
+        <button onClick={quickCalc} disabled={calcBusy}
+          style={{width:'100%',marginTop:8,padding:'11px',borderRadius:11,background:calcBusy?'#94a3b8':'#10b981',color:'#fff',border:'none',cursor:calcBusy?'default':'pointer',fontWeight:700,fontSize:14,fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
+          {calcBusy
+            ? <><i className="ti ti-loader-2 spin"/>Считаю...</>
+            : <><i className="ti ti-calculator"/>Рассчитать → в сообщение</>}
+        </button>
+        <div style={{fontSize:11,color:'#94a3b8',textAlign:'center',marginTop:6}}>
+          Наурыз 20% по доходу и договору клиента
+        </div>
       </div>
     </div>
   )
