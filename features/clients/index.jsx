@@ -21,7 +21,7 @@ import {
 } from '../../lib/calcData'
 
 
-export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing }) {
+export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing, onOpenWa }) {
   const [c,      setC]      = useState(JSON.parse(JSON.stringify(client)))
   const [tab,    setTab]    = useState('profile')
   const [accIdx, setAccIdx] = useState(c.accompStageIndex||0)
@@ -174,6 +174,74 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   <Prog pct={payPct} c={payPct===100?'#10b981':payPct>0?'#22c55e':'rgba(255,255,255,.3)'} sz='sm'/>
                 </div>
               )}
+            </div>
+
+            {/* №1: Следующий шаг — CRM подсказывает что делать */}
+            {(() => {
+              const NEXT_STEP = {
+                new_lead:      { t:'Связаться с клиентом в течение 15 минут', s:'Тёплый лид остывает за час. Позвоните или напишите в WhatsApp.', tab:'profile' },
+                in_work:       { t:'Провести первичный опрос', s:'Заполните доход, взнос и кредитную историю во вкладке Профиль.', tab:'profile' },
+                analysis:      { t:'Проверить платёжеспособность', s:'Вкладка Анализ: доход, ОПВ, КД. Рассчитайте ипотеку в Калькуляторе.', tab:'analysis' },
+                consultation:  { t:'Назначить консультацию', s:'Подготовьте расчёт (вкладка Калькулятор) и отправьте клиенту.', tab:'calc' },
+                contract:      { t:'Подписать договор', s:'Выберите тип договора и сумму во вкладке Договор.', tab:'contract' },
+                accompaniment: { t:'Вести по этапам сопровождения', s:'Отмечайте шаги во вкладке Сопровождение, ставьте задачи.', tab:'accomp' },
+                approval:      { t:'Подать заявку в банк', s:'Соберите документы (кнопка ниже) и подайте на одобрение.', tab:'analysis' },
+                deal:          { t:'Провести сделку', s:'Следуйте чек-листу во вкладке Этапы сделки.', tab:'dealsteps' },
+                issuance:      { t:'Проконтролировать выдачу', s:'Проверьте страховку и перевод денег продавцу.', tab:'dealsteps' },
+                closed:        { t:'Попросить рекомендацию', s:'Довольный клиент — лучший источник новых лидов. Напишите ему через месяц.', tab:'profile' },
+              }
+              const ns = NEXT_STEP[c.stage]
+              if (!ns) return null
+              return (
+                <div onClick={()=>ns.tab && setTab(ns.tab)}
+                  style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:12,padding:'11px 14px',marginBottom:13,cursor:'pointer',display:'flex',gap:11,alignItems:'flex-start'}}>
+                  <div style={{width:32,height:32,borderRadius:9,background:'#3b82f6',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:16}}>👉</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:800,color:'#1d4ed8',marginBottom:2}}>Следующий шаг: {ns.t}</div>
+                    <div style={{fontSize:11.5,color:'#3b82f6',lineHeight:1.45}}>{ns.s}</div>
+                  </div>
+                  <i className="ti ti-chevron-right" style={{color:'#93c5fd',fontSize:18,flexShrink:0,alignSelf:'center'}}/>
+                </div>
+              )
+            })()}
+
+            {/* №3+№8: Быстрые действия — позвонить, WhatsApp, документы */}
+            <div style={{display:'flex',gap:8,marginBottom:13}}>
+              {c.phone && (
+                <a href={`tel:${c.phone}`} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+                  padding:'10px',borderRadius:11,background:'#f0fdf4',border:'1.5px solid #86efac',color:'#16a34a',
+                  fontWeight:700,fontSize:12.5,textDecoration:'none'}}>
+                  <i className="ti ti-phone" style={{fontSize:16}}/>Позвонить
+                </a>
+              )}
+              {c.phone && (
+                <button onClick={()=>{
+                  if (typeof onOpenWa === 'function') onOpenWa(c)
+                  else window.open('https://wa.me/' + c.phone.replace(/\D/g,''), '_blank')
+                }} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+                  padding:'10px',borderRadius:11,background:'#f0fdf4',border:'1.5px solid #25d36655',color:'#16a34a',
+                  fontWeight:700,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
+                  <i className="ti ti-brand-whatsapp" style={{fontSize:16}}/>WhatsApp
+                </button>
+              )}
+              <button onClick={()=>{
+                const docs = [
+                  '📋 *Документы для ипотеки:*','',
+                  '1. Удостоверение личности (+ супруги/супруга)',
+                  '2. Свидетельство о браке (если в браке)',
+                  '3. Справка о доходах за 6 месяцев',
+                  '4. Выписка с ЕНПФ (ОПВ) за 6 месяцев',
+                  '5. Справка об отсутствии задолженности',
+                  '6. Выписка с депозита (если есть взнос на депозите)',
+                  '','Отправьте фото документов сюда — проверим и подскажем чего не хватает 🤝',
+                ].join('\n')
+                try { navigator.clipboard.writeText(docs); toast$('✅ Список документов скопирован — вставьте клиенту в чат') }
+                catch(e) { toast$('❌ Не удалось скопировать','err') }
+              }} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+                padding:'10px',borderRadius:11,background:'#fefce8',border:'1.5px solid #fde68a',color:'#a16207',
+                fontWeight:700,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
+                <i className="ti ti-file-check" style={{fontSize:16}}/>Документы
+              </button>
             </div>
 
             {/* Contact status */}

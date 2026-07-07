@@ -35,9 +35,20 @@ export default withAuth(async function handler(req, res) {
 
   // Поиск (минимум 2 символа)
   if (q.length >= 2) {
-    query = query.or(
-      `fio.ilike.%${escapeLike(q)}%,iin.ilike.%${escapeLike(q)}%,phone.ilike.%${escapeLike(q)}%,city.ilike.%${escapeLike(q)}%`
-    )
+    // №5: если запрос похож на телефон — ищем по нормализованным цифрам.
+    // «8707 123-45-67» и «+7 707 1234567» находят одного клиента
+    // (телефоны в БД нормализованы к +7XXXXXXXXXX миграцией 009).
+    const digits = q.replace(/\D/g, '')
+    if (digits.length >= 5) {
+      const tail = digits.replace(/^8/, '7').slice(-10)
+      query = query.or(
+        `fio.ilike.%${escapeLike(q)}%,iin.ilike.%${escapeLike(q)}%,phone.ilike.%${escapeLike(tail)}%,city.ilike.%${escapeLike(q)}%`
+      )
+    } else {
+      query = query.or(
+        `fio.ilike.%${escapeLike(q)}%,iin.ilike.%${escapeLike(q)}%,phone.ilike.%${escapeLike(q)}%,city.ilike.%${escapeLike(q)}%`
+      )
+    }
   }
 
   const { data, error } = await query.limit(50)

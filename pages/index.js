@@ -255,6 +255,18 @@ export default function CRM() {
             document.hidden) {
           new Notification('WhatsApp CRM', { body: `${newUnread} новых сообщений`, icon: '/favicon.ico' })
         }
+        // №9: звук при новом сообщении (и в активной вкладке тоже)
+        if (newUnread > prevUnread) {
+          try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)()
+            const o = ctx.createOscillator(), g = ctx.createGain()
+            o.connect(g); g.connect(ctx.destination)
+            o.frequency.value = 880; g.gain.value = 0.08
+            o.start(); o.frequency.setValueAtTime(660, ctx.currentTime + 0.09)
+            g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25)
+            o.stop(ctx.currentTime + 0.25)
+          } catch(e) { /* браузер может блокировать звук до первого клика — не страшно */ }
+        }
         return d.chats
       })
     }).catch(() => {})
@@ -443,6 +455,29 @@ export default function CRM() {
       toast$('❌ ' + e.message, 'err')
     }
     setSyncing(false)
+  }
+
+  // №6: быстрый статус звонка из канбан-карточки одним тапом
+  async function quickContactAction(c, action) {
+    let updated
+    if (action === 'noanswer') {
+      updated = { ...c, contactStatus: 'Не отвечает' }
+    } else if (action === 'callback') {
+      const tmr = new Date(Date.now() + 24*3600*1000).toISOString().split('T')[0]
+      updated = {
+        ...c,
+        contactStatus: 'Перезвонить',
+        tasks: [...(c.tasks||[]), { id: uid(), type:'📞 Позвонить', text:'Перезвонить (быстрая отметка)', due: tmr, done:false, created: nowStr() }],
+      }
+    } else return
+    setClients(cs => cs.map(x => x.id === c.id ? updated : x))
+    try {
+      await api.updateClient(c.id, updated)
+      toast$(action === 'noanswer' ? '📵 Отмечено: не отвечает' : '⏰ Задача «перезвонить» на завтра создана')
+    } catch(e) {
+      setClients(cs => cs.map(x => x.id === c.id ? c : x))
+      toast$('❌ ' + e.message, 'err')
+    }
   }
 
   async function moveClient(id, stage) {
@@ -713,6 +748,18 @@ export default function CRM() {
     <ClientDetail
       client={selClient} managers={managers} pipeline={pipeline}
       checklists={checklists} user={user}
+      onOpenWa={(cl) => {
+        // №3: открыть внутренний WA-чат клиента; если чата нет — внешний wa.me
+        const digits = (cl.phone||'').replace(/\D/g,'').replace(/^8/,'7')
+        const chat = waChats.find(ch => (ch.phone||'').replace(/\D/g,'').endsWith(digits.slice(-10)))
+        if (chat) {
+          setHasChanges(false); setSelClient(null)
+          selWaChatRef.current = chat; setSelWaChat(chat); setWaMessages([]); loadWaMessages(chat.id)
+          setPage('wa')
+        } else {
+          window.open('https://wa.me/' + digits, '_blank')
+        }
+      }}
       onSave={saveClient} onDelete={delClient} onMove={moveClient}
       onBack={goBack} toast$={toast$}
       setHasChanges={setHasChanges} syncing={syncing}
@@ -808,8 +855,8 @@ export default function CRM() {
 
           {/* Page content */}
           <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
-            {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
-            {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient}/>}
+            {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} clients={myCl} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
+            {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
             {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')}/>}
             {page==='wa'        && <WAPage chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
@@ -976,7 +1023,7 @@ function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
 }
 
 // ─── DASHBOARD PAGE ──────────────────────────────────────────────
-function DashPage({ data, pipeline, managers, onOpen, onLoadDash }) {
+function DashPage({ data, pipeline, managers, clients, onOpen, onLoadDash }) {
   useEffect(() => { if (!data) onLoadDash() }, [data, onLoadDash])
 
   if (!data) return (
@@ -988,8 +1035,64 @@ function DashPage({ data, pipeline, managers, onOpen, onLoadDash }) {
   const { metrics, funnel, managers: mgrStats, recent } = data
   const pl = pipeline || PIPELINE_DEFAULT
 
+  // №2: «Сегодня горит» — три списка требующих действия ПРЯМО СЕЙЧАС
+  const cl = clients || []
+  const todayStr = new Date().toISOString().split('T')[0]
+  const days3 = Date.now() - 3*24*3600*1000
+  // Новые лиды без контакта
+  const hotNew = cl.filter(c => c.stage === 'new_lead' && !c.contactStatus).slice(0, 8)
+  // Активные, но не трогали 3+ дней (нет свежих комментов и создан давно)
+  const forgotten = cl.filter(c => {
+    if (['closed','issuance'].includes(c.stage)) return false
+    if (c.stage === 'new_lead') return false
+    const lastTouch = Math.max(
+      new Date(c.createdAt||0).getTime(),
+      ...(c.comments||[]).map(cm => new Date(cm.createdAt||0).getTime() || 0)
+    )
+    return lastTouch < days3
+  }).slice(0, 8)
+  // Задачи «перезвонить» и все с дедлайном сегодня
+  const callToday = cl.filter(c =>
+    (c.tasks||[]).some(t => !t.done && t.due && t.due <= todayStr)
+  ).slice(0, 8)
+
+  const urgentBlocks = [
+    { icon:'🔴', title:'Новые лиды без ответа', list:hotNew,    empty:'Все лиды обработаны 👍', hint:c=>SRC[c.source]?.l||'' },
+    { icon:'🟡', title:'Не трогали 3+ дней',    list:forgotten, empty:'Никто не забыт 👍',      hint:c=>pl.find(p=>p.id===c.stage)?.l||'' },
+    { icon:'📞', title:'Задачи на сегодня',     list:callToday, empty:'Задач на сегодня нет 👍', hint:c=>{const t=(c.tasks||[]).find(t=>!t.done&&t.due&&t.due<=todayStr);return t?(t.type||'')+' '+(t.text||''):''}},
+  ]
+  const hasUrgent = hotNew.length + forgotten.length + callToday.length > 0
+
   return (
     <div>
+      {/* №2: Сегодня горит */}
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:14,fontWeight:800,color:'#0f172a',marginBottom:9,display:'flex',alignItems:'center',gap:7}}>
+          {hasUrgent ? '🔥 Требует внимания сегодня' : '✅ Всё под контролем'}
+        </div>
+        <div className='mg3'>
+          {urgentBlocks.map(b => (
+            <div key={b.title} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:'12px 13px',boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
+              <div style={{fontSize:11.5,fontWeight:800,color:'#334155',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>
+                {b.icon} {b.title}
+                {b.list.length > 0 && <span style={{marginLeft:'auto',background:'#fef2f2',color:'#dc2626',borderRadius:20,fontSize:10,fontWeight:800,padding:'1px 7px'}}>{b.list.length}</span>}
+              </div>
+              {b.list.length === 0
+                ? <div style={{fontSize:11.5,color:'#94a3b8',padding:'4px 0'}}>{b.empty}</div>
+                : b.list.map(c => (
+                    <div key={c.id} onClick={()=>onOpen(c)}
+                      style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,padding:'6px 8px',borderRadius:8,cursor:'pointer',marginBottom:2}}
+                      onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
+                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <span style={{fontSize:12,fontWeight:600,color:'#0f172a',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.fio||c.phone||'Без имени'}</span>
+                      <span style={{fontSize:10,color:'#94a3b8',flexShrink:0,maxWidth:'45%',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{b.hint(c)}</span>
+                    </div>
+                  ))
+              }
+            </div>
+          ))}
+        </div>
+      </div>
       {/* Metrics */}
       <div className='mg4'>
         {[
@@ -1112,8 +1215,19 @@ function DashPage({ data, pipeline, managers, onOpen, onLoadDash }) {
 DashPage = React.memo(DashPage)
 
 // ─── CLIENTS KANBAN ──────────────────────────────────────────────
-function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragOv, setDragOv, onMove }) {
+function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragOv, setDragOv, onMove, onQuick }) {
   const pl = pipeline || PIPELINE_DEFAULT
+  // №10: пустое состояние — новичок не теряется
+  if (!clients.length) return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'70px 20px',textAlign:'center'}}>
+      <div style={{fontSize:52,marginBottom:14}}>🗂️</div>
+      <div style={{fontSize:17,fontWeight:800,color:'#334155',marginBottom:6}}>Пока нет клиентов</div>
+      <div style={{fontSize:13,color:'#94a3b8',maxWidth:340,lineHeight:1.5}}>
+        Нажмите кнопку <b style={{color:'#3b82f6'}}>+</b> внизу справа, чтобы добавить первого клиента.
+        Или дождитесь входящего сообщения в WhatsApp — лид создастся сам.
+      </div>
+    </div>
+  )
   return (
     <div className='kb'>
       {pl.map(p => {
@@ -1159,6 +1273,23 @@ function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragO
                       <span style={{fontSize:10,color:'#94a3b8'}}>{c.dateIn}</span>
                       {m && <span style={{fontSize:10,color:'#64748b',fontWeight:600,display:'flex',alignItems:'center',gap:3}}><span style={{width:5,height:5,borderRadius:'50%',background:m.color,display:'inline-block'}}/>{m.name?.split(' ')[0]}</span>}
                     </div>
+                    {/* №3+№6: быстрые действия — звонок и статус одним тапом */}
+                    {c.phone && (
+                      <div style={{display:'flex',gap:4,marginTop:7,paddingTop:7,borderTop:'1px solid #f1f5f9'}} onClick={e=>e.stopPropagation()}>
+                        <a href={`tel:${c.phone}`} title="Позвонить"
+                          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'5px 0',borderRadius:7,background:'#f0fdf4',color:'#16a34a',textDecoration:'none',fontSize:13}}>
+                          <i className="ti ti-phone"/>
+                        </a>
+                        <button title="Не дозвонился" onClick={()=>onQuick && onQuick(c,'noanswer')}
+                          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'5px 0',borderRadius:7,background:'#fef2f2',color:'#dc2626',border:'none',cursor:'pointer',fontSize:13}}>
+                          <i className="ti ti-phone-off"/>
+                        </button>
+                        <button title="Перезвонить завтра" onClick={()=>onQuick && onQuick(c,'callback')}
+                          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'5px 0',borderRadius:7,background:'#fffbeb',color:'#d97706',border:'none',cursor:'pointer',fontSize:13}}>
+                          <i className="ti ti-clock"/>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -1638,9 +1769,35 @@ function NewClientModal({ client, managers, pipeline, onSave, onClose, syncing }
   const [f, sf] = useState({...client})
   const set = (k,v) => sf(x=>({...x,[k]:v}))
   const pl = pipeline || PIPELINE_DEFAULT
+
+  // №4: проверка дубля телефона — чтобы два менеджера не вели одного клиента
+  const [dup, setDup] = useState(null)
+  useEffect(() => {
+    const digits = (f.phone||'').replace(/\D/g,'')
+    if (digits.length < 10) { setDup(null); return }
+    const t = setTimeout(() => {
+      fetch('/api/clients/check-phone?phone=' + encodeURIComponent(f.phone), {
+        headers: { Authorization: 'Bearer ' + (localStorage.getItem('crm_token')||'') },
+      })
+        .then(r => r.json())
+        .then(d => setDup(d.found || null))
+        .catch(() => setDup(null))
+    }, 500)
+    return () => clearTimeout(t)
+  }, [f.phone])
+
   return (
     <ModalWrap title="Новый клиент" onClose={onClose} size="md"
       footer={<><Btn onClick={onClose}>Отмена</Btn><Btn variant="primary" onClick={()=>onSave(f)} disabled={syncing}>{syncing?<><i className="ti ti-loader spin"/>Создаю...</>:<><i className="ti ti-device-floppy"/>Создать клиента</>}</Btn></>}>
+      {dup && (
+        <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:11,padding:'10px 13px',marginBottom:13,display:'flex',gap:9,alignItems:'flex-start'}}>
+          <span style={{fontSize:17}}>⚠️</span>
+          <div style={{fontSize:12.5,color:'#991b1b',lineHeight:1.5}}>
+            <b>Этот номер уже есть в базе:</b> {dup.fio} (менеджер: {dup.manager}).
+            Проверьте через Поиск, прежде чем создавать дубль.
+          </div>
+        </div>
+      )}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
         <Fl l="ФИО *" req ch={<Inp value={f.fio} onChange={e=>set('fio',e.target.value)} placeholder="Фамилия Имя"/>}/>
         <Fl l="ИИН"      ch={<Inp value={f.iin} onChange={e=>set('iin',e.target.value)} placeholder="123456789012" maxLength={12}/>}/>
