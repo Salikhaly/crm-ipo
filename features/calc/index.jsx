@@ -7,7 +7,7 @@
 import React, { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
 import {
-  PROGRAMS_FALLBACK, getPrograms,
+  PROGRAMS_FALLBACK, API_PROGRAMS_FALLBACK, getPrograms,
   annuity, buildSch, fmtMoney, fmtK, fmtM,
   kdColor, kdText, avgSalary,
   D50_FALLBACK, getD50,
@@ -1008,13 +1008,13 @@ function CalcStepsTab({ toast$, calcCfg }) {
 // ════════════════════════════════════════════════════════════════
 
 // OLD_PROGRAMS убран — программы грузятся из БД через api.calc('programs').
-// Fallback пока загружается — PROGRAMS_FALLBACK (первые 6 совместимы по ключам).
+// Fallback пока загружается — API_PROGRAMS_FALLBACK (ключи движка: nauryz20 и т.д.).
 
 function CalcMortgageTab({ doCalc, clients }) {
   const [mode,    setMode]    = useState('price')
   // Список программ из БД (fallback — PROGRAMS_FALLBACK)
-  const [progList, setProgList] = useState(PROGRAMS_FALLBACK)
-  const [program, setProgram] = useState(PROGRAMS_FALLBACK[0]?.key || '')
+  const [progList, setProgList] = useState(API_PROGRAMS_FALLBACK)
+  const [program, setProgram] = useState('nauryz20')
   const [price,   setPrice]   = useState('')
   const [salary,  setSalary]  = useState('')
   const [members, setMembers] = useState('1')

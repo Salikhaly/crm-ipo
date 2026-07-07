@@ -36,7 +36,7 @@ export default withAuth(async function handler(req, res) {
   })() : dateFrom
 
   const clientsQuery = sb.from('clients')
-    .select('id, manager, stage, contract_type, contract_amount, payments, tasks, created_at')
+    .select('id, manager, stage, source, contract_type, contract_amount, payments, tasks, created_at')
     .gte('created_at', kpiLimit)
 
   // Менеджер видит только свою статистику
@@ -128,5 +128,42 @@ export default withAuth(async function handler(req, res) {
     closed:         clients.filter(c => c.stage === 'closed').length,
   }
 
-  return res.status(200).json({ stats, totals, period, dateFrom })
+  // ── №4: Воронка конверсии ──────────────────────────────────────
+  // По этапам: сколько клиентов ДОШЛО до каждого этапа (кумулятивно).
+  // Порядок этапов = порядок воронки.
+  const STAGE_ORDER = ['new_lead','in_work','analysis','consultation','contract','accompaniment','approval','deal','issuance','closed']
+  // periodClients уже объявлен выше (клиенты за выбранный период)
+  const stageIdx = s => { const i = STAGE_ORDER.indexOf(s); return i === -1 ? 0 : i }
+
+  const funnel = STAGE_ORDER.map((stage, i) => {
+    const reached = periodClients.filter(c => stageIdx(c.stage) >= i).length
+    return { stage, reached }
+  })
+  // Конверсия между соседними этапами
+  for (let i = 0; i < funnel.length; i++) {
+    funnel[i].convFromPrev = i === 0 ? 100
+      : funnel[i-1].reached > 0 ? Math.round(funnel[i].reached / funnel[i-1].reached * 100) : 0
+    funnel[i].convFromStart = funnel[0].reached > 0
+      ? Math.round(funnel[i].reached / funnel[0].reached * 100) : 0
+  }
+
+  // По источникам: лиды / договоры / выдачи + конверсия
+  const contractStages = ['contract','accompaniment','approval','deal','issuance','closed']
+  const bySource = {}
+  for (const c of periodClients) {
+    const s = c.source || 'other'
+    if (!bySource[s]) bySource[s] = { leads: 0, contracts: 0, issued: 0, revenue: 0 }
+    bySource[s].leads++
+    if (contractStages.includes(c.stage) || c.contract_type) {
+      bySource[s].contracts++
+      bySource[s].revenue += (c.contract_amount || 0)
+    }
+    if (['issuance','closed'].includes(c.stage)) bySource[s].issued++
+  }
+  const sources = Object.entries(bySource).map(([source, d]) => ({
+    source, ...d,
+    convToContract: d.leads > 0 ? Math.round(d.contracts / d.leads * 100) : 0,
+  })).sort((a, b) => b.leads - a.leads)
+
+  return res.status(200).json({ stats, totals, period, dateFrom, funnel, sources })
 })

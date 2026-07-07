@@ -724,6 +724,11 @@ function WaRepliesPanel() {
   const toast = t => { setMsg(t); setTimeout(()=>setMsg(''), 3500) }
   const CATS  = ['greeting','approval','rejection','docs','calc','meeting','thanks','status','general']
 
+  // №5: автоответ новым лидам
+  const [autoOn,   setAutoOn]   = useState(false)
+  const [autoText, setAutoText] = useState('')
+  const [autoSaving, setAutoSaving] = useState(false)
+
   useEffect(() => {
     api.getCalcSettings().then(d => {
       if (d?.replies) setReplies(d.replies.map(r => ({
@@ -735,9 +740,24 @@ function WaRepliesPanel() {
         active:    r.active    !== false,
         sortOrder: r.sort_order || 0,
       })))
+      if (d?.settings) {
+        setAutoOn(!!d.settings.wa_auto_greeting_on)
+        setAutoText(d.settings.wa_auto_greeting || '')
+      }
       setLoading(false)
     }).catch(()=>setLoading(false))
   }, [])
+
+  async function saveAutoGreeting() {
+    setAutoSaving(true)
+    try {
+      const res = await api.saveCalcSettings({
+        settings: { wa_auto_greeting: autoText, wa_auto_greeting_on: autoOn },
+      })
+      toast(res?.ok ? '✅ Автоответ сохранён' : '⚠️ Ошибка сохранения')
+    } catch(e) { toast('❌ ' + e.message) }
+    setAutoSaving(false)
+  }
 
   const setR = (id,f,v) => setReplies(rs=>rs.map(r=>r.id===id?{...r,[f]:v}:r))
 
@@ -768,6 +788,28 @@ function WaRepliesPanel() {
 
   return (
     <div style={{position:'relative'}}>
+      {/* №5: Автоответ новым лидам */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:14}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>🤖 Автоответ новым лидам</div>
+          <div onClick={()=>setAutoOn(v=>!v)} style={{width:44,height:24,background:autoOn?'#10b981':'#cbd5e1',borderRadius:20,position:'relative',cursor:'pointer',transition:'background .2s'}}>
+            <div style={{position:'absolute',top:3,left:autoOn?23:3,width:18,height:18,background:'#fff',borderRadius:'50%',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,.2)'}}/>
+          </div>
+        </div>
+        <div style={{fontSize:11.5,color:'#64748b',marginBottom:10,lineHeight:1.5}}>
+          Когда человек пишет в WhatsApp <b>впервые</b>, CRM автоматически отправит это сообщение.
+          Лид не остынет пока менеджер занят. Шлётся только новым чатам.
+        </div>
+        <textarea value={autoText} onChange={e=>setAutoText(e.target.value)}
+          placeholder="Здравствуйте! 👋 Спасибо за обращение — подбираем ипотеку под ваш доход. Какая примерно стоимость квартиры интересует? Менеджер скоро ответит."
+          rows={4}
+          style={{width:'100%',padding:'10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:10,color:'#0f172a',background:autoOn?'#fff':'#f8fafc'}}/>
+        <button onClick={saveAutoGreeting} disabled={autoSaving}
+          style={{padding:'9px 18px',border:'none',borderRadius:9,background:autoSaving?'#94a3b8':'#10b981',color:'#fff',fontSize:13,fontWeight:700,cursor:autoSaving?'default':'pointer',fontFamily:'inherit'}}>
+          {autoSaving ? '⏳ Сохраняю...' : '💾 Сохранить автоответ'}
+        </button>
+      </div>
+
       {msg && (
         <div style={{position:'fixed',top:20,right:20,zIndex:9999,
           background:'#0f172a',color:'#fff',padding:'10px 18px',borderRadius:10,

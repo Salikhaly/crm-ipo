@@ -14,7 +14,7 @@ import {
   WA_CHATS_POLL_MS, WA_MESSAGES_POLL_MS, MIN_SEARCH_LENGTH, MAX_FILE_SIZE_BYTES,
   PIPELINE_DEFAULT, ACCOMP, CONTRACTS, CT, SRCS, SRC, CR_ST, CR, ROLES, ROLE,
   CONTACT_ST, CITIES, MARITAL, WORK_T, DOWN_T, TASK_T, COLORS,
-  TI, TC, TB, TL, PAY_ST, uid, fmt, today, nowStr, emptyClient,
+  TI, TC, TB, TL, PAY_ST, uid, fmt, fmtN, today, nowStr, emptyClient,
 } from '../lib/constants'
 import {
   Fl, Tag, StTag, SrTag, CrTag, Tgl, Prog, Inp, Sel, Btn,
@@ -30,6 +30,34 @@ export default function CRM() {
   const [user,    setUser]    = useState(null)
   const [loading, setLoading] = useState(true)
 
+  // №9: Глобальный перехват ошибок → /api/log-error → Supabase error_logs.
+  // Больше не нужно дебажить по скриншотам консоли от менеджеров.
+  useEffect(() => {
+    const seen = new Set()  // дедуп одинаковых ошибок за сессию
+    const report = (message, stack) => {
+      const key = String(message).slice(0, 120)
+      if (seen.has(key) || seen.size > 10) return
+      seen.add(key)
+      fetch('/api/log-error', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message, stack,
+          url: window.location.href,
+          userName: (() => { try { return JSON.parse(localStorage.getItem('crm_user')||'{}').name || '' } catch { return '' } })(),
+        }),
+      }).catch(() => {})
+    }
+    const onError = e => report(e.message || 'Unknown error', e.error?.stack || '')
+    const onRejection = e => report('Unhandled: ' + (e.reason?.message || String(e.reason)), e.reason?.stack || '')
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onRejection)
+    return () => {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onRejection)
+    }
+  }, [])
+
   // Data
   const [clients,    setClients]    = useState([])
   const [managers,   setManagers]   = useState([])
@@ -44,6 +72,31 @@ export default function CRM() {
 
   // UI state
   const [page,        setPage]       = useState('dashboard')
+
+  // №7: Лёгкий URL-роутинг. Раздел отражается в ?p=, «назад» в браузере работает,
+  // F5 возвращает на тот же раздел, ссылку можно скинуть коллеге.
+  useEffect(() => {
+    // При загрузке: читаем раздел из URL
+    const params = new URLSearchParams(window.location.search)
+    const p = params.get('p')
+    if (p && p !== 'dashboard') setPage(p)
+    // Кнопка «назад»/«вперёд»
+    const onPop = () => {
+      const pp = new URLSearchParams(window.location.search).get('p') || 'dashboard'
+      setPage(pp)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  useEffect(() => {
+    // При смене раздела: пишем в URL (push только если реально сменился)
+    const cur = new URLSearchParams(window.location.search).get('p') || 'dashboard'
+    if (cur !== page) {
+      const url = page === 'dashboard' ? window.location.pathname : `?p=${page}`
+      window.history.pushState({}, '', url)
+    }
+  }, [page])
   const [selClient,   setSelClient]  = useState(null)
   const [selWaChat,   setSelWaChat]  = useState(null)
   const selWaChatRef = useRef(null)  // для polling без race condition
@@ -148,7 +201,20 @@ export default function CRM() {
       if (uRes?.users)      setUsers(uRes.users)
       if (plRes?.pipeline)  setPipeline(plRes.pipeline)
       if (clRes?.checklists) setChecklists(clRes.checklists)
-      if (cRes?.hasMore) toast$('⚠️ Загружены первые 200 клиентов. Для поиска остальных используйте страницу Поиск.')
+      // №8: если клиентов больше страницы — догружаем остальные в фоне (до 5 страниц = 1000).
+      // Канбан и фильтры видят всю базу, а не первые 200.
+      if (cRes?.hasMore) {
+        let all = cRes.clients, pg = 1
+        while (pg <= 4) {
+          const more = await api.getClients({ page: pg }).catch(() => null)
+          if (!more?.clients?.length) break
+          all = [...all, ...more.clients]
+          setClients(all)
+          if (!more.hasMore) break
+          pg++
+        }
+        if (pg > 4) toast$('⚠️ В базе больше 1000 клиентов — старые ищите через Поиск.')
+      }
     } catch (e) {
       toast$('❌ Ошибка загрузки: ' + e.message, 'err')
     }
@@ -1041,7 +1107,7 @@ function DashPage({ data, pipeline, managers, onOpen, onLoadDash }) {
   )
 }
 
-function fmtN(n) { return n ? new Intl.NumberFormat('ru').format(Math.round(n))+' ' : '— ' }
+// fmtN импортируется из lib/constants
 
 DashPage = React.memo(DashPage)
 
@@ -1414,8 +1480,11 @@ function KPIPage({ data, period, setPeriod }) {
     </div>
   )
 
-  const { stats, totals } = data
+  const { stats, totals, funnel, sources } = data
   const maxRev = Math.max(...(stats||[]).map(s => s.rev), 1)
+  const STAGE_L = {new_lead:'Новый лид',in_work:'В работе',analysis:'Анализ',consultation:'Консультация',contract:'Договор',accompaniment:'Сопровождение',approval:'Одобрение',deal:'Сделка',issuance:'Выдача',closed:'Закрыто'}
+  const SRC_L = {instagram:'Instagram',tiktok:'TikTok',whatsapp:'WhatsApp',recommendation:'Рекомендация',site:'Сайт',kaspi:'Kaspi',telegram:'Telegram',other:'Другое'}
+  const maxReached = Math.max(...(funnel||[]).map(f=>f.reached), 1)
 
   return (
     <div>
@@ -1439,6 +1508,61 @@ function KPIPage({ data, period, setPeriod }) {
           </div>
         ))}
       </div>
+
+      {/* №4: Воронка конверсии */}
+      {funnel?.length > 0 && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:15,padding:16,marginBottom:14,boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontWeight:800,fontSize:15,marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+            <i className="ti ti-filter" style={{color:'#6366f1'}}/>Воронка конверсии
+          </div>
+          {funnel.map((f,i) => (
+            <div key={f.stage} style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+              <div style={{width:110,fontSize:11.5,color:'#475569',fontWeight:600,flexShrink:0}}>{STAGE_L[f.stage]||f.stage}</div>
+              <div style={{flex:1,height:22,background:'#f1f5f9',borderRadius:6,overflow:'hidden',position:'relative'}}>
+                <div style={{height:'100%',width:`${Math.max(2,Math.round(f.reached/maxReached*100))}%`,
+                  background:`hsl(${240-i*18},70%,${58+i*1.5}%)`,borderRadius:6,transition:'width .4s',
+                  display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:7}}>
+                  <span style={{fontSize:11,fontWeight:800,color:'#fff'}}>{f.reached}</span>
+                </div>
+              </div>
+              <div style={{width:76,fontSize:10.5,color:i>0&&f.convFromPrev<50?'#dc2626':'#64748b',textAlign:'right',flexShrink:0}}>
+                {i>0 ? `${f.convFromPrev}% с пред.` : '100%'}
+              </div>
+            </div>
+          ))}
+          <div style={{fontSize:10.5,color:'#94a3b8',marginTop:8}}>
+            Красным — конверсия ниже 50% с предыдущего этапа: тут теряются клиенты.
+          </div>
+        </div>
+      )}
+
+      {/* №4: Источники лидов */}
+      {sources?.length > 0 && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:15,padding:16,marginBottom:14,boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontWeight:800,fontSize:15,marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+            <i className="ti ti-chart-pie" style={{color:'#ec4899'}}/>Откуда приходят клиенты
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto auto',gap:'7px 14px',alignItems:'center',fontSize:12}}>
+            <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>Источник</div>
+            <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>Лиды</div>
+            <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>Договоры</div>
+            <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>Конв.</div>
+            <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>Выручка</div>
+            {sources.map(s => (
+              <React.Fragment key={s.source}>
+                <div style={{fontWeight:600,color:'#334155'}}>{SRC_L[s.source]||s.source}</div>
+                <div style={{textAlign:'right',fontWeight:700}}>{s.leads}</div>
+                <div style={{textAlign:'right'}}>{s.contracts}</div>
+                <div style={{textAlign:'right',fontWeight:800,color:s.convToContract>=30?'#10b981':s.convToContract>=15?'#f59e0b':'#94a3b8'}}>{s.convToContract}%</div>
+                <div style={{textAlign:'right',fontWeight:700,color:'#8b5cf6'}}>{fmtN(s.revenue)}₸</div>
+              </React.Fragment>
+            ))}
+          </div>
+          <div style={{fontSize:10.5,color:'#94a3b8',marginTop:10}}>
+            Смотрите не на количество лидов, а на конверсию и выручку — туда и вкладывайте бюджет.
+          </div>
+        </div>
+      )}
 
       {(stats||[]).map(s => (
         <div key={s.manager.id} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:15,padding:16,marginBottom:11,boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>

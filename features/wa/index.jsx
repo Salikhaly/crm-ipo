@@ -3,12 +3,10 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { api } from '../../lib/api'
-import { emptyClient, fmt, MAX_FILE_SIZE_BYTES,
+import { emptyClient, fmt, fmtN, MAX_FILE_SIZE_BYTES,
   CR, CR_ST, CITIES, CONTACT_ST } from '../../lib/constants'
 import { Inp, Sel, Fl } from '../../components/ui'
 
-// fmtN — форматирование числа без валюты (₸ добавляется в месте вызова)
-function fmtN(n) { return n ? new Intl.NumberFormat('ru').format(Math.round(n))+' ' : '— ' }
 
 // ─── useDebounce hook ─────────────────────────────────────
 function useDebounce(value, delay = 200) {

@@ -255,6 +255,49 @@ export default async function handler(req, res) {
       if (insertErr) console.error('Message upsert error:', insertErr.message)
     }
 
+    // ── №5: Автоответ новому лиду ─────────────────────────────
+    // Только: первое сообщение (чата не было) + входящее + включено в настройках.
+    // ВАЖНО: в Vercel serverless нельзя setTimeout после return (процесс замирает),
+    // поэтому шлём синхронно до ответа. Green API ждёт ответ webhook до 10 сек — успеваем.
+    if (!existingChat && direction === 'in') {
+      try {
+        const { data: settings } = await sb
+          .from('calc_settings')
+          .select('wa_auto_greeting, wa_auto_greeting_on')
+          .eq('id', 'main')
+          .maybeSingle()
+
+        if (settings?.wa_auto_greeting_on && settings?.wa_auto_greeting?.trim()) {
+          const GREEN_ID    = process.env.GREEN_API_ID
+          const GREEN_TOKEN = process.env.GREEN_API_TOKEN
+          if (GREEN_ID && GREEN_TOKEN) {
+            const greeting = settings.wa_auto_greeting.trim()
+            try {
+              const r = await fetch(
+                `https://api.green-api.com/waInstance${GREEN_ID}/sendMessage/${GREEN_TOKEN}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chatId, message: greeting }),
+                }
+              )
+              const d = await r.json()
+              if (d.idMessage) {
+                await sb.from('wa_messages').insert({
+                  id: d.idMessage, chat_id: chatId, direction: 'out',
+                  type: 'text', body: greeting, author: 'Автоответ',
+                  status: 'sent', sent_at: new Date().toISOString(),
+                })
+                await sb.from('wa_chats').update({
+                  last_message: greeting, last_message_at: new Date().toISOString(),
+                }).eq('id', chatId)
+              }
+            } catch (e) { console.error('[auto-greeting]', e.message) }
+          }
+        }
+      } catch (e) { console.error('[auto-greeting check]', e.message) }
+    }
+
     return res.status(200).json({ ok: true, chatId, msgId, type, direction })
 
   } catch (err) {

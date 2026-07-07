@@ -11,17 +11,15 @@ import { api } from '../../lib/api'
 import {
   today, uid, nowStr, CT, CONTRACTS, ACCOMP, PIPELINE_DEFAULT,
   SRC, SRCS, CR, CR_ST, ROLE, MARITAL, CITIES, WORK_T, DOWN_T, CONTACT_ST,
-  TASK_T, PAY_ST, TI, TC, TB, TL,
+  TASK_T, PAY_ST, TI, TC, TB, TL, fmtN,
 } from '../../lib/constants'
 import {
   Btn, Inp, Sel, Fl, Tag, Tgl, Prog, StTag,
 } from '../../components/ui'
 import {
-  annuity, fmtMoney, fmtM, PROGRAMS_FALLBACK,
+  annuity, fmtMoney, fmtM, API_PROGRAMS_FALLBACK,
 } from '../../lib/calcData'
 
-// fmtN — форматирование числа без валюты (₸ добавляется в месте вызова)
-function fmtN(n) { return n ? new Intl.NumberFormat('ru').format(Math.round(n))+' ' : '— ' }
 
 export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing }) {
   const [c,      setC]      = useState(JSON.parse(JSON.stringify(client)))
@@ -212,7 +210,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                 {tab==='tasks'    && <TasksTabC   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user} canEdit={canEdit}/>}
                 {tab==='history'  && <HistoryTab  c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
                 {tab==='drive'    && <DriveTab     c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
-                {tab==='calc'     && <ClientCalcTab c={c} user={user} toast$={toast$}/>}
+                {tab==='calc'     && <ClientCalcTab c={c} setC={setC} user={user} toast$={toast$}/>}
               </div>
             </div>
           </div>
@@ -1310,7 +1308,7 @@ function DriveTab({ c, setC, user }) {
 // Здесь только алиасы для обратной совместимости со старым кодом вкладок.
 
 
-function ClientCalcTab({ c, user, toast$ }) {
+function ClientCalcTab({ c, setC, user, toast$ }) {
   const [program,  setProgram]  = useState('nauryz20')
   const [price,    setPrice]    = useState(c.contractAmount > 0 ? String(c.contractAmount) : '')
   const [salary,   setSalary]   = useState(c.officialIncome || '')
@@ -1357,7 +1355,7 @@ function ClientCalcTab({ c, user, toast$ }) {
 
   // Форматирует результат в красивое WA сообщение
   function buildWaMsg(result) {
-    const prog = PROGRAMS_FALLBACK.find(p => p.key === program)
+    const prog = API_PROGRAMS_FALLBACK.find(p => p.key === program)
     const name = c.fio?.split(' ')[0] || 'Уважаемый клиент'
 
     if (mode === 'salary' && result.approved) {
@@ -1392,6 +1390,95 @@ ${user?.name || 'Менеджер'}`
     return ''
   }
 
+  // Собирает краткую сводку текущего расчёта для сохранения/PDF
+  function calcSummary() {
+    const prog = API_PROGRAMS_FALLBACK.find(p => p.key === program)
+    if (mode === 'salary' && result?.approved) {
+      return {
+        maxPrice: result.maxPrice, loan: result.maxLoan,
+        down: result.down, monthly: result.payment,
+      }
+    }
+    if (mode === 'price' && result?.variantsByPrice?.length) {
+      const v = result.variantsByPrice[0]
+      return {
+        price: +price, down: v.downPayment, loan: v.loanAmount,
+        monthly: v.monthly, requiredSalary: v.requiredSalary,
+        rate: v.rate, label: v.label,
+      }
+    }
+    return null
+  }
+
+  // №1: Сохранить расчёт в карточку клиента (история расчётов)
+  const [savingCalc, setSavingCalc] = useState(false)
+  async function saveCalc() {
+    const s = calcSummary()
+    if (!s) { toast$('⚠️ Сначала выполните расчёт', 'err'); return }
+    const prog = API_PROGRAMS_FALLBACK.find(p => p.key === program)
+    const entry = {
+      id:      'calc_' + Date.now(),
+      date:    nowStr(),
+      author:  user?.name || '',
+      program: prog?.name || program,
+      mode,
+      ...s,
+    }
+    const updated = { ...c, savedCalcs: [entry, ...(c.savedCalcs || [])] }
+    setSavingCalc(true)
+    try {
+      await api.updateClient(c.id, updated)
+      setC(updated)
+      toast$('✅ Расчёт сохранён в карточку')
+    } catch(e) {
+      toast$('❌ ' + e.message, 'err')
+    } finally { setSavingCalc(false) }
+  }
+
+  // №2: PDF-отчёт — открывает печатную версию (браузер сохраняет в PDF)
+  function makePdf() {
+    const s = calcSummary()
+    if (!s) { toast$('⚠️ Сначала выполните расчёт', 'err'); return }
+    const prog = API_PROGRAMS_FALLBACK.find(p => p.key === program)
+    const rows = []
+    if (s.price)    rows.push(['Стоимость квартиры', fmtMoney(s.price)])
+    if (s.maxPrice) rows.push(['Макс. цена квартиры', fmtMoney(s.maxPrice)])
+    rows.push(['Первоначальный взнос', fmtMoney(s.down)])
+    rows.push(['Сумма займа', fmtMoney(s.loan)])
+    rows.push(['Ежемесячный платёж', fmtMoney(s.monthly)])
+    if (s.requiredSalary) rows.push(['Необходимый доход', fmtMoney(s.requiredSalary)])
+    const html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
+<title>Расчёт ипотеки — ${c.fio || ''}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;padding:48px;max-width:640px;margin:0 auto}
+  .head{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #10b981;padding-bottom:18px;margin-bottom:28px}
+  .logo{font-size:22px;font-weight:900;color:#10b981}
+  .date{font-size:12px;color:#64748b}
+  h1{font-size:19px;margin-bottom:6px}
+  .sub{font-size:13px;color:#64748b;margin-bottom:26px}
+  table{width:100%;border-collapse:collapse;margin-bottom:26px}
+  td{padding:11px 14px;border-bottom:1px solid #e2e8f0;font-size:14px}
+  td:last-child{text-align:right;font-weight:700;font-size:15px}
+  tr.hl td{background:#f0fdf4;color:#0f766e;font-size:16px}
+  .note{font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:26px}
+  .foot{border-top:1px solid #e2e8f0;padding-top:14px;font-size:13px;color:#334155}
+  @media print { body{padding:24px} }
+</style></head><body>
+<div class="head"><div class="logo">🏠 Ипотечный расчёт</div><div class="date">${nowStr()}</div></div>
+<h1>${c.fio || 'Клиент'}</h1>
+<div class="sub">Программа: <b>${prog?.name || program}</b>${s.label ? ' · ' + s.label : ''}${s.rate ? ' · ставка ' + s.rate + '%' : ''}</div>
+<table>${rows.map(([k,v],i)=>`<tr${k.includes('платёж')?' class="hl"':''}><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
+<div class="note">Расчёт является предварительным и не является публичной офертой. Итоговые условия определяются банком при рассмотрении заявки. Расчёт действителен на дату составления.</div>
+<div class="foot">Ваш консультант: <b>${user?.name || 'Менеджер'}</b>${user?.phone ? ' · ' + user.phone : ''}<br>Мы поможем на каждом шаге сделки 🤝</div>
+<script>window.onload=()=>setTimeout(()=>window.print(),300)</script>
+</body></html>`
+    const w = window.open('', '_blank')
+    if (!w) { toast$('❌ Разрешите всплывающие окна для PDF', 'err'); return }
+    w.document.write(html)
+    w.document.close()
+  }
+
   async function sendToWA() {
     if (!result) return
     const msg = buildWaMsg(result)
@@ -1410,7 +1497,7 @@ ${user?.name || 'Менеджер'}`
     }
   }
 
-  const prog = PROGRAMS_FALLBACK.find(p => p.key === program)
+  const prog = API_PROGRAMS_FALLBACK.find(p => p.key === program)
 
   return (
     <div>
@@ -1443,7 +1530,7 @@ ${user?.name || 'Менеджер'}`
       <div className="fi">
         <div className="fl">Программа</div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6}}>
-          {PROGRAMS_FALLBACK.map(p => (
+          {API_PROGRAMS_FALLBACK.map(p => (
             <button key={p.key} onClick={()=>{setProgram(p.key);setResult(null)}}
               style={{padding:'7px 5px',borderRadius:9,border:'2px solid',fontFamily:'inherit',fontSize:11,fontWeight:700,cursor:'pointer',textAlign:'center',transition:'all .15s',
                 borderColor:program===p.key?'#3b82f6':'#e2e8f0',
@@ -1567,7 +1654,21 @@ ${user?.name || 'Менеджер'}`
           ))}
 
           {/* Кнопки: копировать + отправить в WhatsApp */}
-          <div style={{display:'flex',gap:8,marginTop:4}}>
+          <div style={{display:'flex',gap:8,marginTop:4,flexWrap:'wrap'}}>
+            <button
+              onClick={saveCalc} disabled={savingCalc}
+              style={{flex:'1 1 45%',display:'flex',alignItems:'center',justifyContent:'center',gap:7,
+                padding:'12px 10px',borderRadius:12,border:'none',cursor:savingCalc?'default':'pointer',
+                background:savingCalc?'#94a3b8':'#3b82f6',color:'#fff',fontFamily:'inherit',fontWeight:700,fontSize:13}}>
+              <i className={savingCalc?'ti ti-loader-2 spin':'ti ti-device-floppy'} style={{fontSize:16}}/> Сохранить в карточку
+            </button>
+            <button
+              onClick={makePdf}
+              style={{flex:'1 1 45%',display:'flex',alignItems:'center',justifyContent:'center',gap:7,
+                padding:'12px 10px',borderRadius:12,border:'none',cursor:'pointer',
+                background:'#8b5cf6',color:'#fff',fontFamily:'inherit',fontWeight:700,fontSize:13}}>
+              <i className="ti ti-file-type-pdf" style={{fontSize:16}}/> PDF клиенту
+            </button>
             <button
               onClick={()=>{
                 const msg = buildWaMsg(result)
@@ -1577,22 +1678,22 @@ ${user?.name || 'Менеджер'}`
                   toast$('✅ Расчёт скопирован — вставьте клиенту')
                 } catch(e) { toast$('❌ Не удалось скопировать', 'err') }
               }}
-              style={{flex:c.phone?'0 0 auto':'1',display:'flex',alignItems:'center',justifyContent:'center',gap:7,
-                padding:'12px 16px',borderRadius:12,border:'1.5px solid #cbd5e1',cursor:'pointer',
-                background:'#f8fafc',color:'#334155',fontFamily:'inherit',fontWeight:700,fontSize:14}}>
-              <i className="ti ti-copy" style={{fontSize:17}}/> Копировать
+              style={{flex:c.phone?'1 1 30%':'1 1 45%',display:'flex',alignItems:'center',justifyContent:'center',gap:7,
+                padding:'12px 10px',borderRadius:12,border:'1.5px solid #cbd5e1',cursor:'pointer',
+                background:'#f8fafc',color:'#334155',fontFamily:'inherit',fontWeight:700,fontSize:13}}>
+              <i className="ti ti-copy" style={{fontSize:16}}/> Копировать
             </button>
             {c.phone && (
               <button
                 onClick={sendToWA}
                 disabled={sending}
-                style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,
-                  padding:'12px',borderRadius:12,border:'none',cursor:sending?'not-allowed':'pointer',
+                style={{flex:'1 1 45%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+                  padding:'12px 10px',borderRadius:12,border:'none',cursor:sending?'not-allowed':'pointer',
                   background: sending ? '#94a3b8' : '#25d366',
-                  color:'#fff',fontFamily:'inherit',fontWeight:700,fontSize:14,transition:'all .15s'}}>
+                  color:'#fff',fontFamily:'inherit',fontWeight:700,fontSize:13,transition:'all .15s'}}>
                 {sending
                   ? <><i className="ti ti-loader-2 spin" style={{fontSize:16}}/> Отправляю...</>
-                  : <><i className="ti ti-brand-whatsapp" style={{fontSize:18}}/> Отправить в WhatsApp</>
+                  : <><i className="ti ti-brand-whatsapp" style={{fontSize:17}}/> Отправить в WhatsApp</>
                 }
               </button>
             )}
@@ -1602,6 +1703,36 @@ ${user?.name || 'Менеджер'}`
               ⚠️ Укажите телефон в профиле чтобы отправить в WhatsApp
             </div>
           )}
+        </div>
+      )}
+
+      {/* №1: История сохранённых расчётов */}
+      {(c.savedCalcs?.length > 0) && (
+        <div style={{marginTop:18}}>
+          <div style={{fontSize:13,fontWeight:700,color:'#334155',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>
+            <i className="ti ti-history" style={{fontSize:15}}/>История расчётов ({c.savedCalcs.length})
+          </div>
+          {c.savedCalcs.map(sc => (
+            <div key={sc.id} style={{background:'#f8fafc',border:'1.5px solid #e2e8f0',borderRadius:11,padding:'10px 13px',marginBottom:7}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5}}>
+                <span style={{fontSize:12,fontWeight:700,color:'#0f172a'}}>{sc.program}</span>
+                <span style={{fontSize:10,color:'#94a3b8'}}>{sc.date}{sc.author ? ' · ' + sc.author : ''}</span>
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:'4px 14px',fontSize:11.5,color:'#475569'}}>
+                {sc.price     ? <span>Цена: <b>{fmtMoney(sc.price)}</b></span> : null}
+                {sc.maxPrice  ? <span>Макс. цена: <b>{fmtMoney(sc.maxPrice)}</b></span> : null}
+                {sc.down      ? <span>Взнос: <b>{fmtMoney(sc.down)}</b></span> : null}
+                {sc.monthly   ? <span>Платёж: <b style={{color:'#0f766e'}}>{fmtMoney(sc.monthly)}/мес</b></span> : null}
+                {sc.requiredSalary ? <span>Нужный доход: <b>{fmtMoney(sc.requiredSalary)}</b></span> : null}
+              </div>
+              <button onClick={()=>{
+                const updated = { ...c, savedCalcs: c.savedCalcs.filter(x=>x.id!==sc.id) }
+                api.updateClient(c.id, updated).then(()=>{ setC(updated); toast$('Расчёт удалён') }).catch(e=>toast$('❌ '+e.message,'err'))
+              }} style={{marginTop:6,padding:'3px 9px',border:'1px solid #fecaca',borderRadius:6,background:'#fef2f2',color:'#dc2626',cursor:'pointer',fontSize:10.5,fontFamily:'inherit'}}>
+                Удалить
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>
