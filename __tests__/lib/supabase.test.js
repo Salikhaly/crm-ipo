@@ -131,3 +131,50 @@ describe('clientToDb', () => {
     expect(back.contract_amount).toBe(25000000)
   })
 })
+
+// ─── Необязательные колонки (миграции 008 / 010) ────────────────────────────
+const { addCloseReason, findMissingOptionalColumn } = require('../../lib/supabase')
+
+describe('addCloseReason', () => {
+  test('добавляет close_reason только если поле есть у клиента', () => {
+    const row = {}
+    addCloseReason(row, { closeReason: 'Отказ банка' })
+    expect(row.close_reason).toBe('Отказ банка')
+  })
+
+  test('не трогает row без поля closeReason', () => {
+    const row = {}
+    addCloseReason(row, {})
+    expect('close_reason' in row).toBe(false)
+  })
+
+  test('пустая причина → пустая строка', () => {
+    const row = {}
+    addCloseReason(row, { closeReason: '' })
+    expect(row.close_reason).toBe('')
+  })
+})
+
+describe('findMissingOptionalColumn', () => {
+  test('находит отсутствующую колонку по тексту ошибки', () => {
+    const row = { fio: 'x', close_reason: '' }
+    const err = { message: `column "close_reason" of relation "clients" does not exist` }
+    expect(findMissingOptionalColumn(err, row)).toBe('close_reason')
+  })
+
+  test('не срабатывает если колонки нет в row', () => {
+    const err = { message: `column "close_reason" does not exist` }
+    expect(findMissingOptionalColumn(err, { fio: 'x' })).toBeNull()
+  })
+
+  test('null при отсутствии ошибки или другой ошибке', () => {
+    expect(findMissingOptionalColumn(null, { close_reason: '' })).toBeNull()
+    expect(findMissingOptionalColumn({ message: 'timeout' }, { close_reason: '' })).toBeNull()
+  })
+
+  test('saved_calcs тоже распознаётся', () => {
+    const row = { saved_calcs: [] }
+    const err = { message: `column "saved_calcs" does not exist` }
+    expect(findMissingOptionalColumn(err, row)).toBe('saved_calcs')
+  })
+})

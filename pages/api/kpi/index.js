@@ -35,19 +35,24 @@ export default withAuth(async function handler(req, res) {
     const d = new Date(); d.setMonth(d.getMonth() - 36); return d.toISOString().split('T')[0]
   })() : dateFrom
 
-  const clientsQuery = sb.from('clients')
-    .select('id, manager, stage, source, contract_type, contract_amount, payments, tasks, created_at')
-    .gte('created_at', kpiLimit)
-
-  // Менеджер видит только свою статистику
-  if (role === 'manager' && mid) {
-    clientsQuery.eq('manager', mid)
+  // close_reason — необязательная колонка (миграция 010); при её отсутствии
+  // повторяем запрос без неё, чтобы KPI не падал
+  const buildClientsQuery = (withCloseReason) => {
+    const cols = 'id, manager, stage, source, contract_type, contract_amount, payments, tasks, created_at'
+      + (withCloseReason ? ', close_reason' : '')
+    const q = sb.from('clients').select(cols).gte('created_at', kpiLimit)
+    // Менеджер видит только свою статистику
+    if (role === 'manager' && mid) q.eq('manager', mid)
+    return q
   }
 
-  const [clientsRes, managersRes] = await Promise.all([
-    clientsQuery,
+  let [clientsRes, managersRes] = await Promise.all([
+    buildClientsQuery(true),
     sb.from('managers').select('*').eq('active', true),
   ])
+  if (clientsRes.error && /close_reason/.test(clientsRes.error.message || '')) {
+    clientsRes = await buildClientsQuery(false)
+  }
 
   if (clientsRes.error) return apiError(res, clientsRes.error)
   if (managersRes.error) return apiError(res, managersRes.error)
@@ -165,5 +170,16 @@ export default withAuth(async function handler(req, res) {
     convToContract: d.leads > 0 ? Math.round(d.contracts / d.leads * 100) : 0,
   })).sort((a, b) => b.leads - a.leads)
 
-  return res.status(200).json({ stats, totals, period, dateFrom, funnel, sources })
+  // ── Причины закрытия (amoCRM-механика «причины потерь») ────────
+  const reasonCounts = {}
+  for (const c of periodClients) {
+    if (c.stage !== 'closed') continue
+    const r = c.close_reason || 'Не указана'
+    reasonCounts[r] = (reasonCounts[r] || 0) + 1
+  }
+  const closeReasons = Object.entries(reasonCounts)
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count)
+
+  return res.status(200).json({ stats, totals, period, dateFrom, funnel, sources, closeReasons })
 })

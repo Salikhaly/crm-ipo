@@ -12,14 +12,125 @@ import {
   today, uid, nowStr, CT, CONTRACTS, ACCOMP, PIPELINE_DEFAULT,
   SRC, SRCS, CR, CR_ST, ROLE, MARITAL, CITIES, WORK_T, DOWN_T, CONTACT_ST,
   TASK_T, PAY_ST, TI, TC, TB, TL, fmtN,
+  getAccompTemplate, getChecklist, STAGE_GUIDE,
+  CLOSE_REASONS, STAGE_AUTO_TASK, canMoveToStage,
 } from '../../lib/constants'
 import {
   Btn, Inp, Sel, Fl, Tag, Tgl, Prog, StTag,
 } from '../../components/ui'
+import { Logo } from '../../components/logo'
 import {
   annuity, fmtMoney, fmtM, API_PROGRAMS_FALLBACK,
 } from '../../lib/calcData'
 
+
+// ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
+function Collaps({ title, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(!!defaultOpen)
+  return (
+    <div style={{border:'1.5px solid #e2e8f0',borderRadius:12,marginBottom:12,overflow:'hidden',background:'#fff'}}>
+      <div onClick={()=>setOpen(o=>!o)}
+        style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'11px 14px',cursor:'pointer',background:open?'#f8fafc':'#fff',fontWeight:800,fontSize:13,color:'#334155',userSelect:'none',transition:'background .14s'}}>
+        <span>{title}</span>
+        <i className={`ti ti-chevron-${open?'up':'down'}`} style={{fontSize:15,color:'#94a3b8'}}/>
+      </div>
+      {open && <div style={{padding:'14px 15px',borderTop:'1.5px solid #e2e8f0'}}>{children}</div>}
+    </div>
+  )
+}
+
+// ─── Правая колонка (десктоп): открытые задачи + лента событий ──────────────
+// Данные те же, что во вкладках «Задачи»/«История» (на мобильном остаются вкладки).
+function SideTimeline({ c, setCd, user, canEdit }) {
+  const [txt, setTxt] = useState('')
+  const [ntText, setNtText] = useState('')
+  const [ntDue,  setNtDue]  = useState('')
+  const tasks     = c.tasks || []
+  const openTasks = tasks.filter(t => !t.done)
+  const feed      = [...(c.comments||[])].reverse().slice(0, 40)
+  const td        = today()
+
+  function togTask(id) {
+    if (!canEdit) return
+    const toggle = t => t.id===id ? { ...t, done:!t.done, doneAt: !t.done ? nowStr() : null } : t
+    // синхронно обновляем копии задач в этапах сопровождения
+    const newStages = Object.fromEntries(
+      Object.entries(c.accompStages||{}).map(([k,v]) => [k, {...v, tasks:(v.tasks||[]).map(toggle)}])
+    )
+    setCd({ ...c, tasks: tasks.map(toggle), accompStages: newStages })
+  }
+  function addTask() {
+    const t = ntText.trim()
+    if (!t) return
+    setCd({ ...c, tasks:[...tasks, { id:uid(), type:'📞 Позвонить', text:t, due:ntDue||'', done:false, created:nowStr() }] })
+    setNtText(''); setNtDue('')
+  }
+  function addCmt() {
+    const t = txt.trim()
+    if (!t) return
+    setCd({ ...c, comments:[...(c.comments||[]), { id:uid(), text:t, author:user.name, date:nowStr() }] })
+    setTxt('')
+  }
+
+  return (
+    <div>
+      {/* Задачи */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,marginBottom:12,overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
+        <div style={{padding:'10px 13px',borderBottom:'1.5px solid #e2e8f0',background:'#f8fafc',fontSize:11,fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',display:'flex',justifyContent:'space-between'}}>
+          <span>✅ Задачи</span><span style={{fontWeight:600}}>{openTasks.length} откр.</span>
+        </div>
+        {openTasks.length === 0 && <div style={{padding:'12px 13px',fontSize:12,color:'#94a3b8',fontStyle:'italic'}}>Нет открытых задач — поставьте следующий шаг 👇</div>}
+        {openTasks.slice(0, 6).map(t => (
+          <div key={t.id} style={{display:'flex',gap:8,alignItems:'flex-start',padding:'9px 13px',borderBottom:'1px solid #f1f5f9'}}>
+            <div onClick={()=>togTask(t.id)}
+              style={{width:18,height:18,borderRadius:'50%',border:'2.5px solid #cbd5e1',flexShrink:0,cursor:canEdit?'pointer':'default',marginTop:1}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:700,lineHeight:1.3}}>{t.type}</div>
+              {t.text && <div style={{fontSize:11,color:'#64748b',lineHeight:1.4}}>{t.text}</div>}
+              {t.due && <div style={{fontSize:10,fontWeight:t.due<td?800:500,color:t.due<td?'#ef4444':'#94a3b8',marginTop:1}}>📅 {t.due}{t.due<td?' · просрочена':''}</div>}
+            </div>
+          </div>
+        ))}
+        {canEdit && (
+          <div style={{padding:'9px 11px',background:'#f8fafc',borderTop:'1px solid #e2e8f0'}}>
+            <input value={ntText} onChange={e=>setNtText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()}
+              placeholder="Новая задача… (Enter)"
+              style={{width:'100%',padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,background:'#fff',color:'#0f172a',outline:'none',marginBottom:6}}/>
+            <div style={{display:'flex',gap:6}}>
+              <input type="date" value={ntDue} onChange={e=>setNtDue(e.target.value)}
+                style={{flex:1,padding:'6px 8px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:11,background:'#fff',color:'#64748b',outline:'none'}}/>
+              <button onClick={addTask} style={{padding:'6px 12px',border:'none',borderRadius:8,background:'#3b82f6',color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>+</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Лента событий */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
+        <div style={{padding:'10px 13px',borderBottom:'1.5px solid #e2e8f0',background:'#f8fafc',fontSize:11,fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>
+          💬 Лента
+        </div>
+        {canEdit && (
+          <div style={{display:'flex',gap:6,padding:'9px 11px',borderBottom:'1px solid #f1f5f9'}}>
+            <input value={txt} onChange={e=>setTxt(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCmt()}
+              placeholder="Заметка… (Enter)"
+              style={{flex:1,padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:12,background:'#f8fafc',color:'#0f172a',outline:'none'}}/>
+            <button onClick={addCmt} style={{padding:'6px 10px',border:'none',borderRadius:8,background:'#3b82f6',color:'#fff',fontSize:12,cursor:'pointer',fontFamily:'inherit'}}><i className="ti ti-send" style={{fontSize:12}}/></button>
+          </div>
+        )}
+        {feed.length === 0 && <div style={{padding:'12px 13px',fontSize:12,color:'#94a3b8',fontStyle:'italic'}}>Пока пусто. Пишите сюда итоги звонков — вся история будет перед глазами.</div>}
+        <div style={{maxHeight:340,overflowY:'auto'}}>
+          {feed.map(cm => (
+            <div key={cm.id} style={{padding:'9px 13px',borderBottom:'1px solid #f1f5f9',background:cm.sys?'#f8fafc':'#fff'}}>
+              <div style={{fontSize:10,color:'#94a3b8',marginBottom:2,fontWeight:600}}>{cm.author} · {cm.date}</div>
+              <div style={{fontSize:12,lineHeight:1.45,color:cm.sys?'#64748b':'#0f172a'}}>{cm.text}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing, onOpenWa }) {
   const [c,      setC]      = useState(JSON.parse(JSON.stringify(client)))
@@ -29,12 +140,68 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const [isDirty,    setIsDirty]    = useState(false)
   const [showCalc,   setShowCalc]   = useState(false)
   const [showStageDrawer, setShowStageDrawer] = useState(false)
+  const [closeAsk,   setCloseAsk]   = useState(false)  // модалка «причина закрытия»
   const canEdit = user.role !== 'qa'  // техник (admin) и все остальные кроме qa могут редактировать
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
 
+  // Маршрут сопровождения зависит от типа договора (7 групп программ)
+  const accTpl    = getAccompTemplate(c.contractType)
+  const accStages = accTpl.stages
+
   function set(k, v) { setC(x=>({...x,[k]:v})); setIsDirty(true); setHasChanges(true) }
-  function save() { onSave({...c}); setIsDirty(false) }
+
+  // ── Автосохранение: 2.5 сек тишины после любого изменения → тихий save ──
+  const [autoSt, setAutoSt] = useState('')   // '' | 'saving' | 'saved' | 'err'
+  const saveTimer = useRef(null)
+  const firstC    = useRef(true)
+
+  async function save() {
+    clearTimeout(saveTimer.current)
+    setAutoSt('saving')
+    const ok = await onSave({...c})
+    if (ok) { setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
+  }
+
+  useEffect(() => {
+    if (firstC.current) { firstC.current = false; return }
+    if (!canEdit) return
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(async () => {
+      setAutoSt('saving')
+      const ok = await onSave({...c}, { quiet: true })
+      if (ok) { setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
+    }, 2500)
+    return () => clearTimeout(saveTimer.current)
+  }, [c]) // реагирует на любое изменение карточки, включая setC из вкладок
+
+  // Смена этапа воронки: обязательные поля → причина закрытия → авто-задача
+  function changeStage(nid) {
+    if (nid === c.stage) return
+    const chk = canMoveToStage(c, nid)
+    if (!chk.ok) { toast$('⚠️ ' + chk.msg, 'err'); return }
+    if (nid === 'closed') { setCloseAsk(true); return }
+    applyStage(nid)
+  }
+  function applyStage(nid, reason) {
+    const patch = { stage: nid }
+    // Смена этапа пишется в ленту — в карточке видна вся история движения
+    const fromL = pl.find(p => p.id === c.stage)?.l || c.stage
+    const toL   = pl.find(p => p.id === nid)?.l || nid
+    patch.comments = [...(c.comments||[]), { id:uid(), text:`📍 Этап: ${fromL} → ${toL}`, author:user.name, date:nowStr(), sys:true }]
+    if (reason) {
+      patch.closeReason = reason
+      patch.comments = [...patch.comments, { id:uid(), text:'❌ Закрыто: '+reason, author:user.name, date:nowStr(), sys:true }]
+    }
+    // Авто-задача: настройка этапа из воронки (админка) → дефолт из кода
+    const stgObj = pl.find(p => p.id === nid)
+    const at = stgObj?.at ? (stgObj.at.off ? null : stgObj.at) : STAGE_AUTO_TASK[nid]
+    if (at && !(c.tasks||[]).some(t => !t.done && t.auto && t.type === at.type)) {
+      patch.tasks = [...(c.tasks||[]), { id:uid(), type:at.type, text:at.text, due:today(), done:false, created:nowStr(), auto:true }]
+      toast$('✅ Задача: ' + at.text)
+    }
+    setC(x => ({ ...x, ...patch })); setIsDirty(true); setHasChanges(true)
+  }
 
   const stageObj = pl.find(p => p.id === c.stage)
   const cr       = CR[c.creditStatus]
@@ -53,30 +220,34 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     const sd   = getSD(si)
     const done = sd.done || []
     const newDone = done.includes(itemId) ? done.filter(x=>x!==itemId) : [...done,itemId]
-    const items   = cls[ACCOMP[si]] || []
-    if (newDone.length===items.length && items.length>0 && si<ACCOMP.length-1) {
-      setAutoBanner({ fromIdx:si, toIdx:si+1, fromName:ACCOMP[si], toName:ACCOMP[si+1] })
+    const items   = getChecklist(cls, accStages[si])
+    const doneCnt = newDone.filter(id => items.some(it => it.id === id)).length
+    if (doneCnt===items.length && items.length>0 && si<accStages.length-1) {
+      setAutoBanner({ fromIdx:si, toIdx:si+1, fromName:accStages[si], toName:accStages[si+1] })
     } else { setAutoBanner(null) }
     setSD(si, {...sd, done:newDone})
   }
 
-  const totalItems  = ACCOMP.reduce((s,st) => s+(cls[st]||[]).length, 0)
-  const totalDone   = ACCOMP.reduce((s,st,i) => s+((aStages[i]?.done)||[]).length, 0)
+  // Считаем только галочки, относящиеся к текущему чек-листу этапа —
+  // старые отметки от другого маршрута не завышают процент
+  const totalItems  = accStages.reduce((s,st) => s+getChecklist(cls,st).length, 0)
+  const totalDone   = accStages.reduce((s,st,i) => {
+    const items = getChecklist(cls, st)
+    return s + ((aStages[i]?.done)||[]).filter(id => items.some(it => it.id === id)).length
+  }, 0)
   const overallPct  = totalItems > 0 ? Math.round(totalDone/totalItems*100) : 0
 
+  // 6 смысловых вкладок (было 12). Задачи/История на десктопе живут
+  // в правой колонке, на мобильном остаются вкладками (mob:true).
   const ALL_TABS = [
-    {id:'profile',  l:'👤 Профиль'},
-    {id:'analysis', l:'📊 Анализ'},
-    {id:'credit',   l:'💳 КИ'},
-    {id:'otbasy',   l:'🏦 Отбасы'},
-    {id:'contract', l:'📄 Договор'},
-    {id:'payments', l:`💰 Оплата (${(c.payments||[]).length})`},
-    {id:'reassign', l:'🔄 Переуступка'},
-    {id:'accomp',   l:'🗺 Сопровождение'},
-    {id:'tasks',    l:`✅ Задачи (${(c.tasks||[]).filter(t=>!t.done).length})`},
-    {id:'history',  l:`💬 История (${(c.comments||[]).length})`},
-    {id:'drive',    l:'📁 Файлы'},
-    {id:'calc',     l:'🧮 Калькулятор'},
+    {id:'profile',  l:'Клиент',        i:'ti-user'},
+    {id:'finance',  l:'Финансы',       i:'ti-credit-card'},
+    {id:'contract', l:`Договор${(c.payments||[]).length?` (${(c.payments||[]).length})`:''}`, i:'ti-file-text'},
+    {id:'accomp',   l:'Сопровождение', i:'ti-map-2'},
+    {id:'calc',     l:'Калькулятор',   i:'ti-calculator'},
+    {id:'drive',    l:'Файлы',         i:'ti-folder'},
+    {id:'tasks',    l:`Задачи (${(c.tasks||[]).filter(t=>!t.done).length})`,   i:'ti-checkbox', mob:true},
+    {id:'history',  l:`История (${(c.comments||[]).length})`, i:'ti-message-circle', mob:true},
   ]
 
   const stageColor = stageObj?.c || '#3b82f6'
@@ -94,6 +265,26 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
           <div onClick={()=>setShowStageDrawer(false)}
             style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:998}}/>
         )}
+        {/* Причина закрытия — обязательна при переносе в «Закрыто» */}
+        {closeAsk && (
+          <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.55)',zIndex:1100,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(3px)',padding:16}}>
+            <div style={{background:'#fff',borderRadius:18,width:'100%',maxWidth:420,padding:20,boxShadow:'0 20px 50px rgba(0,0,0,.25)'}}>
+              <div style={{fontWeight:800,fontSize:16,marginBottom:4}}>Почему закрываем клиента?</div>
+              <div style={{fontSize:12,color:'#64748b',marginBottom:14}}>Причина попадёт в KPI — увидим, где теряем клиентов, и что чинить в первую очередь.</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginBottom:12}}>
+                {CLOSE_REASONS.map(r => (
+                  <button key={r} onClick={()=>{applyStage('closed', r); setCloseAsk(false)}}
+                    style={{padding:'10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,background:'#f8fafc',cursor:'pointer',fontSize:12.5,fontWeight:600,color:'#334155',textAlign:'left',fontFamily:'inherit',transition:'all .14s'}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor='#ef4444';e.currentTarget.style.background='#fef2f2'}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor='#e2e8f0';e.currentTarget.style.background='#f8fafc'}}>
+                    {r}
+                  </button>
+                ))}
+              </div>
+              <Btn style={{width:'100%',justifyContent:'center'}} onClick={()=>setCloseAsk(false)}>Отмена</Btn>
+            </div>
+          </div>
+        )}
         {/* Sidebar */}
         <div className={"sidebar" + (showStageDrawer ? " mobile-open" : "")} style={{width:220,background:'#0f172a',display:'flex',flexDirection:'column',position:'sticky',top:0,height:'100vh',overflowY:'auto',flexShrink:0}}>
           {/* Кнопка закрытия — только мобильный */}
@@ -102,9 +293,13 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
             ×
           </button>
           <div style={{padding:'16px 15px 13px',borderBottom:'1px solid rgba(255,255,255,.07)'}}>
-            <div style={{fontSize:20,marginBottom:4}}>🏠</div>
-            <div style={{fontSize:14,fontWeight:800,color:'#fff'}}>Ипотека CRM</div>
-            <div style={{fontSize:10,color:'#475569',marginTop:2}}>Карточка клиента</div>
+            <div style={{display:'flex',alignItems:'center',gap:9}}>
+              <Logo size={28} id="cd-logo"/>
+              <div>
+                <div style={{fontSize:14,fontWeight:800,color:'#fff'}}>Ипотека CRM</div>
+                <div style={{fontSize:10,color:'#475569',marginTop:1}}>Карточка клиента</div>
+              </div>
+            </div>
           </div>
           <div style={{padding:'9px 8px',flex:1,display:'flex',flexDirection:'column',gap:2}}>
             <button aria-label="Назад к списку клиентов" onClick={onBack} style={{display:'flex',alignItems:'center',gap:8,padding:'9px 11px',borderRadius:9,color:'#64748b',background:'transparent',fontSize:12.5,width:'100%',textAlign:'left',border:'none',cursor:'pointer',fontFamily:'inherit'}}>
@@ -112,7 +307,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
             </button>
             <div style={{padding:'8px 10px 3px',fontSize:9,fontWeight:700,letterSpacing:'.09em',color:'#374151',textTransform:'uppercase',marginTop:6}}>Этап воронки</div>
             {pl.map(p => (
-              <button key={p.id} onClick={()=>canEdit&&set('stage',p.id)}
+              <button key={p.id} onClick={()=>canEdit&&changeStage(p.id)}
                 style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:7,padding:'8px 11px',borderRadius:9,color:c.stage===p.id?'#fff':'#64748b',background:c.stage===p.id?p.c:'transparent',fontSize:12,width:'100%',textAlign:'left',border:'none',cursor:canEdit?'pointer':'default',fontFamily:'inherit',transition:'all .14s'}}>
                 <span style={{display:'flex',alignItems:'center',gap:7}}><span style={{width:7,height:7,borderRadius:'50%',background:p.c,display:'inline-block'}}/>{p.l}</span>
                 {c.stage===p.id && <i className="ti ti-check" style={{fontSize:12}}/>}
@@ -142,7 +337,15 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
             </button>
             <div className="topbar-title" style={{fontSize:15}}>
               {c.fio||'Клиент'}
-              {isDirty && <span style={{fontSize:10,color:'#f59e0b',marginLeft:6,fontWeight:600}}>●</span>}
+              {autoSt==='saving'
+                ? <span style={{fontSize:10,color:'#94a3b8',marginLeft:7,fontWeight:600}}><i className="ti ti-loader spin" style={{fontSize:10}}/> сохраняю…</span>
+                : autoSt==='err'
+                ? <span style={{fontSize:10,color:'#ef4444',marginLeft:7,fontWeight:700}}>⚠ не сохранено</span>
+                : autoSt==='saved' && !isDirty
+                ? <span style={{fontSize:10,color:'#10b981',marginLeft:7,fontWeight:700}}>✓ сохранено</span>
+                : isDirty
+                ? <span style={{fontSize:10,color:'#f59e0b',marginLeft:6,fontWeight:600}}>●</span>
+                : null}
             </div>
             {canEdit && <Btn variant="danger" size="sm" onClick={()=>{if(window.confirm('Удалить клиента?'))onDelete(c.id)}} disabled={syncing}><i className="ti ti-trash"/></Btn>}
             {canEdit && <Btn variant="primary" size="sm" onClick={save} disabled={syncing}>
@@ -151,6 +354,27 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
           </div>
 
           <div className='main-content'>
+           <div className="cd-grid">
+            <div className="cd-main" style={{minWidth:0}}>
+            {/* Степпер этапов — клик переводит по воронке (с проверками и причиной закрытия) */}
+            <div className="stage-stepper">
+              {pl.map((p, i) => {
+                const curIdx = pl.findIndex(x => x.id === c.stage)
+                const isAct  = i === curIdx
+                const isPast = i < curIdx
+                return (
+                  <React.Fragment key={p.id}>
+                    {i > 0 && <i className="ti ti-chevron-right" style={{fontSize:12,color:'#cbd5e1',flexShrink:0}}/>}
+                    <button onClick={()=>canEdit&&changeStage(p.id)} title={p.l}
+                      style={{display:'inline-flex',alignItems:'center',gap:5,padding:'6px 11px',borderRadius:18,border:'none',flexShrink:0,
+                        background:isAct?p.c:isPast?p.c+'22':'#f1f5f9',color:isAct?'#fff':isPast?p.c:'#94a3b8',
+                        fontSize:11.5,fontWeight:isAct?800:600,cursor:canEdit?'pointer':'default',fontFamily:'inherit',transition:'all .14s',whiteSpace:'nowrap'}}>
+                      {isPast && <i className="ti ti-check" style={{fontSize:10}}/>}{p.l}
+                    </button>
+                  </React.Fragment>
+                )
+              })}
+            </div>
             {/* Hero */}
             <div style={{background:`linear-gradient(135deg,${stageColor}cc,#0f172a)`,borderRadius:14,padding:18,marginBottom:13,color:'#fff'}}>
               <div style={{fontSize:20,fontWeight:800,letterSpacing:'-.4px',marginBottom:5}}>{c.fio||'—'}</div>
@@ -180,22 +404,21 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
             {(() => {
               const NEXT_STEP = {
                 new_lead:      { t:'Связаться с клиентом в течение 15 минут', s:'Тёплый лид остывает за час. Позвоните или напишите в WhatsApp.', tab:'profile' },
-                in_work:       { t:'Провести первичный опрос', s:'Заполните доход, взнос и кредитную историю во вкладке Профиль.', tab:'profile' },
-                analysis:      { t:'Проверить платёжеспособность', s:'Вкладка Анализ: доход, ОПВ, КД. Рассчитайте ипотеку в Калькуляторе.', tab:'analysis' },
+                in_work:       { t:'Провести первичный опрос', s:'Заполните доход, взнос и кредитную историю во вкладке Клиент.', tab:'profile' },
+                analysis:      { t:'Проверить платёжеспособность', s:'Вкладка Клиент → Анализ: доход, ОПВ, КД. Рассчитайте ипотеку в Калькуляторе.', tab:'profile' },
                 consultation:  { t:'Назначить консультацию', s:'Подготовьте расчёт (вкладка Калькулятор) и отправьте клиенту.', tab:'calc' },
                 contract:      { t:'Подписать договор', s:'Выберите тип договора и сумму во вкладке Договор.', tab:'contract' },
                 accompaniment: { t:'Вести по этапам сопровождения', s:'Отмечайте шаги во вкладке Сопровождение, ставьте задачи.', tab:'accomp' },
-                approval:      { t:'Подать заявку в банк', s:'Соберите документы (кнопка ниже) и подайте на одобрение.', tab:'analysis' },
-                deal:          { t:'Провести сделку', s:'Следуйте чек-листу во вкладке Этапы сделки.', tab:'dealsteps' },
-                issuance:      { t:'Проконтролировать выдачу', s:'Проверьте страховку и перевод денег продавцу.', tab:'dealsteps' },
+                approval:      { t:'Подать заявку в банк', s:'Соберите документы (кнопка ниже) и подайте на одобрение.', tab:'profile' },
+                deal:          { t:'Провести сделку', s:'Следуйте чек-листу «Этапы кредитования» во вкладке Сопровождение.', tab:'accomp' },
+                issuance:      { t:'Проконтролировать выдачу', s:'Проверьте страховку и перевод денег продавцу.', tab:'accomp' },
                 closed:        { t:'Попросить рекомендацию', s:'Довольный клиент — лучший источник новых лидов. Напишите ему через месяц.', tab:'profile' },
               }
               const ns = NEXT_STEP[c.stage]
               if (!ns) return null
               return (
-                <div onClick={()=>ns.tab && setTab(ns.tab)}
-                  style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:12,padding:'11px 14px',marginBottom:13,cursor:'pointer',display:'flex',gap:11,alignItems:'flex-start'}}>
-                  <div style={{width:32,height:32,borderRadius:9,background:'#3b82f6',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:16}}>👉</div>
+                <div onClick={()=>ns.tab && setTab(ns.tab)} className="next-step">
+                  <div className="next-step-badge">👉</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:800,color:'#1d4ed8',marginBottom:2}}>Следующий шаг: {ns.t}</div>
                     <div style={{fontSize:11.5,color:'#3b82f6',lineHeight:1.45}}>{ns.s}</div>
@@ -261,31 +484,68 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
             <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,overflow:'visible',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
               <div className="tabs">
                 {ALL_TABS.map(t => (
-                  <div key={t.id} className={`tab-item${tab===t.id?' active':''}`} onClick={()=>setTab(t.id)}>
-                    {t.l}
+                  <div key={t.id} className={`tab-item${tab===t.id?' active':''}${t.mob?' tab-mobile-only':''}`} onClick={()=>setTab(t.id)} style={{gap:6}}>
+                    <i className={`ti ${t.i}`} style={{fontSize:15}}/>{t.l}
                   </div>
                 ))}
               </div>
               <div style={{padding:'18px 19px'}}>
-                {tab==='profile'  && <ProfileTab  c={c} set={set} managers={managers} canEdit={canEdit}/>}
-                {tab==='analysis' && <AnalysisTab c={c} set={set} canEdit={canEdit}/>}
-                {tab==='credit'   && <CreditTab   c={c} set={set} canEdit={canEdit}/>}
-                {tab==='otbasy'   && <OtbasyTab   c={c} set={set}/>}
-                {tab==='contract' && <ContractTab c={c} set={set} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} pipeline={pl}/>}
-                {tab==='payments' && <PaymentsTab c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} pipeline={pl} canEdit={canEdit}/>}
-                {tab==='reassign' && <ReassTab    c={c} set={set} canEdit={canEdit}/>}
-                {tab==='accomp'   && <AccompTab   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} managers={managers} canEdit={canEdit} checklists={cls} user={user} accIdx={accIdx} setAccIdx={setAccIdx} autoBanner={autoBanner} setAutoBanner={setAutoBanner} toggleCheck={toggleCheck} overallPct={overallPct} totalDone={totalDone} totalItems={totalItems} getSD={getSD} setSD={setSD} toast$={toast$}/>}
+                {tab==='profile'  && <>
+                  <ProfileTab c={c} set={set} managers={managers} canEdit={canEdit}/>
+                  <div style={{marginTop:14}}>
+                    <Collaps title="📊 Анализ платёжеспособности" defaultOpen>
+                      <AnalysisTab c={c} set={set} canEdit={canEdit}/>
+                    </Collaps>
+                  </div>
+                </>}
+                {tab==='finance'  && <>
+                  <Collaps title="💳 Кредитная история" defaultOpen>
+                    <CreditTab c={c} set={set} canEdit={canEdit}/>
+                  </Collaps>
+                  <Collaps title="🏦 Отбасы банк" defaultOpen={!!(c.otbasyDeposit || c.otbasyQueue || c.depositAmount)}>
+                    <OtbasyTab c={c} set={set}/>
+                  </Collaps>
+                  <Collaps title="🔄 Переуступка" defaultOpen={!!c.isReassignment}>
+                    <ReassTab c={c} set={set} canEdit={canEdit}/>
+                  </Collaps>
+                </>}
+                {tab==='contract' && <>
+                  <ContractTab c={c} set={set} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} pipeline={pl}/>
+                  <div style={{marginTop:14}}>
+                    <Collaps title={`💰 Оплата по договору (${(c.payments||[]).length})`} defaultOpen={(c.payments||[]).length>0}>
+                      <PaymentsTab c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} pipeline={pl} canEdit={canEdit}/>
+                    </Collaps>
+                  </div>
+                </>}
+                {tab==='accomp'   && <AccompTab   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} managers={managers} canEdit={canEdit} checklists={cls} user={user} accIdx={Math.min(accIdx, accStages.length-1)} setAccIdx={setAccIdx} autoBanner={autoBanner} setAutoBanner={setAutoBanner} toggleCheck={toggleCheck} overallPct={overallPct} totalDone={totalDone} totalItems={totalItems} getSD={getSD} setSD={setSD} toast$={toast$} stages={accStages} tplLabel={accTpl.l}/>}
                 {tab==='tasks'    && <TasksTabC   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user} canEdit={canEdit}/>}
                 {tab==='history'  && <HistoryTab  c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
                 {tab==='drive'    && <DriveTab     c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
                 {tab==='calc'     && <ClientCalcTab c={c} setC={setC} user={user} toast$={toast$}/>}
               </div>
             </div>
+            </div>{/* /cd-main */}
+            <aside className="cd-side">
+              <SideTimeline c={c} setCd={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user} canEdit={canEdit}/>
+            </aside>
+           </div>{/* /cd-grid */}
           </div>
         </div>
       </div>
       <style>{`
         @keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}
+        /* Волна 3: сетка карточки — контент + правая колонка Лента/Задачи */
+        .cd-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:13px;align-items:start}
+        .cd-side{position:sticky;top:64px}
+        .tab-mobile-only{display:none}
+        @media(max-width:1099px){
+          .cd-grid{grid-template-columns:1fr}
+          .cd-side{display:none}
+          .tab-mobile-only{display:flex}
+        }
+        /* Степпер этапов над карточкой */
+        .stage-stepper{display:flex;align-items:center;gap:4px;overflow-x:auto;padding:4px 2px 10px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+        .stage-stepper::-webkit-scrollbar{height:0}
         @media(max-width:768px){
           .app-layout .sidebar{display:none}
           .main-content{padding:12px 12px 80px}
@@ -301,6 +561,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
 // ─── TAB COMPONENTS ──────────────────────────────────────────────
 function ProfileTab({ c, set, managers, canEdit }) {
   return <>
+    <div className="hint">
+      <span className="hint-icon">👤</span>
+      <div>Основные данные клиента. <b>ФИО и телефон — обязательны</b>, ИИН нужен ближе к сделке. Источник помогает понять, откуда пришёл клиент — это видно в отчётах по эффективности рекламы.</div>
+    </div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
       <Fl l="ФИО *" req ch={<Inp value={c.fio} onChange={e=>set('fio',e.target.value)} placeholder="Фамилия Имя Отчество" disabled={!canEdit}/>}/>
       <Fl l="ИИН"      ch={<Inp value={c.iin} onChange={e=>set('iin',e.target.value)} placeholder="123456789012" maxLength={12} disabled={!canEdit}/>}/>
@@ -326,12 +590,19 @@ function ProfileTab({ c, set, managers, canEdit }) {
 
 function AnalysisTab({ c, set, canEdit }) {
   return <>
+    <div className="hint">
+      <span className="hint-icon">📊</span>
+      <div>Здесь собираем данные для банка. <b>Чем точнее доход и стаж — тем вернее расчёт одобрения.</b> Доп. доход учитывается только если стоит галочка «подтверждается» (справка, договор аренды и т.п.).</div>
+    </div>
     <div style={{fontWeight:700,fontSize:12,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:10}}>Личные данные</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
       <Fl l="Семейное положение" ch={<Sel value={c.maritalStatus} onChange={e=>set('maritalStatus',e.target.value)} disabled={!canEdit}><option value="">—</option>{MARITAL.map(s=><option key={s}>{s}</option>)}</Sel>}/>
       <Fl l="Кол-во детей" ch={<Inp type="number" min="0" value={c.children} onChange={e=>set('children',e.target.value)}/>}/>
     </div>
-    <div style={{fontWeight:700,fontSize:12,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:10,marginTop:4}}>Финансы</div>
+    <div style={{fontWeight:700,fontSize:12,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:10,marginTop:4,display:'flex',alignItems:'center'}}>
+      Финансы
+      <span className="help-tip" data-tip="Доход банк проверяет по пенсионным отчислениям (ОПВ). Официальный доход = белая зарплата.">?</span>
+    </div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
       <Fl l="Офиц. доход (₸)"  ch={<Inp type="number" value={c.officialIncome}      onChange={e=>set('officialIncome',e.target.value)}/>}/>
       <Fl l="Доп. доход (₸)"   ch={<Inp type="number" value={c.extraIncome}          onChange={e=>set('extraIncome',e.target.value)}/>}/>
@@ -362,6 +633,10 @@ function AnalysisTab({ c, set, canEdit }) {
 
 function CreditTab({ c, set, canEdit }) {
   return <>
+    <div className="hint hint-warn">
+      <span className="hint-icon">⚠️</span>
+      <div>Кредитная история — <b>ключевой фактор одобрения</b>. Просрочки и аресты почти гарантируют отказ. Отметьте всё честно: банк всё равно увидит в БКИ, а вы сэкономите время клиенту.</div>
+    </div>
     <Fl l="Статус кредитной истории" ch={
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:7}}>
         {CR_ST.map(s => (
@@ -415,6 +690,10 @@ function OtbasyTab({ c, set }) {
 function ContractTab({ c, set, setC, pipeline }) {
   const pl = pipeline || PIPELINE_DEFAULT
   return <>
+    <div className="hint">
+      <span className="hint-icon">📝</span>
+      <div>Выберите <b>тип договора</b> — сумма подставится автоматически, а платежи (предоплата 30% + 70% после одобрения) создадутся сами. Сумму можно поправить вручную ниже.</div>
+    </div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}>
       {CONTRACTS.map(ct => (
         <div key={ct.id} onClick={()=>setC(x=>{
@@ -731,12 +1010,14 @@ function DealStepsBlock({ c, setC, canEdit }) {
   )
 }
 
-function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAccIdx, autoBanner, setAutoBanner, toggleCheck, overallPct, totalDone, totalItems, getSD, setSD, toast$ }) {
+function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAccIdx, autoBanner, setAutoBanner, toggleCheck, overallPct, totalDone, totalItems, getSD, setSD, toast$, stages, tplLabel }) {
   const [newCmt,  setNewCmt]  = useState({})
   const [newTask, setNewTask] = useState({})
   const fileRefs = useRef({})
   const cls = checklists || {}
   const aStages = c.accompStages || {}
+  const STG = stages || ACCOMP  // маршрут по типу договора (fallback — старый список)
+  const curIdx = Math.min(c.accompStageIndex||0, STG.length-1)
 
   function addCmt(si) {
     const t = (newCmt[si]||'').trim()
@@ -753,7 +1034,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
     const t = newTask[si]
     if (!t?.text?.trim()) return
     const sd   = getSD(si)
-    const task = {id:uid(),type:t.type||'📞 Позвонить',text:t.text,due:t.due||'',done:false,created:nowStr(),stage:ACCOMP[si],isStageTask:true}
+    const task = {id:uid(),type:t.type||'📞 Позвонить',text:t.text,due:t.due||'',done:false,created:nowStr(),stage:STG[si],isStageTask:true}
     setSD(si, {...sd, tasks:[...(sd.tasks||[]),task]})
     setC({...c, tasks:[...(c.tasks||[]),task]})
     setNewTask(x=>({...x,[si]:{type:'📞 Позвонить',text:'',due:''}}))
@@ -791,7 +1072,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
           size:         file.size,
           uploadDate:   nowStr(),
           note:         '',
-          stage:        ACCOMP[si],
+          stage:        STG[si],
         }
         const sdCurr = getSD(si)
         setSD(si, {...sdCurr, docs:[...(sdCurr.docs||[]), doc]})
@@ -821,6 +1102,10 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
 
   return (
     <div>
+      <div className="hint">
+        <span className="hint-icon">🤝</span>
+        <div>Этап сопровождения — ведём клиента по шагам от заявки до выдачи. <b>Отмечайте выполненные пункты галочкой</b>, добавляйте комментарии и задачи. Прогресс считается автоматически.</div>
+      </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:13}}>
         <Fl l="Ответственный менеджер" ch={<Sel value={c.responsibleManager||''} onChange={e=>setC({...c,responsibleManager:e.target.value})} disabled={!canEdit}><option value="">Не назначен</option>{managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Sel>}/>
         <Fl l="Ипотечный специалист"   ch={<Inp value={c.mortgageSpecialist||''} onChange={e=>setC({...c,mortgageSpecialist:e.target.value})} placeholder="ФИО специалиста"/>}/>
@@ -855,24 +1140,26 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
 
       {/* Stage dots */}
       <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,marginBottom:13,overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
-        <div style={{padding:'11px 14px',fontWeight:700,fontSize:13,borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between'}}>
-          <span>Этапы сопровождения</span>
-          <span style={{fontSize:12,color:'#64748b',fontWeight:500}}>Текущий: <b style={{color:'#3b82f6'}}>{ACCOMP[c.accompStageIndex]}</b></span>
+        <div style={{padding:'11px 14px',fontWeight:700,fontSize:13,borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:6}}>
+          <span>Этапы сопровождения
+            <span style={{marginLeft:8,fontSize:10.5,fontWeight:700,background:'#eef2ff',color:'#4f46e5',border:'1px solid #c7d2fe',borderRadius:20,padding:'2px 9px',verticalAlign:'middle'}}>🗺 {tplLabel||'Маршрут'}</span>
+          </span>
+          <span style={{fontSize:12,color:'#64748b',fontWeight:500}}>Текущий: <b style={{color:'#3b82f6'}}>{STG[curIdx]}</b></span>
         </div>
         <div style={{display:'flex',overflowX:'auto',padding:'11px 8px',gap:0}}>
-          {ACCOMP.map((s, i) => {
+          {STG.map((s, i) => {
             const sd      = aStages[i]||{}
-            const items   = cls[s]||[]
-            const done    = (sd.done||[]).length
+            const items   = getChecklist(cls, s)
+            const done    = (sd.done||[]).filter(id => items.some(it=>it.id===id)).length
             const allDone = items.length>0&&done===items.length
             const isAct   = accIdx===i
             return (
               <div key={s} style={{flex:1,minWidth:62,textAlign:'center',position:'relative',cursor:'pointer'}} onClick={()=>setAccIdx(i)}>
-                {i<ACCOMP.length-1&&<div style={{position:'absolute',top:11,left:'50%',right:'-50%',height:2,background:allDone?'#10b981':i<c.accompStageIndex?'#3b82f6':'#e2e8f0',zIndex:0}}/>}
+                {i<STG.length-1&&<div style={{position:'absolute',top:11,left:'50%',right:'-50%',height:2,background:allDone?'#10b981':i<curIdx?'#3b82f6':'#e2e8f0',zIndex:0}}/>}
                 <div style={{width:22,height:22,borderRadius:'50%',border:`2.5px solid ${allDone?'#10b981':isAct?'#3b82f6':'#cbd5e1'}`,background:allDone?'#10b981':isAct?'#3b82f6':'#fff',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 4px',fontSize:9.5,fontWeight:700,color:allDone||isAct?'#fff':'#64748b',position:'relative',zIndex:1,transition:'all .2s',boxShadow:isAct?'0 0 0 5px rgba(59,130,246,.18)':'none'}}>
                   {allDone?<i className="ti ti-check" style={{fontSize:9}}/>:i+1}
                 </div>
-                <div style={{fontSize:8.5,color:isAct?'#3b82f6':allDone?'#10b981':'#64748b',lineHeight:1.2,fontWeight:isAct||allDone?700:500,padding:'0 1px'}}>{s}</div>
+                <div style={{fontSize:10,color:isAct?'#3b82f6':allDone?'#10b981':'#64748b',lineHeight:1.2,fontWeight:isAct||allDone?700:500,padding:'0 1px'}}>{s}</div>
               </div>
             )
           })}
@@ -880,17 +1167,19 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
       </div>
 
       {/* Active stage detail */}
-      {ACCOMP.map((sName, si) => {
+      {STG.map((sName, si) => {
         if (si !== accIdx) return null
         const sd         = aStages[si]||{}
-        const items      = cls[sName]||[]
+        const items      = getChecklist(cls, sName)
         const done       = sd.done||[]
-        const pct        = items.length>0?Math.round(done.length/items.length*100):100
+        const doneCnt    = done.filter(id => items.some(it=>it.id===id)).length
+        const pct        = items.length>0?Math.round(doneCnt/items.length*100):100
         const isComplete = pct===100||items.length===0
         const incomplete = items.filter(item=>!done.includes(item.id))
         const stageTasks = sd.tasks||[]
         const stageDocs  = sd.docs||[]
         const stageCmts  = sd.comments||[]
+        const guide      = STAGE_GUIDE[sName]
 
         return (
           <div key={sName}>
@@ -902,7 +1191,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
                 </div>
                 <div style={{flex:1}}>
                   <div style={{fontWeight:800,fontSize:15,color:isComplete?'#065f46':'#1d4ed8'}}>{sName}</div>
-                  <div style={{fontSize:12,color:isComplete?'#047857':'#3b82f6',marginTop:1}}>{isComplete?'Все выполнены ✓':`${done.length}/${items.length}`}</div>
+                  <div style={{fontSize:12,color:isComplete?'#047857':'#3b82f6',marginTop:1}}>{isComplete?'Все выполнены ✓':`${doneCnt}/${items.length}`}</div>
                 </div>
                 <div style={{fontWeight:900,fontSize:22,color:isComplete?'#10b981':'#3b82f6'}}>{pct}%</div>
                 <Btn size="sm" variant="primary" onClick={()=>canEdit&&setC({...c,accompStageIndex:si})}>📍 Текущий</Btn>
@@ -925,6 +1214,32 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
               )}
               {items.length > 0 && <div style={{padding:'0 13px 4px'}}><Prog pct={pct} c={isComplete?'#10b981':'#3b82f6'} sz='sm'/></div>}
             </div>
+
+            {/* Гайд менеджера: что делать и что говорить клиенту на этом этапе */}
+            {guide && (
+              <div style={{background:'#fff',border:'1.5px solid #c7d2fe',borderRadius:14,overflow:'hidden',marginBottom:10,boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+                <div style={{padding:'10px 15px',background:'linear-gradient(90deg,#eef2ff,#f5f3ff)',borderBottom:'1px solid #c7d2fe',fontSize:12,fontWeight:700,color:'#4f46e5',textTransform:'uppercase',letterSpacing:'.05em'}}>
+                  🧭 Гайд по этапу
+                </div>
+                <div style={{padding:'11px 15px',borderBottom:'1px solid #eef2ff'}}>
+                  <div style={{fontSize:11,fontWeight:800,color:'#4f46e5',marginBottom:4}}>🎯 Что делать</div>
+                  <div style={{fontSize:13,lineHeight:1.55,color:'#334155'}}>{guide.do}</div>
+                </div>
+                <div style={{padding:'11px 15px',background:'#fafaff'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+                    <div style={{fontSize:11,fontWeight:800,color:'#0f766e'}}>💬 Что сказать клиенту</div>
+                    <Btn size="sm" onClick={()=>{
+                      try { navigator.clipboard.writeText(guide.say); toast$('📋 Скрипт скопирован — вставьте в WhatsApp') }
+                      catch(e) { toast$('❌ Не удалось скопировать','err') }
+                    }}><i className="ti ti-copy" style={{fontSize:13}}/>Копировать</Btn>
+                  </div>
+                  <div style={{fontSize:13,lineHeight:1.55,color:'#334155',fontStyle:'italic',background:'#f0fdfa',border:'1px dashed #99f6e4',borderRadius:9,padding:'9px 12px'}}>
+                    «{guide.say}»
+                  </div>
+                  <div style={{fontSize:10.5,color:'#94a3b8',marginTop:5}}>Подставьте суммы и даты в [скобках] под клиента. Отправка — вручную, чтобы не поймать бан WhatsApp.</div>
+                </div>
+              </div>
+            )}
 
             {/* Этапы кредитования — показываем только на этапе "Сделка" */}
             {sName === 'Сделка' && (
@@ -1068,7 +1383,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
               <Btn style={{flex:1,justifyContent:'center',opacity:si===0?.35:1}} onClick={()=>setAccIdx(Math.max(0,si-1))} disabled={si===0}>
                 <i className="ti ti-arrow-left"/>Предыдущий
               </Btn>
-              <Btn variant="primary" style={{flex:1,justifyContent:'center',opacity:si===ACCOMP.length-1?.35:1}} onClick={()=>setAccIdx(Math.min(ACCOMP.length-1,si+1))} disabled={si===ACCOMP.length-1}>
+              <Btn variant="primary" style={{flex:1,justifyContent:'center',opacity:si===STG.length-1?.35:1}} onClick={()=>setAccIdx(Math.min(STG.length-1,si+1))} disabled={si===STG.length-1}>
                 Следующий<i className="ti ti-arrow-right"/>
               </Btn>
             </div>

@@ -18,7 +18,8 @@ export default withAuth(async function handler(req, res) {
 
     if (error) return apiError(res, error)
     return res.status(200).json({
-      pipeline: data.map(p => ({ id: p.id, l: p.label, c: p.color }))
+      // at — настраиваемая авто-задача этапа (миграция 011); null/нет колонки = дефолт из кода
+      pipeline: data.map(p => ({ id: p.id, l: p.label, c: p.color, ...(p.auto_task ? { at: p.auto_task } : {}) }))
     })
   }
 
@@ -59,10 +60,17 @@ export default withAuth(async function handler(req, res) {
       label:      s.l,
       color:      s.c,
       sort_order: i + 1,
+      auto_task:  s.at ?? null,
     }))
 
-    // Upsert оставшихся / новых этапов
-    const { error } = await sb.from('pipeline_stages').upsert(rows, { onConflict: 'id' })
+    // Upsert оставшихся / новых этапов.
+    // Если миграция 011 не применена (нет колонки auto_task) — повторяем без неё,
+    // чтобы не ронять сохранение воронки (урок №4).
+    let { error } = await sb.from('pipeline_stages').upsert(rows, { onConflict: 'id' })
+    if (error && /auto_task/.test(error.message || '')) {
+      const bare = rows.map(({ auto_task, ...r }) => r)
+      ;({ error } = await sb.from('pipeline_stages').upsert(bare, { onConflict: 'id' }))
+    }
     if (error) return apiError(res, error)
 
     return res.status(200).json({ ok: true, pipeline: stages })

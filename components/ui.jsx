@@ -2,6 +2,7 @@
 // Общие UI-примитивы — вынесены из pages/index.js.
 // Зависят от констант (PIPELINE_DEFAULT, SRC, CR).
 
+import React from 'react'
 import { PIPELINE_DEFAULT, SRC, CR } from '../lib/constants'
 
 export function Fl({ l, req, ch }) {
@@ -45,13 +46,16 @@ export function Prog({ pct, c, sz='h' }) {
   </div>
 }
 
-export function Inp({ value, onChange, placeholder, type='text', disabled, maxLength, style={} }) {
-  return <input type={type} value={value||''} onChange={onChange} placeholder={placeholder} disabled={disabled} maxLength={maxLength}
+// forwardRef + ...rest: пробрасывает ref, onKeyDown, autoFocus и любые другие
+// нативные пропсы (раньше они молча игнорировались)
+export const Inp = React.forwardRef(function Inp({ value, onChange, placeholder, type='text', disabled, maxLength, style={}, ...rest }, ref) {
+  return <input ref={ref} type={type} value={value||''} onChange={onChange} placeholder={placeholder} disabled={disabled} maxLength={maxLength}
+    {...rest}
     style={{background:'#f8fafc',border:'2px solid #cbd5e1',borderRadius:10,padding:'10px 12px',color:'#0f172a',fontSize:14,width:'100%',outline:'none',transition:'border .15s',...style}}
     onFocus={e=>e.target.style.borderColor='#3b82f6'}
     onBlur={e=>e.target.style.borderColor='#cbd5e1'}
   />
-}
+})
 
 export function Sel({ value, onChange, children, disabled, style={} }) {
   return <select value={value||''} onChange={onChange} disabled={disabled}

@@ -46,6 +46,9 @@ jest.mock('../../lib/supabase', () => ({
   getSupabase: () => ({ from: mockFrom }),
   dbToClient:  (r) => r,
   clientToDb:  (c) => c,
+  addSavedCalcs: (row) => row,
+  addCloseReason: (row) => row,
+  findMissingOptionalColumn: () => null,
 }))
 
 // Динамический мок withAuth: возвращает role/manager_id текущего теста

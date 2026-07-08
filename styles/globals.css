@@ -1,3 +1,17 @@
+/* ── ДИЗАЙН-ТОКЕНЫ (волна 4) ──
+   Единая палитра/радиусы/тени. Новый код использует var(--…),
+   старые инлайн-стили переводим постепенно. */
+:root{
+  --brand:#3b82f6; --brand-ink:#1d4ed8; --brand-bg:#eff6ff;
+  --accent:#f59e0b;
+  --ok:#10b981; --ok-bg:#f0fdf4; --danger:#ef4444; --danger-bg:#fef2f2; --warn:#d97706; --warn-bg:#fffbeb;
+  --ink:#0f172a; --ink-2:#475569; --ink-3:#64748b; --ink-4:#94a3b8;
+  --surface:#fff; --bg:#f1f5f9; --bg-soft:#f8fafc; --line:#e2e8f0;
+  --r-sm:8px; --r-md:12px; --r-lg:16px;
+  --shadow-1:0 1px 4px rgba(15,23,42,.06);
+  --shadow-2:0 6px 22px rgba(15,23,42,.1);
+}
+
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{font-size:14px;-webkit-text-size-adjust:100%}
 body{font-family:'Inter',system-ui,sans-serif;background:#f1f5f9;color:#0f172a;min-height:100vh;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
@@ -137,7 +151,7 @@ tbody tr:active td{background:#f8fafc}
 .sd{width:22px;height:22px;border-radius:50%;border:2.5px solid #cbd5e1;background:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto 4px;font-size:9px;font-weight:700;color:#64748b;position:relative;z-index:1;transition:all .2s}
 .sd.done{background:#10b981;border-color:#10b981;color:#fff}
 .sd.active{background:#3b82f6;border-color:#3b82f6;color:#fff;box-shadow:0 0 0 4px rgba(59,130,246,.2)}
-.sl{font-size:8.5px;color:#64748b;line-height:1.2;font-weight:500;padding:0 2px}
+.sl{font-size:10px;color:#64748b;line-height:1.2;font-weight:500;padding:0 2px}
 .sl.active{color:#3b82f6;font-weight:700}
 .sl.done{color:#10b981}
 
@@ -262,7 +276,7 @@ tbody tr:active td{background:#f8fafc}
 
   /* Stage dots */
   .ss{min-width:50px}
-  .sl{font-size:7.5px}
+  .sl{font-size:9px}
 
   /* Tabs bigger tap targets */
   .tab-item{padding:12px 12px;font-size:11px}
@@ -279,3 +293,123 @@ tbody tr:active td{background:#f8fafc}
   .hero-grid{grid-template-columns:1fr 1fr}
   .exit-dlg{width:calc(100vw - 32px);padding:22px 18px}
 }
+
+/* ════════════════════════════════════════════
+   DESIGN POLISH v2 — глубина, подсказки, понятность
+   Дописано в конец: переопределяет базовое, ничего не ломая
+════════════════════════════════════════════ */
+
+/* Плавный шрифт и чуть больше воздуха */
+body{font-feature-settings:'cv02','cv03','cv04','cv11';letter-spacing:-.01em}
+
+/* Карточки — мягче тень, ховер приподнимает */
+.card,.metric-card,.search-card{transition:box-shadow .18s,transform .18s,border-color .18s}
+.card:hover,.metric-card:hover{box-shadow:0 4px 16px rgba(15,23,42,.09);border-color:#dbe2ea}
+.search-card:hover{box-shadow:0 6px 22px rgba(15,23,42,.1);border-color:#c7d2e0;transform:translateY(-1px)}
+
+/* Кнопки — приятный ховер и тень у основных */
+.btn-primary{box-shadow:0 2px 8px rgba(59,130,246,.28)}
+.btn-primary:hover{background:#2563eb;box-shadow:0 4px 14px rgba(59,130,246,.38)}
+.btn-success{box-shadow:0 2px 8px rgba(16,185,129,.28)}
+.btn-success:hover{background:#059669}
+.btn-ghost:hover{background:#e9eef5;color:#475569}
+.btn-danger:hover{background:#fee2e2}
+.btn:active{transform:scale(.96)}
+
+/* Метрики — крупнее и живее */
+.metric-card::before{height:4px}
+.metric-value{letter-spacing:-1.2px}
+
+/* Вкладки — активная с мягкой подложкой */
+.tab-item{border-radius:9px 9px 0 0}
+.tab-item:hover{color:#475569;background:rgba(59,130,246,.05)}
+.tab-item.active{background:#fff}
+
+/* Инпуты — приятнее фокус */
+.inp:hover{border-color:#94a3b8}
+.inp:focus{box-shadow:0 0 0 3px rgba(59,130,246,.13)}
+
+/* Канбан-колонки — заголовок читается */
+.kb-col{border-radius:16px}
+.kb-card{border-radius:12px}
+.kb-card:hover{border-color:#93c5fd;box-shadow:0 3px 12px rgba(59,130,246,.12);transform:translateY(-1px)}
+
+/* ── ПОДСКАЗКИ ДЛЯ МЕНЕДЖЕРА ── */
+/* Инфо-баннер: голубой, с иконкой-лампочкой слева */
+.hint{
+  display:flex;gap:10px;align-items:flex-start;
+  background:linear-gradient(135deg,#eff6ff,#f0f9ff);
+  border:1.5px solid #bfdbfe;border-radius:12px;
+  padding:11px 13px;margin-bottom:13px;
+  font-size:12.5px;color:#1e40af;line-height:1.5;
+}
+.hint-icon{flex-shrink:0;font-size:16px;line-height:1.3}
+.hint-warn{background:linear-gradient(135deg,#fffbeb,#fef9f0);border-color:#fde68a;color:#92400e}
+.hint-success{background:linear-gradient(135deg,#f0fdf4,#f0fdf9);border-color:#a7f3d0;color:#065f46}
+.hint b{font-weight:800}
+
+/* Значок «?» с всплывающей подсказкой при наведении */
+.help-tip{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;border-radius:50%;
+  background:#cbd5e1;color:#fff;font-size:10px;font-weight:800;
+  cursor:help;margin-left:5px;position:relative;vertical-align:middle;
+  transition:background .15s;
+}
+.help-tip:hover{background:#3b82f6}
+.help-tip::after{
+  content:attr(data-tip);
+  position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);
+  background:#0f172a;color:#fff;padding:8px 11px;border-radius:9px;
+  font-size:11.5px;font-weight:500;line-height:1.4;width:210px;
+  text-align:left;letter-spacing:0;text-transform:none;
+  opacity:0;pointer-events:none;transition:opacity .16s;z-index:1000;
+  box-shadow:0 8px 28px rgba(0,0,0,.24);
+}
+.help-tip::before{
+  content:'';position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);
+  border:6px solid transparent;border-top-color:#0f172a;opacity:0;transition:opacity .16s;z-index:1000;
+}
+.help-tip:hover::after,.help-tip:hover::before{opacity:1}
+
+/* Пустые состояния — крупная понятная заглушка */
+.empty-state{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:64px 24px;text-align:center;
+}
+.empty-state-icon{font-size:52px;margin-bottom:14px;opacity:.9}
+.empty-state-title{font-size:17px;font-weight:800;color:#334155;margin-bottom:6px}
+.empty-state-text{font-size:13px;color:#94a3b8;max-width:340px;line-height:1.55}
+
+/* Следующий шаг — акцентная карточка */
+.next-step{
+  display:flex;gap:11px;align-items:center;cursor:pointer;
+  background:linear-gradient(135deg,#eff6ff,#eef2ff);
+  border:1.5px solid #bfdbfe;border-radius:13px;padding:12px 14px;margin-bottom:13px;
+  transition:box-shadow .16s,transform .16s;
+}
+.next-step:hover{box-shadow:0 4px 16px rgba(59,130,246,.18);transform:translateY(-1px)}
+.next-step-badge{
+  width:34px;height:34px;border-radius:10px;flex-shrink:0;
+  background:#3b82f6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px;
+  box-shadow:0 2px 8px rgba(59,130,246,.35);
+}
+
+/* Секционный заголовок с иконкой */
+.section-title{
+  display:flex;align-items:center;gap:8px;
+  font-size:14px;font-weight:800;color:#0f172a;margin-bottom:10px;letter-spacing:-.2px;
+}
+
+/* Чипы быстрых действий крупнее для пальца */
+.qr-chip{padding:7px 13px;border-radius:20px}
+.qr-chip:hover{background:#eff6ff;border-color:#93c5fd}
+
+/* Тосты — мягче */
+.toast{border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.22)}
+
+/* Сайдбар пунктов — активный ярче */
+.sidebar-item.active,.nav-item.active{background:rgba(59,130,246,.16)}
+
+/* Плавное появление контента раздела */
+.main-content>*{animation:fadeIn .25s ease}

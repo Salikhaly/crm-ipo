@@ -255,6 +255,39 @@ export default async function handler(req, res) {
       if (insertErr) console.error('Message upsert error:', insertErr.message)
     }
 
+    // ── Round-robin: автораспределение нового лида по менеджерам ──
+    // Включается в админке (calc_settings.wa_round_robin, миграция 011).
+    // Назначаем менеджера с наименьшим числом активных чатов — и чату, и клиенту.
+    // Любая ошибка (в т.ч. неприменённая миграция) не ломает вебхук.
+    if (!existingChat && direction === 'in') {
+      try {
+        const { data: rrSet } = await sb
+          .from('calc_settings')
+          .select('wa_round_robin')
+          .eq('id', 'main')
+          .maybeSingle()
+        if (rrSet?.wa_round_robin) {
+          const { data: mgrs } = await sb.from('managers').select('id')
+          if (mgrs?.length) {
+            const { data: loads } = await sb
+              .from('wa_chats')
+              .select('assigned_to')
+              .not('assigned_to', 'is', null)
+              .neq('status', 'closed')
+            const cnt = {}
+            for (const r of (loads || [])) cnt[r.assigned_to] = (cnt[r.assigned_to] || 0) + 1
+            let best = mgrs[0].id, bestN = Infinity
+            for (const m of mgrs) {
+              const n = cnt[m.id] || 0
+              if (n < bestN) { bestN = n; best = m.id }
+            }
+            await sb.from('wa_chats').update({ assigned_to: best }).eq('id', chatId)
+            await sb.from('clients').update({ manager: best }).eq('phone', phone).is('manager', null)
+          }
+        }
+      } catch (e) { console.error('[round-robin]', e.message) }
+    }
+
     // ── №5: Автоответ новому лиду ─────────────────────────────
     // Только: первое сообщение (чата не было) + входящее + включено в настройках.
     // ВАЖНО: в Vercel serverless нельзя setTimeout после return (процесс замирает),

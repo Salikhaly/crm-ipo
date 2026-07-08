@@ -34,7 +34,7 @@ async function handler(req, res) {
         progs_data, expense_otbasy, expense_other,
         mrp_ref, deal_steps, insurance_pct,
         d50_table, rate_presets,
-        wa_auto_greeting, wa_auto_greeting_on,
+        wa_auto_greeting, wa_auto_greeting_on, wa_round_robin,
       } = settings
 
       const row = { id: 'main', updated_at: new Date().toISOString() }
@@ -51,9 +51,15 @@ async function handler(req, res) {
       if (rate_presets != null) row.rate_presets    = rate_presets
       if (wa_auto_greeting    != null) row.wa_auto_greeting    = String(wa_auto_greeting)
       if (wa_auto_greeting_on != null) row.wa_auto_greeting_on = !!wa_auto_greeting_on
+      if (wa_round_robin      != null) row.wa_round_robin      = !!wa_round_robin
       if (insurance_pct != null) row.insurance_pct  = +insurance_pct
 
-      const { error } = await sb.from('calc_settings').upsert(row)
+      // Fallback: миграция 011 не применена (нет wa_round_robin) — сохраняем без неё
+      let { error } = await sb.from('calc_settings').upsert(row)
+      if (error && /wa_round_robin/.test(error.message || '')) {
+        const { wa_round_robin: _skip, ...bare } = row
+        ;({ error } = await sb.from('calc_settings').upsert(bare))
+      }
       if (error) errs.push({ section: 'settings', error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
     }
 
