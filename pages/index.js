@@ -15,10 +15,12 @@ import {
   PIPELINE_DEFAULT, ACCOMP, CONTRACTS, CT, SRCS, SRC, CR_ST, CR, ROLES, ROLE,
   CONTACT_ST, CITIES, MARITAL, WORK_T, DOWN_T, TASK_T, COLORS,
   TI, TC, TB, TL, PAY_ST, uid, fmt, fmtN, today, nowStr, emptyClient,
+  getAccompTemplate, getChecklist, CLOSE_REASONS, STAGE_AUTO_TASK, canMoveToStage,
 } from '../lib/constants'
 import {
   Fl, Tag, StTag, SrTag, CrTag, Tgl, Prog, Inp, Sel, Btn,
 } from '../components/ui'
+import { Logo } from '../components/logo'
 import { CalcPage } from '../features/calc'
 import { WAPage } from '../features/wa'
 import { AdminPage, CalcSettingsPanel } from '../features/admin'
@@ -111,14 +113,51 @@ export default function CRM() {
   const [syncing,     setSyncing]    = useState(false)
   const [hasChanges,  setHasChanges] = useState(false)
   const [exitDlg,     setExitDlg]    = useState(null)
+  const [closeDlg,    setCloseDlg]   = useState(null)  // причина закрытия при переносе в canban «Закрыто»
   const toastRef = useRef(null)
   const waInputRef = useRef(null)
 
+  // ─── ОНБОРДИНГ-ТУР первого входа ─────────────────────────
+  const [showTour, setShowTour] = useState(false)
+  useEffect(() => {
+    if (user && !localStorage.getItem('crm_tour_done')) setShowTour(true)
+  }, [user])
+  function closeTour() { localStorage.setItem('crm_tour_done', '1'); setShowTour(false) }
+
+  // ─── ЭКСПОРТ CSV (для руководителя/техника) ──────────────
+  function exportCsv() {
+    const list = (searchRes.length || search || fStage || fMgr) ? searchRes : myCl
+    if (!list.length) { toast$('⚠️ Нечего экспортировать', 'err'); return }
+    const esc  = v => { const s = String(v ?? ''); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
+    const head = ['ФИО','Телефон','ИИН','Город','Этап','Менеджер','Источник','Тип договора','Сумма договора','Получено','Дата','Статус связи','Причина закрытия']
+    const rows = list.map(c => {
+      const paid = (c.payments||[]).filter(p => p.status==='paid'||p.status==='partial').reduce((s,p) => s+(p.paidAmount||0), 0)
+      return [
+        c.fio, c.phone, c.iin, c.city,
+        pipeline.find(p => p.id === c.stage)?.l || c.stage,
+        mgrById[c.manager]?.name || '',
+        SRC[c.source]?.l || c.source || '',
+        CT[c.contractType]?.l || '',
+        c.contractAmount || 0, paid,
+        c.dateIn || '', c.contactStatus || '', c.closeReason || '',
+      ].map(esc).join(';')
+    })
+    // BOM — чтобы Excel открыл кириллицу; ; — разделитель для русской локали
+    const blob = new Blob(['\uFEFF' + head.join(';') + '\n' + rows.join('\n')], { type:'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'клиенты_' + today() + '.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+    toast$('📥 Экспортировано клиентов: ' + list.length)
+  }
+
   // ─── TOAST ──────────────────────────────────────────────
-  function toast$(msg, type='ok') {
-    setToast({ msg, type })
+  // action: { label, fn } — кнопка в тосте (например «Отменить» после переноса)
+  function toast$(msg, type='ok', action=null) {
+    setToast({ msg, type, action })
     clearTimeout(toastRef.current)
-    toastRef.current = setTimeout(() => setToast(null), 4500)
+    toastRef.current = setTimeout(() => setToast(null), action ? 6500 : 4500)
   }
 
   // ─── AUTH ────────────────────────────────────────────────
@@ -397,16 +436,21 @@ export default function CRM() {
   }, [search, fStage, fMgr, page])
 
   // ─── CLIENT ACTIONS ──────────────────────────────────────
-  async function saveClient(c) {
+  // opts.quiet — тихий режим для автосохранения: без тостов и закрытия модалок.
+  // Возвращает сохранённого клиента при успехе, false при ошибке.
+  async function saveClient(c, opts = {}) {
+    const quiet = !!opts.quiet
     // Валидация ИИН
     if (c.iin && !/^\d{12}$/.test(c.iin)) {
-      toast$('❌ ИИН должен содержать ровно 12 цифр', 'err'); return
+      if (!quiet) toast$('❌ ИИН должен содержать ровно 12 цифр', 'err')
+      return false
     }
     // Проверка дубля по ИИН
     if (c.iin) {
       const dup = clients.find(x => x.id !== c.id && x.iin === c.iin)
       if (dup) {
-        toast$(`⚠️ ИИН уже есть у клиента: ${dup.fio || dup.phone}`, 'err'); return
+        if (!quiet) toast$(`⚠️ ИИН уже есть у клиента: ${dup.fio || dup.phone}`, 'err')
+        return false
       }
     }
     // Проверка дубля по телефону (при создании и при обновлении)
@@ -414,10 +458,11 @@ export default function CRM() {
       const phone = c.phone.replace(/\D/g, '')
       const dup = clients.find(x => x.id !== c.id && x.phone && x.phone.replace(/\D/g, '') === phone)
       if (dup) {
-        toast$(`⚠️ Телефон уже есть у клиента: ${dup.fio || dup.phone}`, 'err'); return
+        if (!quiet) toast$(`⚠️ Телефон уже есть у клиента: ${dup.fio || dup.phone}`, 'err')
+        return false
       }
     }
-    setSyncing(true)
+    if (!quiet) setSyncing(true)
     try {
       const existing = clients.find(x => x.id === c.id)
       let saved
@@ -434,12 +479,16 @@ export default function CRM() {
       })
       if (selClient?.id === c.id) setSelClient(saved || c)
       setHasChanges(false)
-      toast$('✅ Сохранено')
-      setModal(null)
+      if (!quiet) {
+        toast$('✅ Сохранено')
+        setModal(null)
+        setSyncing(false)
+      }
+      return saved || c
     } catch (e) {
-      toast$('❌ ' + e.message, 'err')
+      if (!quiet) { toast$('❌ ' + e.message, 'err'); setSyncing(false) }
+      return false
     }
-    setSyncing(false)
   }
 
   async function delClient(id) {
@@ -480,21 +529,44 @@ export default function CRM() {
     }
   }
 
-  async function moveClient(id, stage) {
+  async function moveClient(id, stage, closeReason) {
     const c = clients.find(x => x.id === id)
-    if (!c) return
+    if (!c || c.stage === stage) return
+    // Обязательные поля этапа (amoCRM-механика)
+    const chk = canMoveToStage(c, stage)
+    if (!chk.ok) { toast$('⚠️ ' + chk.msg, 'err'); return }
+    // Перенос в «Закрыто» — сначала спрашиваем причину
+    if (stage === 'closed' && !closeReason) { setCloseDlg({ id }); return }
+
     const prev    = c.stage
     const updated = { ...c, stage }
+    if (closeReason) {
+      updated.closeReason = closeReason
+      updated.comments = [...(c.comments||[]), { id:uid(), text:'❌ Закрыто: '+closeReason, author:user?.name||'', date:nowStr() }]
+    }
+    // Авто-задача этапа: настройка из воронки (админка) → дефолт из кода
+    const stg = pipeline.find(p => p.id === stage)
+    const at  = stg?.at ? (stg.at.off ? null : stg.at) : STAGE_AUTO_TASK[stage]
+    if (at && !(c.tasks||[]).some(t => !t.done && t.auto && t.type === at.type)) {
+      updated.tasks = [...(c.tasks||[]), { id:uid(), type:at.type, text:at.text, due:today(), done:false, created:nowStr(), auto:true }]
+    }
     // Оптимистичное обновление — сразу показываем новую позицию
     setClients(cs => cs.map(x => x.id === id ? updated : x))
     if (selClient?.id === id) setSelClient(updated)
     try {
       await api.updateClient(id, updated)
-      toast$(`📌 ${pipeline.find(p => p.id === stage)?.l || stage}`)
+      // «Отменить» возвращает клиента целиком (этап + убирает авто-задачу и причину)
+      const undo = async () => {
+        setClients(cs => cs.map(x => x.id === id ? c : x))
+        if (selClient?.id === id) setSelClient(c)
+        try { await api.updateClient(id, c); toast$('↩️ Возвращено: ' + (pipeline.find(p => p.id === prev)?.l || prev)) }
+        catch (e) { toast$('❌ ' + e.message, 'err') }
+      }
+      toast$(`📌 ${pipeline.find(p => p.id === stage)?.l || stage}${at ? ' · задача создана' : ''}`, 'ok', { label:'Отменить', fn: undo })
     } catch (e) {
       // Rollback при ошибке
-      setClients(cs => cs.map(x => x.id === id ? { ...x, stage: prev } : x))
-      if (selClient?.id === id) setSelClient({ ...updated, stage: prev })
+      setClients(cs => cs.map(x => x.id === id ? c : x))
+      if (selClient?.id === id) setSelClient(c)
       toast$('❌ ' + e.message, 'err')
     }
   }
@@ -771,6 +843,7 @@ export default function CRM() {
       <Head>
         <title>Ипотека CRM</title>
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+        <link rel="icon" href="/favicon.svg"/>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
       </Head>
@@ -779,8 +852,10 @@ export default function CRM() {
         {/* ── SIDEBAR ── */}
         <div className="sidebar">
           <div style={{padding:'16px 15px 13px',borderBottom:'1px solid rgba(255,255,255,.07)'}}>
-            <div style={{fontSize:20,marginBottom:4}}>🏠</div>
-            <div style={{fontSize:14,fontWeight:800,color:'#fff'}}>Ипотека CRM</div>
+            <div style={{display:'flex',alignItems:'center',gap:9,marginBottom:5}}>
+              <Logo size={30} id="sb-logo"/>
+              <div style={{fontSize:14,fontWeight:800,color:'#fff'}}>Ипотека CRM</div>
+            </div>
             <div style={{fontSize:10,color:'#475569',marginTop:2,display:'flex',alignItems:'center',gap:5}}>
               <span style={{width:6,height:6,borderRadius:'50%',background:syncing?'#f59e0b':'#10b981',display:'inline-block'}}/>
               {syncing ? 'Синхронизация...' : 'Подключено'}
@@ -845,7 +920,13 @@ export default function CRM() {
                 </Sel>
               </div>
             </>}
-            <Btn variant="primary" size="sm" onClick={() => setModal({ type:'new_client', c: emptyClient(user.manager_id||'') })}>
+            {page === 'search' && isSuperUser && (
+              <Btn size="sm" onClick={exportCsv} title="Выгрузить список в Excel (CSV)">
+                <i className="ti ti-download"/><span className="btn-text-desktop">Экспорт</span>
+              </Btn>
+            )}
+            <GlobalSearch clients={myCl} pipeline={pipeline} onOpen={c => setSelClient(c)}/>
+            <Btn variant="primary" size="sm" onClick={() => setModal({ type:'quick_client', c: emptyClient(user.manager_id||'') })}>
               <i className="ti ti-plus"/><span style={{display:'none'}} className="btn-text-desktop">Новый клиент</span><span style={{display:'inline'}}>+</span>
             </Btn>
             <Btn size="sm" onClick={loadAll} disabled={syncing}>
@@ -892,12 +973,38 @@ export default function CRM() {
       </div>
       <BottomNav page={page} navTo={navTo} openTasks={openTasks} overdueTasks={overdueTasks} waUnread={waUnread}/>
 
+      {/* Онбординг-тур первого входа */}
+      {showTour && <TourModal onDone={closeTour}/>}
+
       {/* Modals */}
+      {modal?.type==='quick_client'  && <QuickClientModal  base={modal.c} onSave={saveClient} onOpen={c=>setSelClient(c)} onClose={()=>setModal(null)}
+        onFull={(f,p,s)=>setModal({ type:'new_client', c:{ ...modal.c, fio:f, phone:p, source:s } })} syncing={syncing}/>}
       {modal?.type==='new_client'    && <NewClientModal    client={modal.c} managers={managers} pipeline={pipeline} onSave={saveClient} onClose={()=>setModal(null)} syncing={syncing}/>}
       {modal?.type==='mgr_edit'      && <MgrModal          item={modal.item} onSave={saveMgr} onClose={()=>setModal(null)} syncing={syncing}/>}
       {modal?.type==='user_edit'     && <UserModal         item={modal.item} managers={managers} onSave={saveUser} onClose={()=>setModal(null)} syncing={syncing}/>}
       {modal?.type==='cl_edit'       && <CLModal           stage={modal.stage} items={modal.items} onSave={saveCL} onClose={()=>setModal(null)} syncing={syncing}/>}
       {modal?.type==='pl_edit'       && <PLModal           pipeline={pipeline} onSave={savePL} onClose={()=>setModal(null)} syncing={syncing}/>}
+
+      {/* Причина закрытия — при переносе клиента в «Закрыто» из канбана */}
+      {closeDlg && (
+        <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.55)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(3px)',padding:16}}>
+          <div style={{background:'#fff',borderRadius:18,width:'100%',maxWidth:420,padding:20,boxShadow:'0 20px 50px rgba(0,0,0,.25)'}}>
+            <div style={{fontWeight:800,fontSize:16,marginBottom:4}}>Почему закрываем клиента?</div>
+            <div style={{fontSize:12,color:'#64748b',marginBottom:14}}>Причина попадёт в KPI — увидим, где теряем клиентов.</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginBottom:12}}>
+              {CLOSE_REASONS.map(r => (
+                <button key={r} onClick={()=>{const id=closeDlg.id; setCloseDlg(null); moveClient(id,'closed',r)}}
+                  style={{padding:'10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,background:'#f8fafc',cursor:'pointer',fontSize:12.5,fontWeight:600,color:'#334155',textAlign:'left',fontFamily:'inherit',transition:'all .14s'}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor='#ef4444';e.currentTarget.style.background='#fef2f2'}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor='#e2e8f0';e.currentTarget.style.background='#f8fafc'}}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            <Btn style={{width:'100%',justifyContent:'center'}} onClick={()=>setCloseDlg(null)}>Отмена</Btn>
+          </div>
+        </div>
+      )}
 
       {/* Exit dialog */}
       {exitDlg && (
@@ -917,6 +1024,12 @@ export default function CRM() {
       {toast && (
         <div role="alert" aria-live="polite" className={`toast${toast.type==='err'?' err':''}`}>
           {toast.msg}
+          {toast.action && (
+            <button onClick={()=>{const fn=toast.action.fn; setToast(null); fn()}}
+              style={{marginLeft:10,background:'rgba(255,255,255,.16)',border:'1px solid rgba(255,255,255,.3)',color:'#fff',borderRadius:8,padding:'4px 11px',fontSize:12,fontWeight:800,cursor:'pointer',fontFamily:'inherit'}}>
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
 
@@ -930,6 +1043,185 @@ export default function CRM() {
         }
       `}</style>
     </>
+  )
+}
+
+// ─── ОНБОРДИНГ-ТУР (первый вход, 4 шага) ─────────────────────────
+const TOUR_STEPS = [
+  { i:'ti-layout-kanban', c:'#3b82f6', t:'Клиенты — это канбан',
+    d:'Вся воронка на одном экране. Перетаскивайте карточки между этапами. Прямо с карточки можно позвонить, отметить «не дозвонился» или «перезвонить завтра» — в один клик.' },
+  { i:'ti-user-circle', c:'#8b5cf6', t:'Карточка клиента',
+    d:'Сверху — цепочка этапов (кликните, чтобы перевести). Справа — задачи и лента событий, всегда под рукой. Всё сохраняется само: просто заполняйте, индикатор «✓ сохранено» подтвердит.' },
+  { i:'ti-brand-whatsapp', c:'#25d366', t:'WhatsApp внутри CRM',
+    d:'Новые лиды из WhatsApp появляются сами. Отвечайте из CRM, используйте шаблоны через «/», кнопка «Рассчитать» готовит расчёт для клиента прямо в чат.' },
+  { i:'ti-bolt', c:'#f59e0b', t:'Быстрые приёмы',
+    d:'Ctrl+K — мгновенный поиск клиента с любого экрана. Кнопка «+» — новый лид за 10 секунд. Калькулятор считает все госпрограммы РК и делает PDF для клиента.' },
+]
+
+function TourModal({ onDone }) {
+  const [idx, setIdx] = useState(0)
+  const s = TOUR_STEPS[idx]
+  const last = idx === TOUR_STEPS.length - 1
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.6)',zIndex:900,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(4px)',padding:16}}>
+      <div style={{background:'#fff',borderRadius:20,width:'100%',maxWidth:420,padding:'28px 26px',boxShadow:'0 24px 70px rgba(0,0,0,.3)',textAlign:'center'}}>
+        <div style={{width:64,height:64,borderRadius:18,background:s.c+'1a',color:s.c,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+          <i className={`ti ${s.i}`} style={{fontSize:32}}/>
+        </div>
+        <div style={{fontSize:11,fontWeight:800,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:6}}>Шаг {idx+1} из {TOUR_STEPS.length}</div>
+        <div style={{fontSize:19,fontWeight:900,letterSpacing:'-.4px',marginBottom:10}}>{s.t}</div>
+        <div style={{fontSize:13.5,color:'#475569',lineHeight:1.6,marginBottom:20}}>{s.d}</div>
+        <div style={{display:'flex',justifyContent:'center',gap:6,marginBottom:20}}>
+          {TOUR_STEPS.map((_,i)=>(
+            <div key={i} onClick={()=>setIdx(i)} style={{width:i===idx?22:8,height:8,borderRadius:8,background:i===idx?s.c:'#e2e8f0',cursor:'pointer',transition:'all .2s'}}/>
+          ))}
+        </div>
+        <div style={{display:'flex',gap:9}}>
+          <Btn style={{flex:1,justifyContent:'center'}} onClick={onDone}>Пропустить</Btn>
+          <Btn variant="primary" style={{flex:2,justifyContent:'center'}} onClick={()=>last?onDone():setIdx(i=>i+1)}>
+            {last ? '🚀 Начать работу' : 'Далее'}<i className="ti ti-arrow-right"/>
+          </Btn>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── GLOBAL SEARCH (Ctrl+K) ──────────────────────────────────────
+function GlobalSearch({ clients, pipeline, onOpen }) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ]       = useState('')
+  const inputRef = useRef(null)
+  const pl = pipeline || PIPELINE_DEFAULT
+
+  useEffect(() => {
+    const onKey = e => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen(true) }
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  useEffect(() => {
+    if (open) { setQ(''); setTimeout(() => inputRef.current?.focus(), 60) }
+  }, [open])
+
+  const results = useMemo(() => {
+    const s = q.trim().toLowerCase()
+    if (s.length < 2) return []
+    const digits = s.replace(/\D/g, '')
+    return clients.filter(c =>
+      (c.fio || '').toLowerCase().includes(s) ||
+      (digits.length >= 3 && (c.phone || '').replace(/\D/g, '').includes(digits)) ||
+      (c.iin || '').includes(s)
+    ).slice(0, 8)
+  }, [q, clients])
+
+  function pick(c) { setOpen(false); onOpen(c) }
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} title="Поиск клиента (Ctrl+K)"
+        style={{display:'flex',alignItems:'center',gap:7,background:'#f1f5f9',border:'1.5px solid #e2e8f0',borderRadius:10,padding:'7px 11px',cursor:'pointer',color:'#64748b',fontFamily:'inherit',fontSize:12.5,fontWeight:600,minHeight:34}}>
+        <i className="ti ti-search" style={{fontSize:14}}/>
+        <span className="btn-text-desktop">Поиск</span>
+        <span className="btn-text-desktop" style={{fontSize:10,background:'#fff',border:'1px solid #e2e8f0',borderRadius:5,padding:'1px 5px',color:'#94a3b8'}}>Ctrl K</span>
+      </button>
+      {open && (
+        <div onClick={() => setOpen(false)}
+          style={{position:'fixed',inset:0,background:'rgba(15,23,42,.45)',zIndex:800,display:'flex',alignItems:'flex-start',justifyContent:'center',paddingTop:'12vh',backdropFilter:'blur(3px)',padding:'12vh 16px 16px'}}>
+          <div onClick={e => e.stopPropagation()}
+            style={{background:'#fff',borderRadius:16,width:'100%',maxWidth:520,boxShadow:'0 24px 70px rgba(0,0,0,.3)',overflow:'hidden'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'13px 16px',borderBottom:'1.5px solid #e2e8f0'}}>
+              <i className="ti ti-search" style={{color:'#94a3b8',fontSize:17,flexShrink:0}}/>
+              <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && results[0]) pick(results[0]) }}
+                placeholder="Имя, телефон или ИИН..."
+                style={{flex:1,border:'none',outline:'none',fontSize:15,color:'#0f172a',fontFamily:'inherit',background:'transparent'}}/>
+              <span style={{fontSize:10,color:'#94a3b8',background:'#f1f5f9',borderRadius:5,padding:'2px 6px',flexShrink:0}}>Esc</span>
+            </div>
+            {q.trim().length >= 2 && results.length === 0 && (
+              <div style={{padding:'18px 16px',fontSize:13,color:'#94a3b8',textAlign:'center'}}>Ничего не найдено по «{q}»</div>
+            )}
+            {results.map(c => {
+              const p = pl.find(x => x.id === c.stage)
+              return (
+                <div key={c.id} onClick={() => pick(c)}
+                  style={{display:'flex',alignItems:'center',gap:10,padding:'11px 16px',borderBottom:'1px solid #f1f5f9',cursor:'pointer',transition:'background .1s'}}
+                  onMouseEnter={e => e.currentTarget.style.background='#f8fafc'}
+                  onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                  <div style={{width:32,height:32,borderRadius:9,background:(p?.c||'#3b82f6')+'22',color:p?.c||'#3b82f6',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:13,flexShrink:0}}>{c.fio?c.fio[0]:'?'}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.fio||'Без имени'}</div>
+                    <div style={{fontSize:11,color:'#94a3b8'}}>{c.phone||'—'}{c.iin?' · '+c.iin:''}</div>
+                  </div>
+                  {p && <Tag c={p.c} ch={p.l}/>}
+                </div>
+              )
+            })}
+            {q.trim().length < 2 && (
+              <div style={{padding:'16px',fontSize:12,color:'#94a3b8',textAlign:'center'}}>
+                Начните вводить имя, телефон или ИИН — минимум 2 символа. Enter — открыть первого.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─── QUICK ADD: лид за 10 секунд (имя + телефон + источник) ──────
+function QuickClientModal({ base, onSave, onOpen, onClose, onFull, syncing }) {
+  const [fio,    setFio]    = useState('')
+  const [phone,  setPhone]  = useState('')
+  const [source, setSource] = useState(base?.source || 'instagram')
+  const [busy,   setBusy]   = useState(false)
+  const phoneRef = useRef(null)
+
+  async function add(openAfter) {
+    if (!fio.trim() && !phone.trim()) return
+    setBusy(true)
+    const saved = await onSave({ ...base, fio: fio.trim(), phone: phone.trim(), source })
+    setBusy(false)
+    if (saved) { onClose(); if (openAfter) onOpen(saved) }
+  }
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.55)',zIndex:600,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(4px)',padding:16}}>
+      <div style={{background:'#fff',borderRadius:18,width:'100%',maxWidth:400,padding:20,boxShadow:'0 20px 60px rgba(0,0,0,.25)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+          <div style={{fontWeight:800,fontSize:16}}>⚡ Новый лид</div>
+          <button onClick={onClose} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+        </div>
+        <div style={{fontSize:12,color:'#64748b',marginBottom:14}}>Достаточно имени и телефона — остальное заполните в карточке позже.</div>
+        <Fl l="Имя" ch={<Inp value={fio} onChange={e=>setFio(e.target.value)} placeholder="Айгерим" autoFocus
+          onKeyDown={e=>e.key==='Enter'&&phoneRef.current?.focus()}/>}/>
+        <Fl l="Телефон" ch={<Inp ref={phoneRef} value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+7 707 123 45 67" type="tel"
+          onKeyDown={e=>e.key==='Enter'&&add(true)}/>}/>
+        <Fl l="Источник" ch={
+          <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+            {SRCS.map(s => (
+              <button key={s.id} onClick={()=>setSource(s.id)}
+                style={{padding:'6px 11px',borderRadius:20,border:`1.5px solid ${source===s.id?s.c:'#e2e8f0'}`,background:source===s.id?s.c+'18':'#fff',color:source===s.id?s.c:'#64748b',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',transition:'all .13s'}}>
+                {s.l}
+              </button>
+            ))}
+          </div>
+        }/>
+        <div style={{display:'flex',gap:8,marginTop:16}}>
+          <Btn variant="primary" style={{flex:1,justifyContent:'center'}} disabled={busy||syncing||(!fio.trim()&&!phone.trim())} onClick={()=>add(true)}>
+            {busy ? <i className="ti ti-loader spin"/> : <><i className="ti ti-user-plus"/>Добавить и открыть</>}
+          </Btn>
+          <Btn style={{justifyContent:'center'}} disabled={busy||syncing||(!fio.trim()&&!phone.trim())} onClick={()=>add(false)}>Добавить</Btn>
+        </div>
+        <button onClick={()=>onFull(fio.trim(), phone.trim(), source)}
+          style={{display:'block',width:'100%',textAlign:'center',marginTop:12,border:'none',background:'transparent',color:'#3b82f6',fontSize:12.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+          Нужна полная форма → открыть
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -959,14 +1251,15 @@ function LoginPage({ onLogin }) {
     <div style={{minHeight:'100vh',background:'linear-gradient(160deg,#0f172a,#1e3a5f)',display:'flex',alignItems:'center',justifyContent:'center',padding:20,fontFamily:"'Inter',system-ui,sans-serif"}}>
       <Head>
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+        <link rel="icon" href="/favicon.svg"/>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
       </Head>
       <div style={{background:'#fff',borderRadius:22,padding:'34px 30px',width:'100%',maxWidth:380,boxShadow:'0 24px 80px rgba(0,0,0,.3)'}}>
         <div style={{textAlign:'center',marginBottom:26}}>
-          <div style={{fontSize:42,marginBottom:8}}>🏠</div>
+          <div style={{display:'flex',justifyContent:'center',marginBottom:12}}><Logo size={52} id="login-logo"/></div>
           <div style={{fontSize:22,fontWeight:900,letterSpacing:'-.5px'}}>Ипотека CRM</div>
-          <div style={{fontSize:13,color:'#64748b',marginTop:4}}>Войдите в систему</div>
+          <div style={{fontSize:13,color:'#64748b',marginTop:4}}>Система для ипотечных брокеров Казахстана</div>
         </div>
         <Fl l="Логин" ch={<Inp value={lg} onChange={e=>{setLg(e.target.value);setErr('')}} placeholder="Ваш логин" style={{fontSize:16,padding:'12px 14px',borderRadius:12}}/>}/>
         <Fl l="Пароль" ch={<Inp type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr('')}} placeholder="Ваш пароль" style={{fontSize:16,padding:'12px 14px',borderRadius:12}} onKeyDown={e=>e.key==='Enter'&&go()}/>}/>
@@ -974,6 +1267,7 @@ function LoginPage({ onLogin }) {
         <Btn variant="primary" onClick={go} disabled={ld} style={{width:'100%',justifyContent:'center',padding:'13px',fontSize:15,borderRadius:14,marginBottom:18}}>
           {ld ? <><i className="ti ti-loader spin"/>Вход...</> : <><i className="ti ti-login"/>Войти</>}
         </Btn>
+        {hints.length > 0 && (
         <div style={{background:'#f8fafc',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
           <div style={{padding:'9px 13px',fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'.06em',borderBottom:'1px solid #e2e8f0'}}>Нажмите для входа:</div>
           {hints.map(h => (
@@ -986,6 +1280,10 @@ function LoginPage({ onLogin }) {
             </div>
           ))}
         </div>
+        )}
+        <a href="/promo" style={{display:'block',textAlign:'center',marginTop:16,fontSize:12.5,fontWeight:700,color:'#3b82f6',textDecoration:'none'}}>
+          Что умеет система → узнать подробнее
+        </a>
       </div>
     </div>
   )
@@ -1067,9 +1365,15 @@ function DashPage({ data, pipeline, managers, clients, onOpen, onLoadDash }) {
     <div>
       {/* №2: Сегодня горит */}
       <div style={{marginBottom:16}}>
-        <div style={{fontSize:14,fontWeight:800,color:'#0f172a',marginBottom:9,display:'flex',alignItems:'center',gap:7}}>
+        <div className="section-title">
           {hasUrgent ? '🔥 Требует внимания сегодня' : '✅ Всё под контролем'}
         </div>
+        {hasUrgent && (
+          <div className="hint" style={{marginBottom:11}}>
+            <span className="hint-icon">👋</span>
+            <div>С этого начните день. Кликните на клиента — откроется карточка. Слева направо: кто написал и ждёт ответа, кого давно не трогали, кому запланирован звонок сегодня.</div>
+          </div>
+        )}
         <div className='mg3'>
           {urgentBlocks.map(b => (
             <div key={b.title} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:'12px 13px',boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
@@ -1219,10 +1523,10 @@ function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragO
   const pl = pipeline || PIPELINE_DEFAULT
   // №10: пустое состояние — новичок не теряется
   if (!clients.length) return (
-    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'70px 20px',textAlign:'center'}}>
-      <div style={{fontSize:52,marginBottom:14}}>🗂️</div>
-      <div style={{fontSize:17,fontWeight:800,color:'#334155',marginBottom:6}}>Пока нет клиентов</div>
-      <div style={{fontSize:13,color:'#94a3b8',maxWidth:340,lineHeight:1.5}}>
+    <div className="empty-state">
+      <div className="empty-state-icon">🗂️</div>
+      <div className="empty-state-title">Пока нет клиентов</div>
+      <div className="empty-state-text">
         Нажмите кнопку <b style={{color:'#3b82f6'}}>+</b> внизу справа, чтобы добавить первого клиента.
         Или дождитесь входящего сообщения в WhatsApp — лид создастся сам.
       </div>
@@ -1267,6 +1571,11 @@ function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragO
                     <div style={{display:'flex',gap:3,flexWrap:'wrap',marginBottom:c.contractAmount?5:0}}>
                       <SrTag id={c.source}/>
                       {cr && <Tag c={cr.c} ch={cr.l}/>}
+                      {/* amoCRM-правило: у каждой сделки должна быть задача */}
+                      {c.stage!=='closed' && !(c.tasks||[]).some(t=>!t.done) &&
+                        <span style={{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',borderRadius:5,padding:'1px 6px',fontSize:9.5,fontWeight:800}}>⚠ без задачи</span>}
+                      {c.stage==='closed' && c.closeReason &&
+                        <span style={{background:'#f1f5f9',color:'#64748b',border:'1px solid #e2e8f0',borderRadius:5,padding:'1px 6px',fontSize:9.5,fontWeight:700}}>{c.closeReason}</span>}
                     </div>
                     {c.contractAmount > 0 && <div style={{fontWeight:800,fontSize:12,color:p.c}}>{fmtN(c.contractAmount)}₸</div>}
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:5}}>
@@ -1313,8 +1622,15 @@ function BigClientCard({ c, managers, pipeline, checklists, onOpen }) {
   const ctO = CT[c.contractType]
   const src = SRC[c.source]
   const cls = checklists || {}
-  const totalItems = ACCOMP.reduce((s,st) => s+(cls[st]||[]).length, 0)
-  const totalDone  = ACCOMP.reduce((s,st,i) => s+((c.accompStages||{})[i]?.done||[]).length, 0)
+  // Маршрут сопровождения по типу договора (7 групп программ)
+  const accT   = getAccompTemplate(c.contractType)
+  const accSt  = accT.stages
+  const accCur = Math.min(c.accompStageIndex||0, accSt.length-1)
+  const totalItems = accSt.reduce((s,st) => s+getChecklist(cls,st).length, 0)
+  const totalDone  = accSt.reduce((s,st,i) => {
+    const items = getChecklist(cls, st)
+    return s + (((c.accompStages||{})[i]?.done)||[]).filter(id => items.some(it=>it.id===id)).length
+  }, 0)
   const pct        = totalItems > 0 ? Math.round(totalDone/totalItems*100) : 0
   const paid       = (c.payments||[]).filter(x=>x.status==='paid').reduce((s,x)=>s+x.paidAmount,0)
   const partial    = (c.payments||[]).filter(x=>x.status==='partial').reduce((s,x)=>s+x.paidAmount,0)
@@ -1322,7 +1638,7 @@ function BigClientCard({ c, managers, pipeline, checklists, onOpen }) {
   const openTasks  = (c.tasks||[]).filter(t=>!t.done)
   const overdue    = openTasks.filter(t=>t.due&&t.due<today())
   const lastCmt    = [...(c.comments||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0]
-  const docsCount  = ACCOMP.reduce((s,st,i)=>s+((c.accompStages||{})[i]?.docs||[]).length, 0)
+  const docsCount  = accSt.reduce((s,st,i)=>s+((c.accompStages||{})[i]?.docs||[]).length, 0)
   const stageColor = p?.c || '#3b82f6'
 
   return (
@@ -1391,16 +1707,16 @@ className='search-card'
             </div>
             <Prog pct={pct} c={pct===100?'#10b981':pct>50?'#3b82f6':'#f59e0b'} sz='sm'/>
             <div style={{display:'flex',justifyContent:'space-between',marginTop:6,fontSize:11}}>
-              <span style={{color:'#047857',fontWeight:600}}>📍 {ACCOMP[c.accompStageIndex]}</span>
+              <span style={{color:'#047857',fontWeight:600}}>📍 {accSt[accCur]} · {accT.l}</span>
               <span style={{color:'#64748b'}}>{totalDone}/{totalItems}</span>
             </div>
             <div style={{display:'flex',gap:3,marginTop:8,flexWrap:'wrap'}}>
-              {ACCOMP.map((s,i) => {
+              {accSt.map((s,i) => {
                 const sd = (c.accompStages||{})[i]||{}
-                const items = (checklists||{})[s]||[]
-                const done  = (sd.done||[]).length
+                const items = getChecklist(cls, s)
+                const done  = (sd.done||[]).filter(id=>items.some(it=>it.id===id)).length
                 const allDone = items.length>0&&done===items.length
-                const isCur = c.accompStageIndex===i
+                const isCur = accCur===i
                 return <div key={s} title={s} style={{width:isCur?26:18,height:18,borderRadius:5,background:allDone?'#10b981':isCur?'#3b82f6':'#e2e8f0',color:allDone||isCur?'#fff':'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,flexShrink:0,transition:'all .2s'}}>{allDone?'✓':i+1}</div>
               })}
             </div>
@@ -1611,7 +1927,9 @@ function KPIPage({ data, period, setPeriod }) {
     </div>
   )
 
-  const { stats, totals, funnel, sources } = data
+  const { stats, totals, funnel, sources, closeReasons } = data
+  const maxReason = Math.max(...(closeReasons||[]).map(r=>r.count), 1)
+  const totalClosed = (closeReasons||[]).reduce((s,r)=>s+r.count, 0)
   const maxRev = Math.max(...(stats||[]).map(s => s.rev), 1)
   const STAGE_L = {new_lead:'Новый лид',in_work:'В работе',analysis:'Анализ',consultation:'Консультация',contract:'Договор',accompaniment:'Сопровождение',approval:'Одобрение',deal:'Сделка',issuance:'Выдача',closed:'Закрыто'}
   const SRC_L = {instagram:'Instagram',tiktok:'TikTok',whatsapp:'WhatsApp',recommendation:'Рекомендация',site:'Сайт',kaspi:'Kaspi',telegram:'Telegram',other:'Другое'}
@@ -1643,8 +1961,12 @@ function KPIPage({ data, period, setPeriod }) {
       {/* №4: Воронка конверсии */}
       {funnel?.length > 0 && (
         <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:15,padding:16,marginBottom:14,boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
-          <div style={{fontWeight:800,fontSize:15,marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+          <div className="section-title" style={{marginBottom:6}}>
             <i className="ti ti-filter" style={{color:'#6366f1'}}/>Воронка конверсии
+          </div>
+          <div className="hint" style={{marginBottom:11}}>
+            <span className="hint-icon">📊</span>
+            <div>Сколько клиентов дошло до каждого этапа. <b>Красный процент</b> — там теряется больше половины: узкое место, куда смотреть в первую очередь.</div>
           </div>
           {funnel.map((f,i) => (
             <div key={f.stage} style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
@@ -1664,6 +1986,35 @@ function KPIPage({ data, period, setPeriod }) {
           <div style={{fontSize:10.5,color:'#94a3b8',marginTop:8}}>
             Красным — конверсия ниже 50% с предыдущего этапа: тут теряются клиенты.
           </div>
+        </div>
+      )}
+
+      {/* Причины закрытия — где теряем клиентов */}
+      {closeReasons?.length > 0 && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:15,padding:16,marginBottom:14,boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontWeight:800,fontSize:15,marginBottom:6,display:'flex',alignItems:'center',gap:8}}>
+            <i className="ti ti-door-exit" style={{color:'#ef4444'}}/>Причины закрытия
+          </div>
+          <div className="hint" style={{marginBottom:11}}>
+            <span className="hint-icon">🔍</span>
+            <div>Почему клиенты закрываются без сделки. Частая причина — точка роста: «дорого» → пересмотреть питч цены, «не выходит на связь» → быстрее первый контакт.</div>
+          </div>
+          {closeReasons.map(r => (
+            <div key={r.reason} style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+              <div style={{width:160,fontSize:11.5,color:'#475569',fontWeight:600,flexShrink:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.reason}</div>
+              <div style={{flex:1,height:20,background:'#f1f5f9',borderRadius:6,overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${Math.max(3,Math.round(r.count/maxReason*100))}%`,background:'#f87171',borderRadius:6,display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:7}}>
+                  <span style={{fontSize:11,fontWeight:800,color:'#fff'}}>{r.count}</span>
+                </div>
+              </div>
+              <div style={{width:44,fontSize:10.5,color:'#64748b',textAlign:'right',flexShrink:0}}>
+                {totalClosed>0?Math.round(r.count/totalClosed*100):0}%
+              </div>
+            </div>
+          ))}
+          {closeReasons.some(r=>r.reason==='Не указана') && (
+            <div style={{fontSize:10.5,color:'#94a3b8',marginTop:8}}>«Не указана» — клиенты, закрытые до включения причин. Новые закрытия всегда спрашивают причину.</div>
+          )}
         </div>
       )}
 
@@ -1798,6 +2149,12 @@ function NewClientModal({ client, managers, pipeline, onSave, onClose, syncing }
           </div>
         </div>
       )}
+      {!dup && (
+        <div className="hint">
+          <span className="hint-icon">💡</span>
+          <div>Заполните хотя бы <b>ФИО и телефон</b> — остальное можно добавить позже в карточке. Телефон в любом формате: система сама приведёт к нужному виду и проверит нет ли дубля.</div>
+        </div>
+      )}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
         <Fl l="ФИО *" req ch={<Inp value={f.fio} onChange={e=>set('fio',e.target.value)} placeholder="Фамилия Имя"/>}/>
         <Fl l="ИИН"      ch={<Inp value={f.iin} onChange={e=>set('iin',e.target.value)} placeholder="123456789012" maxLength={12}/>}/>
@@ -1898,9 +2255,22 @@ function CLModal({ stage, items: init, onSave, onClose, syncing }) {
 }
 
 function PLModal({ pipeline, onSave, onClose, syncing }) {
-  const [stages, setStages] = useState(JSON.parse(JSON.stringify(pipeline)))
+  // atType/atText — черновик авто-задачи этапа (конструктор, миграция 011).
+  // Префилл: настроенное значение → дефолт из кода → пусто.
+  const [stages, setStages] = useState(pipeline.map(p => ({
+    ...JSON.parse(JSON.stringify(p)),
+    atType: p.at?.type ?? STAGE_AUTO_TASK[p.id]?.type ?? TASK_T[0],
+    atText: p.at?.off ? '' : (p.at?.text ?? STAGE_AUTO_TASK[p.id]?.text ?? ''),
+  })))
   function upd(id, field, val) { setStages(s=>s.map(x=>x.id===id?{...x,[field]:val}:x)) }
-  function add() { setStages(s=>[...s,{id:'stage_'+uid(),l:'Новый этап',c:'#64748b'}]) }
+  function add() { setStages(s=>[...s,{id:'stage_'+uid(),l:'Новый этап',c:'#64748b',atType:TASK_T[0],atText:''}]) }
+  function packStages() {
+    // пустой текст = авто-задача выключена ({off:true} перекрывает дефолт из кода)
+    return stages.map(({ atType, atText, ...s }) => ({
+      ...s,
+      at: (atText||'').trim() ? { type: atType, text: atText.trim() } : { off: true },
+    }))
+  }
   function del(id) { setStages(s=>s.filter(x=>x.id!==id)) }
   function mv(id, dir) {
     const idx = stages.findIndex(x=>x.id===id)
@@ -1908,18 +2278,31 @@ function PLModal({ pipeline, onSave, onClose, syncing }) {
     const arr = [...stages]; const t = arr[idx]; arr[idx] = arr[idx+dir]; arr[idx+dir] = t; setStages(arr)
   }
   return (
-    <ModalWrap title="Редактировать воронку" sub="Порядок, названия, цвета" onClose={onClose} size="lg"
-      footer={<><Btn onClick={onClose}>Отмена</Btn><Btn variant="primary" onClick={()=>onSave(stages)} disabled={syncing}>{syncing?<><i className="ti ti-loader spin"/>...</>:<><i className="ti ti-device-floppy"/>Сохранить воронку</>}</Btn></>}>
+    <ModalWrap title="Редактировать воронку" sub="Порядок, названия, цвета и авто-задачи этапов" onClose={onClose} size="lg"
+      footer={<><Btn onClick={onClose}>Отмена</Btn><Btn variant="primary" onClick={()=>onSave(packStages())} disabled={syncing}>{syncing?<><i className="ti ti-loader spin"/>...</>:<><i className="ti ti-device-floppy"/>Сохранить воронку</>}</Btn></>}>
+      <div className="hint" style={{marginBottom:11}}>
+        <span className="hint-icon">🤖</span>
+        <div><b>Авто-задача</b> создаётся менеджеру, когда клиент попадает на этап. Очистите текст — авто-задачи на этапе не будет. Для сохранения нужна миграция 011.</div>
+      </div>
       <Btn variant="primary" size="sm" onClick={add} style={{marginBottom:13}}><i className="ti ti-plus"/>Добавить этап</Btn>
       {stages.map((p, i) => (
-        <div key={p.id} style={{display:'flex',alignItems:'center',gap:9,padding:'10px 12px',background:'#f8fafc',borderRadius:11,border:'1.5px solid #e2e8f0',marginBottom:8}}>
-          <span style={{fontSize:12,fontWeight:700,color:'#64748b',width:20,flexShrink:0}}>{i+1}.</span>
-          <Inp value={p.l} onChange={e=>upd(p.id,'l',e.target.value)} style={{flex:1,minWidth:0}}/>
-          <div style={{display:'flex',gap:5}}>{COLORS.map(c=><div key={c} onClick={()=>upd(p.id,'c',c)} style={{width:20,height:20,borderRadius:5,background:c,cursor:'pointer',boxShadow:p.c===c?`0 0 0 2px #fff,0 0 0 4px #1a1a1a`:'none'}}/>)}</div>
-          <div style={{display:'flex',gap:4}}>
-            <Btn size="sm" onClick={()=>i>0&&mv(p.id,-1)} disabled={i===0} style={{width:28,height:28,padding:0,opacity:i===0?.3:1}}><i className="ti ti-arrow-up" style={{fontSize:11}}/></Btn>
-            <Btn size="sm" onClick={()=>i<stages.length-1&&mv(p.id,1)} disabled={i===stages.length-1} style={{width:28,height:28,padding:0,opacity:i===stages.length-1?.3:1}}><i className="ti ti-arrow-down" style={{fontSize:11}}/></Btn>
-            <Btn size="sm" variant="danger" onClick={()=>del(p.id)} style={{width:28,height:28,padding:0}}><i className="ti ti-trash" style={{fontSize:11}}/></Btn>
+        <div key={p.id} style={{background:'#f8fafc',borderRadius:11,border:'1.5px solid #e2e8f0',marginBottom:8,padding:'10px 12px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:9}}>
+            <span style={{fontSize:12,fontWeight:700,color:'#64748b',width:20,flexShrink:0}}>{i+1}.</span>
+            <Inp value={p.l} onChange={e=>upd(p.id,'l',e.target.value)} style={{flex:1,minWidth:0}}/>
+            <div style={{display:'flex',gap:5}}>{COLORS.map(c=><div key={c} onClick={()=>upd(p.id,'c',c)} style={{width:20,height:20,borderRadius:5,background:c,cursor:'pointer',boxShadow:p.c===c?`0 0 0 2px #fff,0 0 0 4px #1a1a1a`:'none'}}/>)}</div>
+            <div style={{display:'flex',gap:4}}>
+              <Btn size="sm" onClick={()=>i>0&&mv(p.id,-1)} disabled={i===0} style={{width:28,height:28,padding:0,opacity:i===0?.3:1}}><i className="ti ti-arrow-up" style={{fontSize:11}}/></Btn>
+              <Btn size="sm" onClick={()=>i<stages.length-1&&mv(p.id,1)} disabled={i===stages.length-1} style={{width:28,height:28,padding:0,opacity:i===stages.length-1?.3:1}}><i className="ti ti-arrow-down" style={{fontSize:11}}/></Btn>
+              <Btn size="sm" variant="danger" onClick={()=>del(p.id)} style={{width:28,height:28,padding:0}}><i className="ti ti-trash" style={{fontSize:11}}/></Btn>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:7,marginTop:8,paddingLeft:29}}>
+            <span style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',flexShrink:0}}>Авто-задача</span>
+            <Sel value={p.atType} onChange={e=>upd(p.id,'atType',e.target.value)} style={{width:170,flexShrink:0,padding:'6px 8px',fontSize:12}}>
+              {TASK_T.map(t=><option key={t}>{t}</option>)}
+            </Sel>
+            <Inp value={p.atText} onChange={e=>upd(p.id,'atText',e.target.value)} placeholder="Пусто — без авто-задачи" style={{flex:1,minWidth:0,padding:'6px 10px',fontSize:12}}/>
           </div>
         </div>
       ))}

@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
-import { ROLE, COLORS, PIPELINE_DEFAULT, ACCOMP, uid, TI, TC, TB } from '../../lib/constants'
+import { ROLE, COLORS, PIPELINE_DEFAULT, ALL_ACCOMP_STAGES, DEFAULT_CHECKLISTS, uid, TI, TC, TB } from '../../lib/constants'
 import { Btn, Tag } from '../../components/ui'
 
 export function AdminPage({ managers, pipeline, checklists, users, user, onSaveMgr, onDelMgr, onSaveUser, onDelUser, onSavePL, onSaveCL, onModal, reload, syncing }) {
@@ -95,11 +95,14 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       {/* CHECKLISTS */}
       {tab === 'checklists' && <>
         <div style={{fontWeight:800,fontSize:16,marginBottom:7}}>Чек-листы по этапам сопровождения</div>
-        <div style={{background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:12,padding:'11px 13px',marginBottom:13,fontSize:13,color:'#92400e',display:'flex',gap:8,alignItems:'center'}}>
-          <i className="ti ti-info-circle"/>Нажмите на этап для редактирования пунктов
+        <div style={{background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:12,padding:'11px 13px',marginBottom:13,fontSize:13,color:'#92400e',display:'flex',gap:8,alignItems:'flex-start'}}>
+          <i className="ti ti-info-circle" style={{marginTop:2}}/>
+          <div>Нажмите на этап для редактирования пунктов. Чек-лист привязан к <b>названию этапа</b> и общий для всех маршрутов (Полное сопровождение, Отбасы, Госпрограмма, Доп. доход, Поиск дома, Онлайн, Коммерческая). Этапы с пометкой «дефолт» используют встроенный чек-лист, пока вы не сохраните свой.</div>
         </div>
-        {ACCOMP.map(stage => {
-          const items = (checklists||{})[stage]||[]
+        {ALL_ACCOMP_STAGES.map(stage => {
+          const own     = (checklists||{})[stage]||[]
+          const isDef   = !own.length && !!DEFAULT_CHECKLISTS[stage]
+          const items   = own.length ? own : (DEFAULT_CHECKLISTS[stage]||[])
           return (
             <div key={stage} onClick={()=>onModal({type:'cl_edit',stage,items:JSON.parse(JSON.stringify(items))})}
               style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:'13px 15px',marginBottom:9,cursor:'pointer',transition:'all .14s',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}
@@ -107,7 +110,9 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
               onMouseLeave={e=>e.currentTarget.style.borderColor='#e2e8f0'}>
               <div style={{display:'flex',alignItems:'center',gap:11}}>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>{stage}</div>
+                  <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>{stage}
+                    {isDef && <span style={{marginLeft:7,fontSize:9.5,fontWeight:700,background:'#eef2ff',color:'#4f46e5',border:'1px solid #c7d2fe',borderRadius:20,padding:'1px 7px',verticalAlign:'middle'}}>дефолт</span>}
+                  </div>
                   <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
                     {items.slice(0,5).map(item => (
                       <span key={item.id} style={{background:TB[item.tp||'check'],borderRadius:5,padding:'2px 7px',fontSize:10,color:TC[item.tp||'check'],display:'inline-flex',alignItems:'center',gap:3,fontWeight:600,border:`1px solid ${TC[item.tp||'check']}33`}}>
@@ -728,6 +733,8 @@ function WaRepliesPanel() {
   const [autoOn,   setAutoOn]   = useState(false)
   const [autoText, setAutoText] = useState('')
   const [autoSaving, setAutoSaving] = useState(false)
+  const [rrOn,       setRrOn]       = useState(false)  // round-robin распределение лидов
+  const [rrSaving,   setRrSaving]   = useState(false)
 
   useEffect(() => {
     api.getCalcSettings().then(d => {
@@ -743,6 +750,7 @@ function WaRepliesPanel() {
       if (d?.settings) {
         setAutoOn(!!d.settings.wa_auto_greeting_on)
         setAutoText(d.settings.wa_auto_greeting || '')
+        setRrOn(!!d.settings.wa_round_robin)
       }
       setLoading(false)
     }).catch(()=>setLoading(false))
@@ -808,6 +816,30 @@ function WaRepliesPanel() {
           style={{padding:'9px 18px',border:'none',borderRadius:9,background:autoSaving?'#94a3b8':'#10b981',color:'#fff',fontSize:13,fontWeight:700,cursor:autoSaving?'default':'pointer',fontFamily:'inherit'}}>
           {autoSaving ? '⏳ Сохраняю...' : '💾 Сохранить автоответ'}
         </button>
+      </div>
+
+      {/* Round-robin: автораспределение лидов */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:14}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>🔄 Автораспределение лидов по менеджерам</div>
+          <div onClick={async()=>{
+            const next = !rrOn
+            setRrOn(next); setRrSaving(true)
+            try {
+              const res = await api.saveCalcSettings({ settings: { wa_round_robin: next } })
+              toast(res?.ok ? (next?'✅ Автораспределение включено':'✅ Автораспределение выключено') : '⚠️ Ошибка — применена ли миграция 011?')
+              if (!res?.ok) setRrOn(!next)
+            } catch(e) { toast('❌ '+e.message); setRrOn(!next) }
+            setRrSaving(false)
+          }} style={{width:44,height:24,background:rrOn?'#10b981':'#cbd5e1',borderRadius:20,position:'relative',cursor:rrSaving?'wait':'pointer',transition:'background .2s',opacity:rrSaving?.6:1}}>
+            <div style={{position:'absolute',top:3,left:rrOn?23:3,width:18,height:18,background:'#fff',borderRadius:'50%',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,.2)'}}/>
+          </div>
+        </div>
+        <div style={{fontSize:11.5,color:'#64748b',lineHeight:1.5}}>
+          Новый WhatsApp-лид автоматически назначается менеджеру с наименьшим числом активных чатов —
+          и в чате, и в карточке клиента. Никто не ждёт распределения вручную.
+          <b> Требуется миграция 011.</b>
+        </div>
       </div>
 
       {msg && (

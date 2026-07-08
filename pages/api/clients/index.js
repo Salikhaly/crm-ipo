@@ -2,7 +2,7 @@
 // GET  /api/clients        → список клиентов (с фильтрами)
 // POST /api/clients        → создать клиента
 
-import { getSupabase, dbToClient, clientToDb } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
@@ -69,11 +69,19 @@ export default withAuth(async function handler(req, res) {
     }
 
     const row = clientToDb(client)
-    const { data, error } = await sb
+    addSavedCalcs(row, client)
+    addCloseReason(row, client)
+    let { data, error } = await sb
       .from('clients')
       .insert(row)
       .select()
       .single()
+
+    // Повтор без необязательных колонок, если миграции 008/010 не применены
+    for (let missing = findMissingOptionalColumn(error, row); missing; missing = findMissingOptionalColumn(error, row)) {
+      delete row[missing]
+      ;({ data, error } = await sb.from('clients').insert(row).select().single())
+    }
 
     if (error) return apiError(res, error)
     return res.status(201).json({ client: dbToClient(data) })

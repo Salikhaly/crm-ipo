@@ -440,10 +440,14 @@ export function WAPage({ chats, messages, managers, clients, selChat, onSelChat,
   const ChatView = useMemo(() => (
     <div className={"wa-main" + (!showChatView ? " slide-out" : "")}>
       {!selChat ? (
-        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'#64748b',gap:12,background:'#f0f0f0'}}>
+        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'#64748b',gap:14,background:'#f0f0f0',padding:'0 30px',textAlign:'center'}}>
           <i className="ti ti-brand-whatsapp" style={{fontSize:56,color:'#25d366',opacity:.25}}/>
-          <div style={{fontWeight:700,fontSize:16}}>Выберите чат</div>
-          <div style={{fontSize:13,textAlign:'center'}}>Нажмите на чат слева<br/>или добавьте новый лид</div>
+          <div style={{fontWeight:700,fontSize:16}}>Выберите чат слева</div>
+          <div style={{fontSize:12.5,lineHeight:1.6,maxWidth:300,color:'#64748b'}}>
+            Все сообщения клиентов приходят сюда автоматически. Если чат связан с карточкой клиента — справа появится его профиль и кнопка быстрого расчёта ипотеки.
+            <br/><br/>
+            Кнопкой <b style={{color:'#075e54'}}>+ Лид</b> сверху можно добавить нового клиента вручную.
+          </div>
         </div>
       ) : (
         <>

@@ -3,7 +3,7 @@
 // PUT    /api/clients/:id  → обновить клиента
 // DELETE /api/clients/:id  → удалить клиента
 
-import { getSupabase, dbToClient, clientToDb } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
@@ -102,12 +102,21 @@ export default withAuth(async function handler(req, res) {
       row.comments = [...userComments, ...auditComments, auditEntry]
     }
 
-    const { data, error } = await sb
+    addSavedCalcs(row, client)
+    addCloseReason(row, client)
+
+    let { data, error } = await sb
       .from('clients')
       .update(row)
       .eq('id', id)
       .select()
       .single()
+
+    // Если необязательной колонки ещё нет (миграции 008/010 не запущены) — повторяем без неё
+    for (let missing = findMissingOptionalColumn(error, row); missing; missing = findMissingOptionalColumn(error, row)) {
+      delete row[missing]
+      ;({ data, error } = await sb.from('clients').update(row).eq('id', id).select().single())
+    }
 
     if (error) return apiError(res, error)
     return res.status(200).json({ client: dbToClient(data) })

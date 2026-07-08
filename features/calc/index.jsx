@@ -216,7 +216,10 @@ function CalcProgTab({ toast$, clients, calcCfg }) {
     const pm = annuity(credit, p.r, mo)
     const tot = pm * mo, ov = tot - credit
     const kd = inc > 0 ? pm / inc : 0
-    const tbl = D50.find(d => Math.abs(d[0] - credit) < 1000001)
+    // Таблица 50/50 индексирована по договорной сумме (= цене квартиры),
+    // поэтому ищем по price и показываем только для программ со взносом 50%.
+    // Раньше искали по credit — платёж для 50/50 занижался вдвое.
+    const tbl = p.d === 0.5 ? D50.find(d => Math.abs(d[0] - price) < 1000001) : null
     const sch = buildSch(credit, p.r, mo)
     setRes({ down, credit, pm, tot, ov, kd, tbl, sch, safeT, ov1yr: sch.slice(0,12).reduce((s,r)=>s+r.in_,0), bo1yr: sch.slice(0,12).reduce((s,r)=>s+r.bo,0) })
   }
@@ -233,11 +236,11 @@ function CalcProgTab({ toast$, clients, calcCfg }) {
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,marginBottom:10}}>
         {progsData.filter(x=>x.grp==='g').map(pg => (
           <button key={pg.id} onClick={() => setSelP(pg.id)}
-            style={{padding:'8px 7px',border:`1px solid ${selP===pg.id?'#1D9E75':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
-              background:selP===pg.id?'#E1F5EE':'#fff',textAlign:'left',transition:'all .15s'}}>
+            style={{padding:'8px 7px',border:`1px solid ${selP===pg.id?'#3b82f6':'#e2e8f0'}`,borderRadius:10,cursor:'pointer',
+              background:selP===pg.id?'#eff6ff':'#fff',textAlign:'left',transition:'all .15s'}}>
             <div style={{fontSize:11,fontWeight:500,color:'#0f172a'}}>{pg.n}</div>
             <div style={{fontSize:10,color:'#64748b',marginTop:1}}>{pg.r}% · до {pg.t} лет</div>
-            <div style={{fontSize:10,color:'#0F6E56',marginTop:1}}>ПВ {Math.round(pg.d*100)}%</div>
+            <div style={{fontSize:10,color:'#1d4ed8',marginTop:1}}>ПВ {Math.round(pg.d*100)}%</div>
           </button>
         ))}
       </div>
@@ -280,13 +283,13 @@ function CalcProgTab({ toast$, clients, calcCfg }) {
       {res && (
         <>
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:12}}>
-            {[['Платёж/мес',fmtM(res.pm),'#0F6E56'],['Кредит',fmtM(res.credit),'#0f172a'],['Взнос',fmtM(res.down),'#0f172a'],['Итого',fmtM(res.tot),'#0f172a']].map(([l,v,col])=>(
+            {[['Платёж/мес',fmtM(res.pm),'#1d4ed8'],['Кредит',fmtM(res.credit),'#0f172a'],['Взнос',fmtM(res.down),'#0f172a'],['Итого',fmtM(res.tot),'#0f172a']].map(([l,v,col])=>(
               <div key={l} style={C.met}><div style={C.ml}>{l}</div><div style={{...C.mv,color:col}}>{v}</div></div>
             ))}
           </div>
 
           {res.tbl && (
-            <div style={{...C.note('#E1F5EE','#5DCAA5','#085041')}}>
+            <div style={{...C.note('#eff6ff','#93c5fd','#1e40af')}}>
               <b>По таблице 50/50</b> (~{fmtK(res.tbl[0])} ₸): Промзаём 8.5% = <b>{fmtM(res.tbl[2])}/мес</b> · Жилзаём 5% = <b>{fmtM(res.tbl[4])}/мес</b> · ОПВ (ОП=5): {fmtM(res.tbl[1])}
             </div>
           )}
@@ -408,14 +411,14 @@ function CalcExpTab({ toast$, calcCfg }) {
           <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
             {[0,10,20,30,50].map(p=>(
               <button key={p} onClick={()=>setDnPct(p)}
-                style={{padding:'3px 8px',border:`1px solid ${dnPct===p?'#1D9E75':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
-                  background:dnPct===p?'#E1F5EE':'#fff',fontSize:10,fontWeight:500,color:dnPct===p?'#0F6E56':'#64748b'}}>
+                style={{padding:'3px 8px',border:`1px solid ${dnPct===p?'#3b82f6':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
+                  background:dnPct===p?'#eff6ff':'#fff',fontSize:10,fontWeight:500,color:dnPct===p?'#1d4ed8':'#64748b'}}>
                 {p}%
               </button>
             ))}
           </div>
         </div>
-        <div style={{...C.row,borderBottom:'1px solid #f8fafc'}}><span style={C.rk}>Сумма взноса</span><span style={{...C.rv,color:'#0F6E56'}}>{fmtM(down)}</span></div>
+        <div style={{...C.row,borderBottom:'1px solid #f8fafc'}}><span style={C.rk}>Сумма взноса</span><span style={{...C.rv,color:'#1d4ed8'}}>{fmtM(down)}</span></div>
         <div style={{...C.row,borderBottom:'1px solid #f8fafc',paddingTop:6}}>
           <span style={C.rk}>Банк</span>
           <select value={bank} onChange={e=>setBank(e.target.value)}
@@ -455,9 +458,9 @@ function CalcExpTab({ toast$, calcCfg }) {
 
       <div style={C.card}>
         <div style={C.sec}>Итого нужно иметь на руках</div>
-        <div style={{...C.row,borderBottom:'1px solid #f8fafc'}}><span style={C.rk}>Первоначальный взнос ({dnPct}%)</span><span style={{...C.rv,color:'#0F6E56'}}>{fmtM(down)}</span></div>
+        <div style={{...C.row,borderBottom:'1px solid #f8fafc'}}><span style={C.rk}>Первоначальный взнос ({dnPct}%)</span><span style={{...C.rv,color:'#1d4ed8'}}>{fmtM(down)}</span></div>
         <div style={{...C.row,borderBottom:'none'}}><span style={C.rk}>Расходы на оформление</span><span style={{...C.rv,color:'#993C1D'}}>{fmtM(oblig)}</span></div>
-        <div style={C.tot('#E1F5EE','#0F6E56')}><span style={{fontSize:13}}>ИТОГО</span><span style={{fontSize:18}}>{fmtM(need)}</span></div>
+        <div style={C.tot('#eff6ff','#1d4ed8')}><span style={{fontSize:13}}>ИТОГО</span><span style={{fontSize:18}}>{fmtM(need)}</span></div>
         <div style={{fontSize:10,color:'#64748b',marginTop:6}}>+ Задаток (возвращается) · Ремонт ~{fmtM(sq*25000)} · Оценка уже включена</div>
       </div>
 
@@ -500,21 +503,21 @@ function Calc50Tab({ calcCfg }) {
               <tr style={{position:'sticky',top:0,background:'#fff'}}>
                 <th style={{padding:'7px 8px',textAlign:'left',fontSize:10,fontWeight:600,color:'#64748b',borderBottom:'1px solid #e2e8f0'}}>Дог. сумма</th>
                 <th style={{padding:'7px 8px',textAlign:'right',fontSize:10,fontWeight:600,color:'#854F0B',borderBottom:'1px solid #e2e8f0'}}>ОПВ (ОП=5)</th>
-                <th style={{padding:'7px 8px',textAlign:'right',fontSize:10,fontWeight:600,color:'#0F6E56',borderBottom:'1px solid #e2e8f0'}}>Платёж 8.5%</th>
+                <th style={{padding:'7px 8px',textAlign:'right',fontSize:10,fontWeight:600,color:'#1d4ed8',borderBottom:'1px solid #e2e8f0'}}>Платёж 8.5%</th>
                 <th style={{padding:'7px 8px',textAlign:'right',fontSize:10,fontWeight:600,color:'#854F0B',borderBottom:'1px solid #e2e8f0'}}>ОПВ (ОП=16)</th>
-                <th style={{padding:'7px 8px',textAlign:'right',fontSize:10,fontWeight:600,color:'#0F6E56',borderBottom:'1px solid #e2e8f0'}}>Платёж 5%</th>
+                <th style={{padding:'7px 8px',textAlign:'right',fontSize:10,fontWeight:600,color:'#1d4ed8',borderBottom:'1px solid #e2e8f0'}}>Платёж 5%</th>
               </tr>
             </thead>
             <tbody>
               {data.map(([s,o5,p85,o16,p5]) => {
                 const hi = q && Math.abs(s-q) < 1000001
                 return (
-                  <tr key={s} style={{background:hi?'#E1F5EE':'transparent'}}>
+                  <tr key={s} style={{background:hi?'#eff6ff':'transparent'}}>
                     <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',fontWeight:hi?500:400,color:'#0f172a'}}>{fmtK(s)}{hi&&' ←'}</td>
                     <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',textAlign:'right',color:'#854F0B'}}>{fmtK(o5)}</td>
-                    <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',textAlign:'right',color:'#0F6E56',fontWeight:500}}>{fmtK(p85)}</td>
+                    <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',textAlign:'right',color:'#1d4ed8',fontWeight:500}}>{fmtK(p85)}</td>
                     <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',textAlign:'right',color:'#854F0B'}}>{fmtK(o16)}</td>
-                    <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',textAlign:'right',color:'#0F6E56',fontWeight:500}}>{fmtK(p5)}</td>
+                    <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',textAlign:'right',color:'#1d4ed8',fontWeight:500}}>{fmtK(p5)}</td>
                   </tr>
                 )
               })}
@@ -540,7 +543,9 @@ function CalcPayTab({ calcCfg }) {
   const r = rate / 12 / 100
   const sch = buildSch(cr, rate, mo)
   const filtSch = yrFlt ? sch.filter(row => Math.ceil(row.n/12) === yrFlt) : sch
-  const tbl = d50.find(d => Math.abs(d[0]-cr) < 1000001)
+  // Таблица 50/50 индексирована по договорной сумме (цене квартиры).
+  // Кредит по 50/50 = половина цены, поэтому для введённого кредита ищем строку ~2×кредит.
+  const tbl = d50.find(d => Math.abs(d[0] - cr*2) < 1000001)
   const years = [...new Set([1,3,5,Math.ceil(term/2),term].filter(y=>y<=term&&y>=1))]
 
   return (
@@ -559,8 +564,8 @@ function CalcPayTab({ calcCfg }) {
             : [[5,'Жилзаём'],[7,'Наурыз'],[8.5,'Промзаём'],[9,'Отау'],[20,'Коммерч.']]
           ).map(([rv,l])=>(
             <button key={rv} onClick={()=>setRate(rv)}
-              style={{padding:'4px 8px',border:`1px solid ${rate===rv?'#1D9E75':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
-                background:rate===rv?'#E1F5EE':'#fff',fontSize:10,fontWeight:500,color:rate===rv?'#0F6E56':'#64748b'}}>
+              style={{padding:'4px 8px',border:`1px solid ${rate===rv?'#3b82f6':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
+                background:rate===rv?'#eff6ff':'#fff',fontSize:10,fontWeight:500,color:rate===rv?'#1d4ed8':'#64748b'}}>
               {rv}% {l}
             </button>
           ))}
@@ -574,8 +579,8 @@ function CalcPayTab({ calcCfg }) {
         <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
           {[8,9,17,19,25].map(tv=>(
             <button key={tv} onClick={()=>setTerm(tv)}
-              style={{padding:'4px 8px',border:`1px solid ${term===tv?'#1D9E75':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
-                background:term===tv?'#E1F5EE':'#fff',fontSize:10,fontWeight:500,color:term===tv?'#0F6E56':'#64748b'}}>
+              style={{padding:'4px 8px',border:`1px solid ${term===tv?'#3b82f6':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
+                background:term===tv?'#eff6ff':'#fff',fontSize:10,fontWeight:500,color:term===tv?'#1d4ed8':'#64748b'}}>
               {tv} лет
             </button>
           ))}
@@ -587,21 +592,21 @@ function CalcPayTab({ calcCfg }) {
       </div>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:12}}>
-        {[['Платёж/мес',fmtM(pm),'#0F6E56'],['Кредит',fmtM(cr),'#0f172a'],['Переплата',fmtM(ov),'#854F0B'],['Итого',fmtM(tot),'#0f172a']].map(([l,v,col])=>(
+        {[['Платёж/мес',fmtM(pm),'#1d4ed8'],['Кредит',fmtM(cr),'#0f172a'],['Переплата',fmtM(ov),'#854F0B'],['Итого',fmtM(tot),'#0f172a']].map(([l,v,col])=>(
           <div key={l} style={C.met}><div style={C.ml}>{l}</div><div style={{...C.mv,color:col}}>{v}</div></div>
         ))}
       </div>
 
       {tbl && (
-        <div style={{...C.note('#E1F5EE','#5DCAA5','#085041')}}>
-          <b>По таблице 50/50</b> (~{fmtK(tbl[0])} ₸): Промзаём 8.5% = <b>{fmtM(tbl[2])}/мес</b> · Жилзаём 5% = <b>{fmtM(tbl[4])}/мес</b>
+        <div style={{...C.note('#eff6ff','#93c5fd','#1e40af')}}>
+          <b>По таблице 50/50</b> (дог. сумма ~{fmtK(tbl[0])} ₸ при кредите {fmtK(cr)} ₸): Промзаём 8.5% = <b>{fmtM(tbl[2])}/мес</b> · Жилзаём 5% = <b>{fmtM(tbl[4])}/мес</b>
         </div>
       )}
 
       <div style={C.card}>
         <div style={C.sec}>Разбивка первого платежа</div>
-        {[['Проценты (1-й мес.)',fmtM(cr*r),'#854F0B'],['Тело долга (1-й мес.)',fmtM(pm-cr*r),'#0F6E56'],
-          ['Тело за 1-й год',fmtM(sch.slice(0,12).reduce((s,x)=>s+x.bo,0)),'#0F6E56'],
+        {[['Проценты (1-й мес.)',fmtM(cr*r),'#854F0B'],['Тело долга (1-й мес.)',fmtM(pm-cr*r),'#1d4ed8'],
+          ['Тело за 1-й год',fmtM(sch.slice(0,12).reduce((s,x)=>s+x.bo,0)),'#1d4ed8'],
           ['Проценты за 1-й год',fmtM(sch.slice(0,12).reduce((s,x)=>s+x.in_,0)),'#854F0B']
         ].map(([k,v,col])=>(
           <div key={k} style={{...C.row,borderBottom:'1px solid #f8fafc'}}><span style={C.rk}>{k}</span><span style={{...C.rv,color:col}}>{v}</span></div>
@@ -614,8 +619,8 @@ function CalcPayTab({ calcCfg }) {
           <div style={{display:'flex',gap:4}}>
             {years.map(y=>(
               <button key={y} onClick={()=>setYrFlt(yrFlt===y?null:y)}
-                style={{padding:'3px 7px',border:`1px solid ${yrFlt===y?'#1D9E75':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
-                  background:yrFlt===y?'#E1F5EE':'#fff',fontSize:10,color:yrFlt===y?'#0F6E56':'#64748b'}}>
+                style={{padding:'3px 7px',border:`1px solid ${yrFlt===y?'#3b82f6':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
+                  background:yrFlt===y?'#eff6ff':'#fff',fontSize:10,color:yrFlt===y?'#1d4ed8':'#64748b'}}>
                 {y}г
               </button>
             ))}
@@ -636,7 +641,7 @@ function CalcPayTab({ calcCfg }) {
                   <tr key={row.n}>
                     <td style={{padding:'4px 7px',borderBottom:'1px solid #f8fafc'}}>{row.n}</td>
                     <td style={{padding:'4px 7px',borderBottom:'1px solid #f8fafc'}}>{fmtK(row.pm)}</td>
-                    <td style={{padding:'4px 7px',borderBottom:'1px solid #f8fafc',color:'#0F6E56'}}>{fmtK(row.bo)}</td>
+                    <td style={{padding:'4px 7px',borderBottom:'1px solid #f8fafc',color:'#1d4ed8'}}>{fmtK(row.bo)}</td>
                     <td style={{padding:'4px 7px',borderBottom:'1px solid #f8fafc',color:'#854F0B'}}>{fmtK(row.in_)}</td>
                     <td style={{padding:'4px 7px',borderBottom:'1px solid #f8fafc'}}>{fmtK(row.b)}</td>
                   </tr>
@@ -669,7 +674,7 @@ function CalcCmpTab({ calcCfg }) {
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc'}}>{p.r}%</td>
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc'}}>{t}л</td>
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc'}}>{fmtK(d)} ₸</td>
-          <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',color:'#0F6E56',fontWeight:500}}>{fmtK(pm)} ₸</td>
+          <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',color:'#1d4ed8',fontWeight:500}}>{fmtK(pm)} ₸</td>
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',color:'#854F0B'}}>{fmtK(ov)} ₸</td>
         </tr>
       )
@@ -687,6 +692,10 @@ function CalcCmpTab({ calcCfg }) {
 
   return (
     <div>
+      <div className="hint">
+        <span className="hint-icon">📊</span>
+        <div>Сравнить программы: вводите цену квартиры и срок — таблица покажет платёж по каждой программе сразу. Удобно показать клиенту, где выгоднее.</div>
+      </div>
       <div style={C.card}>
         <div style={C.sec}>Одна цена — все программы</div>
         <div style={C.sr}>
@@ -737,6 +746,10 @@ function CalcEarlyTab() {
 
   return (
     <div>
+      <div className="hint">
+        <span className="hint-icon">⚡</span>
+        <div>Досрочное погашение: покажите клиенту, сколько он сэкономит и на сколько сократится срок, если платить сверху каждый месяц. Сильный аргумент «за».</div>
+      </div>
       <div style={{...C.note('#E6F1FB','#85B7EB','#0C447C')}}>Введите параметры кредита и доп. платёж — покажу сколько сэкономишь и на сколько сократится срок.</div>
       <div style={C.card}>
         <div style={C.sec}>Параметры кредита</div>
@@ -772,19 +785,19 @@ function CalcEarlyTab() {
         </div>
         <div style={C.met}>
           <div style={C.ml}>+{fmtM(extra)}/мес доп.</div>
-          <div style={{...C.mv,color:'#0F6E56'}}>{fmtM(pm+extra)}/мес</div>
+          <div style={{...C.mv,color:'#1d4ed8'}}>{fmtM(pm+extra)}/мес</div>
           <div style={{fontSize:10,color:'#64748b',marginTop:4}}>Переплата: {fmtM(ovE)}<br/>Итого: {fmtM(totE)}</div>
         </div>
       </div>
-      <div style={{...C.card,background:'#E1F5EE',border:'1px solid #5DCAA5'}}>
-        <div style={{...C.sec,color:'#085041',borderColor:'#9FE1CB'}}>Выгода от досрочного погашения</div>
+      <div style={{...C.card,background:'#eff6ff',border:'1px solid #93c5fd'}}>
+        <div style={{...C.sec,color:'#1e40af',borderColor:'#bfdbfe'}}>Выгода от досрочного погашения</div>
         {[
-          ['Экономия на процентах', fmtM(saved), '#0F6E56'],
-          ['Срок сокращается на', savedMo + ' мес. (' + (savedMo/12).toFixed(1) + ' лет)', '#0F6E56'],
+          ['Экономия на процентах', fmtM(saved), '#1d4ed8'],
+          ['Срок сокращается на', savedMo + ' мес. (' + (savedMo/12).toFixed(1) + ' лет)', '#1d4ed8'],
           ['Новый срок', moE + ' мес. (' + (moE/12).toFixed(1) + ' лет)', '#0f172a'],
           ['Закроете ипотеку в', closeDate, '#0f172a'],
         ].map(([k,v,col]) => (
-          <div key={k} style={{...C.row,borderBottom:'1px solid #9FE1CB'}}><span style={C.rk}>{k}</span><span style={{...C.rv,color:col}}>{v}</span></div>
+          <div key={k} style={{...C.row,borderBottom:'1px solid #bfdbfe'}}><span style={C.rk}>{k}</span><span style={{...C.rv,color:col}}>{v}</span></div>
         ))}
       </div>
     </div>
@@ -810,7 +823,7 @@ function CalcIncTab({ calcCfg }) {
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',fontWeight:500}}>{p.n}</td>
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc'}}>{p.r}%</td>
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc'}}>{fmtM(maxPmt)}</td>
-          <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',color:'#0F6E56',fontWeight:500}}>{fmtM(maxCr)}</td>
+          <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc',color:'#1d4ed8',fontWeight:500}}>{fmtM(maxCr)}</td>
           <td style={{padding:'5px 8px',borderBottom:'1px solid #f8fafc'}}>{fmtM(maxP)}</td>
         </tr>
       ) : null
@@ -828,7 +841,11 @@ function CalcIncTab({ calcCfg }) {
 
   return (
     <div>
-      <div style={{...C.note('#E1F5EE','#5DCAA5','#085041')}}>Введите доход — покажу максимальную цену квартиры по каждой программе.</div>
+      <div className="hint">
+        <span className="hint-icon">💰</span>
+        <div>Подбор по доходу: вводите доход клиента — увидите, какую квартиру он потянет по каждой программе. Быстрый ответ на вопрос «на что мне хватит?».</div>
+      </div>
+      <div style={{...C.note('#eff6ff','#93c5fd','#1e40af')}}>Введите доход — покажу максимальную цену квартиры по каждой программе.</div>
       <div style={C.card}>
         <div style={C.sr}>
           <span style={C.rk}>Ежемесячный доход</span>
@@ -847,8 +864,8 @@ function CalcIncTab({ calcCfg }) {
           <div style={{display:'flex',gap:5}}>
             {[40,50,60].map(kv=>(
               <button key={kv} onClick={()=>setKdL(kv)}
-                style={{padding:'4px 10px',border:`1px solid ${kdL===kv?'#1D9E75':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
-                  background:kdL===kv?'#E1F5EE':'#fff',fontSize:11,fontWeight:500,color:kdL===kv?'#0F6E56':'#64748b'}}>
+                style={{padding:'4px 10px',border:`1px solid ${kdL===kv?'#3b82f6':'#e2e8f0'}`,borderRadius:6,cursor:'pointer',
+                  background:kdL===kv?'#eff6ff':'#fff',fontSize:11,fontWeight:500,color:kdL===kv?'#1d4ed8':'#64748b'}}>
                 {kv}%
               </button>
             ))}
@@ -857,7 +874,7 @@ function CalcIncTab({ calcCfg }) {
       </div>
       <div style={{...C.met,marginBottom:12}}>
         <div style={C.ml}>Макс. платёж при КД {kdL}%</div>
-        <div style={{...C.mv,color:'#0F6E56'}}>{fmtM(Math.max(0,maxPmt))}/мес</div>
+        <div style={{...C.mv,color:'#1d4ed8'}}>{fmtM(Math.max(0,maxPmt))}/мес</div>
       </div>
       <div style={{fontSize:10,fontWeight:600,color:'#64748b',marginBottom:4}}>ГОСУДАРСТВЕННЫЕ</div>
       <div style={{border:'1px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:12}}>
@@ -908,6 +925,10 @@ function CalcRentTab() {
 
   return (
     <div>
+      <div className="hint">
+        <span className="hint-icon">🏠</span>
+        <div>Аренда или покупка: сравнивает — снимать квартиру и копить на депозите ИЛИ купить в ипотеку. Депозит считается с вычетом 10% налога на проценты. Помогает клиенту решиться.</div>
+      </div>
       <div style={{...C.note('#FAEEDA','#FAC775','#633806')}}>Сравниваем: платить ипотеку и стать владельцем, или снимать и откладывать разницу на депозит.</div>
       <div style={C.card}>
         <Sl label="Цена квартиры" min={5000000} max={100000000} step={500000} val={price} onChange={setPrice} fmt={fmtM}/>
@@ -928,15 +949,15 @@ function CalcRentTab() {
         <div style={C.met}>
           <div style={C.ml}>🏠 Ипотека / мес</div>
           <div style={C.mv}>{fmtM(pm)}</div>
-          <div style={{fontSize:10,color:'#64748b',marginTop:4}}>Выплат: {fmtM(tot)}<br/>Переплата: {fmtM(ov)}<br/>Цена через {term}л: {fmtM(finalP)}<br/><b style={{color:'#0F6E56'}}>Актив: {fmtM(netI)}</b></div>
+          <div style={{fontSize:10,color:'#64748b',marginTop:4}}>Выплат: {fmtM(tot)}<br/>Переплата: {fmtM(ov)}<br/>Цена через {term}л: {fmtM(finalP)}<br/><b style={{color:'#1d4ed8'}}>Актив: {fmtM(netI)}</b></div>
         </div>
         <div style={C.met}>
           <div style={C.ml}>🏘️ Аренда / мес</div>
           <div style={C.mv}>{fmtM(rent)}</div>
-          <div style={{fontSize:10,color:'#64748b',marginTop:4}}>Аренда за {term}л: {fmtM(rent*mo)}<br/>Разница: {fmtM(Math.abs(diff))}<br/><br/><b style={{color:'#0F6E56'}}>Накопления: {fmtM(savAcc)}</b></div>
+          <div style={{fontSize:10,color:'#64748b',marginTop:4}}>Аренда за {term}л: {fmtM(rent*mo)}<br/>Разница: {fmtM(Math.abs(diff))}<br/><br/><b style={{color:'#1d4ed8'}}>Накопления: {fmtM(savAcc)}</b></div>
         </div>
       </div>
-      <div style={{...C.note(winner?'#E1F5EE':'#FAEEDA', winner?'#5DCAA5':'#FAC775', winner?'#085041':'#633806')}}>
+      <div style={{...C.note(winner?'#eff6ff':'#FAEEDA', winner?'#93c5fd':'#FAC775', winner?'#1e40af':'#633806')}}>
         <b>{winner ? '🏠 Ипотека выгоднее — разница ' + fmtM(Math.abs(netI-savAcc)) : '🏘️ Аренда + депозит выгоднее — разница ' + fmtM(Math.abs(netI-savAcc))}</b><br/>
         При ипотеке — вы владелец актива. При аренде — гибкость и ликвидность.
       </div>
@@ -979,7 +1000,7 @@ function CalcStepsTab({ toast$, calcCfg }) {
       </div>
 
       <div style={{height:4,background:'#f1f5f9',borderRadius:2,overflow:'hidden',marginBottom:12}}>
-        <div style={{width:(done.size/steps.length*100).toFixed(1)+'%',height:'100%',background:'#1D9E75',borderRadius:2,transition:'width .3s'}}/>
+        <div style={{width:(done.size/steps.length*100).toFixed(1)+'%',height:'100%',background:'#3b82f6',borderRadius:2,transition:'width .3s'}}/>
       </div>
 
       <div style={C.card}>
@@ -987,7 +1008,7 @@ function CalcStepsTab({ toast$, calcCfg }) {
           <div key={i} style={{display:'flex',gap:10,padding:'8px 0',borderBottom:i<steps.length-1?'1px solid #f8fafc':'none'}}>
             <div onClick={()=>toggle(i)}
               style={{width:22,height:22,borderRadius:'50%',flexShrink:0,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:500,transition:'all .15s',
-                background:done.has(i)?'#1D9E75':'#E1F5EE',color:done.has(i)?'#fff':'#0F6E56',border:'1px solid '+(done.has(i)?'#1D9E75':'#5DCAA5')}}>
+                background:done.has(i)?'#3b82f6':'#eff6ff',color:done.has(i)?'#fff':'#1d4ed8',border:'1px solid '+(done.has(i)?'#3b82f6':'#93c5fd')}}>
               {done.has(i) ? <i className="ti ti-check" style={{fontSize:11}}/> : i+1}
             </div>
             <div style={{flex:1}}>
@@ -1076,6 +1097,10 @@ function CalcMortgageTab({ doCalc, clients }) {
 
   return (
     <div>
+      <div className="hint">
+        <span className="hint-icon">💡</span>
+        <div><b>Как считать:</b> «По цене квартиры» — узнать платёж и нужный доход под конкретную квартиру. «По зарплате» — узнать какую квартиру потянет клиент с его доходом. Выберите программу (Наурыз для льготного платежа) и заполните поля.</div>
+      </div>
       {/* Режим */}
       <div className="r2" style={{marginBottom:12}}>
         {[['price','По цене квартиры'],['salary','По зарплате']].map(([m,l])=>(

@@ -34,6 +34,15 @@ describe('avgSalary', () => {
   test('фильтрует нули и отрицательные', () => {
     expect(avgSalary([0, -100, 30000])).toBe(Math.round(30000 * 7.9 / 6))
   })
+
+  test('6 равных месяцев → ровно ОПВ × 7.9', () => {
+    expect(avgSalary(Array(6).fill(30000))).toBe(Math.round(30000 * 7.9))
+  })
+
+  test('12 равных месяцев НЕ завышают ЗП (делитель = n при n > 6)', () => {
+    // Раньше: (12P·7.9/6 + 7.9P)/2 = 11.85P — завышение в 1.5 раза
+    expect(avgSalary(Array(12).fill(30000))).toBe(Math.round(30000 * 7.9))
+  })
 })
 
 describe('calcTax — Трудовой', () => {
@@ -229,6 +238,15 @@ describe('calcBankApproval', () => {
     for (let i = 1; i < r.allPrograms.length; i++) {
       expect(r.allPrograms[i].maxPrice).toBeLessThanOrEqual(r.allPrograms[i-1].maxPrice)
     }
+  })
+
+  test('режим ОПВ: доход = avgSalary(ОПВ), без завышения в 10 раз', () => {
+    const opv = [50000, 50000, 50000, 50000, 50000, 50000]
+    const r = calcBankApproval({ orgs:[{ mode:'opv', opvMonths:opv, oldCredit:0 }], members:1 })
+    // 50 000 ОПВ ≈ ЗП 500 000; avgSalary даёт 50000×7.9 = 395 000 (банковский дисконт).
+    // Старый код делил ОПВ на 0.10 до avgSalary и получал 3 950 000.
+    expect(r.totalIncome).toBe(avgSalary(opv))
+    expect(r.totalIncome).toBe(Math.round(50000 * 7.9))
   })
 })
 
