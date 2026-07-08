@@ -48,6 +48,7 @@ jest.mock('../../lib/supabase', () => ({
   clientToDb:  (c) => c,
   addSavedCalcs: (row) => row,
   addCloseReason: (row) => row,
+  addTags: (row) => row,
   findMissingOptionalColumn: () => null,
 }))
 

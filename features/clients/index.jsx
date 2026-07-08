@@ -141,6 +141,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const [showCalc,   setShowCalc]   = useState(false)
   const [showStageDrawer, setShowStageDrawer] = useState(false)
   const [closeAsk,   setCloseAsk]   = useState(false)  // модалка «причина закрытия»
+  const [tagInp,     setTagInp]     = useState(null)   // null = скрыт, '' = ввод тега
   const canEdit = user.role !== 'qa'  // техник (admin) и все остальные кроме qa могут редактировать
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
@@ -390,6 +391,29 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                     <div style={{fontSize:9,fontWeight:600,opacity:.6,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:2}}>{l}</div>
                     <div style={{fontSize:12,fontWeight:700}}>{v}</div>
                   </div>
+                ))}
+              </div>
+              {/* Теги (миграция 012) */}
+              <div style={{display:'flex',gap:5,flexWrap:'wrap',marginTop:10,alignItems:'center'}}>
+                {(c.tags||[]).map(t => (
+                  <span key={t} style={{display:'inline-flex',alignItems:'center',gap:4,background:'rgba(255,255,255,.16)',borderRadius:20,padding:'3px 9px',fontSize:11,fontWeight:700}}>
+                    #{t}
+                    {canEdit && <i className="ti ti-x" style={{fontSize:9,cursor:'pointer',opacity:.7}} onClick={()=>set('tags',(c.tags||[]).filter(x=>x!==t))}/>}
+                  </span>
+                ))}
+                {canEdit && (tagInp !== null ? (
+                  <input autoFocus value={tagInp} onChange={e=>setTagInp(e.target.value)}
+                    onKeyDown={e=>{
+                      if (e.key==='Enter' && tagInp.trim()) { set('tags', [...new Set([...(c.tags||[]), tagInp.trim().toLowerCase().replace(/^#/,'')])]); setTagInp(null) }
+                      if (e.key==='Escape') setTagInp(null)
+                    }}
+                    onBlur={()=>setTagInp(null)} placeholder="тег + Enter"
+                    style={{width:110,padding:'3px 9px',borderRadius:20,border:'1px solid rgba(255,255,255,.35)',background:'rgba(255,255,255,.12)',color:'#fff',fontSize:11,outline:'none'}}/>
+                ) : (
+                  <button onClick={()=>setTagInp('')}
+                    style={{background:'transparent',border:'1px dashed rgba(255,255,255,.4)',borderRadius:20,padding:'3px 9px',fontSize:11,fontWeight:700,color:'rgba(255,255,255,.75)',cursor:'pointer',fontFamily:'inherit'}}>
+                    + тег
+                  </button>
                 ))}
               </div>
               {c.contractAmount > 0 && (c.payments||[]).length > 0 && (

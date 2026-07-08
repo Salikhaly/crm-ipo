@@ -2,7 +2,7 @@
 // GET  /api/clients        → список клиентов (с фильтрами)
 // POST /api/clients        → создать клиента
 
-import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, findMissingOptionalColumn } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
@@ -71,6 +71,7 @@ export default withAuth(async function handler(req, res) {
     const row = clientToDb(client)
     addSavedCalcs(row, client)
     addCloseReason(row, client)
+    addTags(row, client)
     let { data, error } = await sb
       .from('clients')
       .insert(row)

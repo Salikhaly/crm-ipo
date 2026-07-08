@@ -3,7 +3,7 @@
 // PUT    /api/clients/:id  → обновить клиента
 // DELETE /api/clients/:id  → удалить клиента
 
-import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, findMissingOptionalColumn } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 
@@ -104,6 +104,7 @@ export default withAuth(async function handler(req, res) {
 
     addSavedCalcs(row, client)
     addCloseReason(row, client)
+    addTags(row, client)
 
     let { data, error } = await sb
       .from('clients')
