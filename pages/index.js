@@ -1895,6 +1895,22 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
     ['source','Источник'], ['contractAmount','Договор'], ['dateIn','Дата'],
   ]
 
+  // Сохранённые виды: имя + набор фильтров (localStorage)
+  const [views, setViews] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('crm_views') || '[]') } catch(e) { return [] }
+  })
+  function persistViews(v) { setViews(v); try { localStorage.setItem('crm_views', JSON.stringify(v)) } catch(e) {} }
+  function addView() {
+    const name = window.prompt('Название вида (например «Горячие Instagram»):')
+    if (!name || !name.trim()) return
+    persistViews([...views.filter(v => v.name !== name.trim()), { name: name.trim(), search, fStage, fMgr, fTag, view }])
+  }
+  function applyView(v) {
+    setSearch(v.search || ''); setFStage(v.fStage || ''); setFMgr(v.fMgr || '')
+    setFTag(v.fTag || ''); if (v.view) switchView(v.view)
+  }
+  function delView(name) { persistViews(views.filter(v => v.name !== name)) }
+
   return (
     <div>
       <div style={{background:'linear-gradient(135deg,#0f172a,#1e3a5f)',borderRadius:14,padding:'15px',marginBottom:14,color:'#fff'}}>
@@ -1918,6 +1934,20 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
             {managers.map(m => <option key={m.id} value={m.id} style={{color:'#000'}}>{m.name}</option>)}
           </select>
         </div>
+      </div>
+
+      {/* Сохранённые виды */}
+      <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center',marginBottom:12}}>
+        {views.map(v => (
+          <span key={v.name} style={{display:'inline-flex',alignItems:'center',gap:5,background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:20,padding:'4px 11px',fontSize:11.5,fontWeight:700,color:'#334155'}}>
+            <span onClick={()=>applyView(v)} style={{cursor:'pointer'}}>⭐ {v.name}</span>
+            <i className="ti ti-x" style={{fontSize:10,color:'#94a3b8',cursor:'pointer'}} onClick={()=>delView(v.name)}/>
+          </span>
+        ))}
+        <button onClick={addView}
+          style={{display:'inline-flex',alignItems:'center',gap:5,background:'transparent',border:'1.5px dashed #cbd5e1',borderRadius:20,padding:'4px 11px',fontSize:11.5,fontWeight:700,color:'#64748b',cursor:'pointer',fontFamily:'inherit'}}>
+          <i className="ti ti-bookmark-plus" style={{fontSize:12}}/>Сохранить вид
+        </button>
       </div>
 
       {waNew?.length > 0 && !search && !fStage && !fMgr && (

@@ -22,6 +22,7 @@ import { Logo } from '../../components/logo'
 import {
   annuity, fmtMoney, fmtM, API_PROGRAMS_FALLBACK,
 } from '../../lib/calcData'
+import { fillDocTemplate, DOC_TEMPLATES_FALLBACK } from '../../lib/docTemplates'
 
 
 // ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
@@ -142,6 +143,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const [showStageDrawer, setShowStageDrawer] = useState(false)
   const [closeAsk,   setCloseAsk]   = useState(false)  // модалка «причина закрытия»
   const [tagInp,     setTagInp]     = useState(null)   // null = скрыт, '' = ввод тега
+  const [docDlg,     setDocDlg]     = useState(null)   // {templates, selId, text} — генератор документов
   const canEdit = user.role !== 'qa'  // техник (admin) и все остальные кроме qa могут редактировать
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
@@ -209,6 +211,35 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const ctObj    = CT[c.contractType]
   const mgr      = managers.find(m => m.id === c.manager)
 
+  // ── Генератор документов: шаблон + данные клиента → печать/PDF ──
+  function docFill(tpl) {
+    return fillDocTemplate(tpl.body, c, {
+      manager:       mgr?.name || user.name,
+      contractLabel: ctObj?.l || '',
+      date:          new Date().toLocaleDateString('ru-RU'),
+    })
+  }
+  async function openDocDlg() {
+    let templates = DOC_TEMPLATES_FALLBACK
+    try {
+      const res = await api.calc('doc_templates', {})
+      if (Array.isArray(res?.templates) && res.templates.length) templates = res.templates
+    } catch (e) { /* оффлайн/ошибка — используем дефолтные */ }
+    setDocDlg({ templates, selId: templates[0].id, text: docFill(templates[0]) })
+  }
+  function printDoc() {
+    if (!docDlg) return
+    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    const title = (docDlg.templates.find(t=>t.id===docDlg.selId)?.name || 'Документ') + ' — ' + (c.fio || '')
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>body{font-family:'Times New Roman',serif;font-size:13pt;line-height:1.55;max-width:720px;margin:40px auto;padding:0 24px;color:#000;white-space:pre-wrap}@media print{body{margin:0 auto}}</style>
+</head><body>${esc(docDlg.text)}<script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`
+    const w = window.open('', '_blank')
+    if (!w) { toast$('❌ Разрешите всплывающие окна для печати', 'err'); return }
+    w.document.write(html)
+    w.document.close()
+  }
+
   const totalPaid    = (c.payments||[]).filter(p=>p.status==='paid').reduce((s,p)=>s+p.paidAmount,0)
   const totalPartial = (c.payments||[]).filter(p=>p.status==='partial').reduce((s,p)=>s+p.paidAmount,0)
   const payPct       = c.contractAmount > 0 ? Math.round((totalPaid+totalPartial)/c.contractAmount*100) : 0
@@ -265,6 +296,34 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
         {showStageDrawer && (
           <div onClick={()=>setShowStageDrawer(false)}
             style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:998}}/>
+        )}
+        {/* Генератор документов: шаблон → подстановка → печать/PDF */}
+        {docDlg && (
+          <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.55)',zIndex:1100,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(3px)',padding:16}}>
+            <div style={{background:'#fff',borderRadius:18,width:'100%',maxWidth:640,maxHeight:'90vh',display:'flex',flexDirection:'column',padding:18,boxShadow:'0 20px 60px rgba(0,0,0,.28)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                <div style={{fontWeight:800,fontSize:16}}>📄 Документ для {c.fio || 'клиента'}</div>
+                <button onClick={()=>setDocDlg(null)} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+              </div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+                {docDlg.templates.map(t => (
+                  <button key={t.id} onClick={()=>setDocDlg(d=>({...d, selId:t.id, text:docFill(t)}))}
+                    style={{padding:'6px 12px',borderRadius:20,border:`1.5px solid ${docDlg.selId===t.id?'#3b82f6':'#e2e8f0'}`,background:docDlg.selId===t.id?'#eff6ff':'#fff',color:docDlg.selId===t.id?'#1d4ed8':'#64748b',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:11,color:'#94a3b8',marginBottom:6}}>Текст можно поправить перед печатью — прочерки «____» значат, что поле клиента не заполнено.</div>
+              <textarea value={docDlg.text} onChange={e=>setDocDlg(d=>({...d, text:e.target.value}))}
+                style={{flex:1,minHeight:280,padding:'12px 14px',border:'1.5px solid #e2e8f0',borderRadius:11,fontSize:12.5,fontFamily:'monospace',lineHeight:1.55,resize:'vertical',color:'#0f172a',outline:'none'}}/>
+              <div style={{display:'flex',gap:8,marginTop:12}}>
+                <Btn variant="primary" style={{flex:1,justifyContent:'center'}} onClick={printDoc}>
+                  <i className="ti ti-printer"/>Печать / Сохранить PDF
+                </Btn>
+                <Btn onClick={()=>setDocDlg(null)}>Закрыть</Btn>
+              </div>
+            </div>
+          </div>
         )}
         {/* Причина закрытия — обязательна при переносе в «Закрыто» */}
         {closeAsk && (
@@ -534,6 +593,11 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   </Collaps>
                 </>}
                 {tab==='contract' && <>
+                  <div style={{display:'flex',justifyContent:'flex-end',marginBottom:11}}>
+                    <Btn variant="primary" size="sm" onClick={openDocDlg}>
+                      <i className="ti ti-file-text"/>Сформировать документ
+                    </Btn>
+                  </div>
                   <ContractTab c={c} set={set} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} pipeline={pl}/>
                   <div style={{marginTop:14}}>
                     <Collaps title={`💰 Оплата по договору (${(c.payments||[]).length})`} defaultOpen={(c.payments||[]).length>0}>

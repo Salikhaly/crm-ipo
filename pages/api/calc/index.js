@@ -55,6 +55,8 @@ async function loadCfg(sb) {
       pmNauryz:   s?.pm_nauryz  || DEFAULT_CFG.pmNauryz,
       pmOther:    s?.pm_other   || DEFAULT_CFG.pmOther,
       kd:         s?.kd         || DEFAULT_CFG.kd,
+      // Шаблоны документов (миграция 013) — null если колонки/данных нет, фронт возьмёт дефолт
+      docTemplates: Array.isArray(s?.doc_templates) && s.doc_templates.length ? s.doc_templates : null,
       programs:   Object.keys(programs).length > 0 ? programs : DEFAULT_PROGRAMS,
       // Если в БD есть программы — берём их nauryzKeys; иначе дефолтные
       nauryzKeys: Object.keys(programs).length > 0 ? nauryzKeys : DEFAULT_CFG.nauryzKeys,
@@ -93,6 +95,8 @@ export default withAuth(async function handler(req, res) {
     scenario:           p => calcScenario(p),
     programs:           () => ({ ok: true, programs: Object.values(cfg.programs) }),
     settings:           () => ({ ok: true, mrp: cfg.mrp, pmNauryz: cfg.pmNauryz, pmOther: cfg.pmOther, kd: cfg.kd }),
+    // Шаблоны документов — доступны любой роли (менеджер формирует договор из карточки)
+    doc_templates:      () => ({ ok: true, templates: cfg.docTemplates }),
   }
 
   if (!ACTIONS[action]) {
