@@ -21,6 +21,7 @@ import {
   Fl, Tag, StTag, SrTag, CrTag, Tgl, Prog, Inp, Sel, Btn,
 } from '../components/ui'
 import { Logo } from '../components/logo'
+import { clientFromAnketa, clientsFromList } from '../lib/importAnketa'
 import { CalcPage } from '../features/calc'
 import { WAPage } from '../features/wa'
 import { AdminPage, CalcSettingsPanel } from '../features/admin'
@@ -153,6 +154,29 @@ export default function CRM() {
     a.click()
     URL.revokeObjectURL(a.href)
     toast$('📥 Экспортировано клиентов: ' + list.length)
+  }
+
+  // ─── ИМПОРТ клиентов из Excel (head/admin) ──
+  // list — массив частичных клиентов из lib/importAnketa. Дедуп по телефону/ИИН.
+  async function importClients(list) {
+    if (!list.length) { toast$('⚠️ В файле не найдено клиентов', 'err'); return { created:0, skipped:0 } }
+    setSyncing(true)
+    let created = 0, skipped = 0
+    const seenP = new Set(clients.map(x => (x.phone||'').replace(/\D/g,'')).filter(Boolean))
+    const seenI = new Set(clients.map(x => x.iin).filter(Boolean))
+    for (const partial of list) {
+      const pd = (partial.phone||'').replace(/\D/g,'')
+      if ((pd && seenP.has(pd)) || (partial.iin && seenI.has(partial.iin))) { skipped++; continue }
+      const full = { ...emptyClient(user.manager_id||''), ...partial, id: uid() }
+      if (partial.__note) full.comments = [{ id:uid(), text:'📥 Импорт · '+partial.__note, author:user.name||'', date:nowStr(), sys:true }]
+      delete full.__note
+      const saved = await saveClient(full, { quiet:true })
+      if (saved) { created++; if (pd) seenP.add(pd); if (partial.iin) seenI.add(partial.iin) }
+      else skipped++
+    }
+    setSyncing(false)
+    toast$(`📥 Импортировано: ${created}${skipped ? ` · пропущено (дубли): ${skipped}` : ''}`)
+    return { created, skipped }
   }
 
   // ─── МАССОВЫЕ ДЕЙСТВИЯ из таблицы клиентов (head/admin) ──
@@ -943,6 +967,11 @@ export default function CRM() {
               </div>
             </>}
             {page === 'search' && isSuperUser && (
+              <Btn size="sm" onClick={() => setModal({ type:'import' })} title="Импорт клиентов из Excel">
+                <i className="ti ti-upload"/><span className="btn-text-desktop">Импорт</span>
+              </Btn>
+            )}
+            {page === 'search' && isSuperUser && (
               <Btn size="sm" onClick={() => exportCsv()} title="Выгрузить список в Excel (CSV)">
                 <i className="ti ti-download"/><span className="btn-text-desktop">Экспорт</span>
               </Btn>
@@ -998,6 +1027,9 @@ export default function CRM() {
 
       {/* Онбординг-тур первого входа */}
       {showTour && <TourModal onDone={closeTour}/>}
+
+      {/* Импорт клиентов из Excel */}
+      {modal?.type==='import' && <ImportModal onImport={importClients} onClose={()=>setModal(null)} syncing={syncing}/>}
 
       {/* Modals */}
       {modal?.type==='quick_client'  && <QuickClientModal  base={modal.c} onSave={saveClient} onOpen={c=>setSelClient(c)} onClose={()=>setModal(null)}
@@ -1165,6 +1197,119 @@ function NotifBell({ clients, waUnread, onOpen, goWa, goTasks }) {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// ─── ИМПОРТ КЛИЕНТОВ ИЗ EXCEL ────────────────────────────────────
+// Читает файлы через SheetJS (грузится лениво при первом открытии).
+// Формат «Анкета ПКБ» (лист «Анкета») → 1 клиент/файл; иначе список по заголовкам.
+function ImportModal({ onImport, onClose, syncing }) {
+  const [parsed, setParsed] = useState(null)   // null=ещё не выбирали, []=пусто
+  const [busy,   setBusy]   = useState(false)
+  const [err,    setErr]    = useState('')
+  const [done,   setDone]   = useState(null)    // {created, skipped}
+  const fileRef = useRef(null)
+
+  async function handleFiles(files) {
+    const list = Array.from(files || [])
+    if (!list.length) return
+    setBusy(true); setErr(''); setDone(null)
+    try {
+      const XLSX = await import('xlsx')
+      const all = []
+      for (const file of list) {
+        const buf = await file.arrayBuffer()
+        const wb  = XLSX.read(buf, { type:'array' })
+        if (wb.Sheets['Анкета']) {
+          const getCell = (s, r) => {
+            const ws = wb.Sheets[s]; if (!ws) return ''
+            const cell = ws[r]; return cell ? (cell.w ?? cell.v ?? '') : ''
+          }
+          all.push(clientFromAnketa(getCell))
+        } else {
+          const ws   = wb.Sheets[wb.SheetNames[0]]
+          const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' })
+          all.push(...clientsFromList(rows))
+        }
+      }
+      setParsed(all)
+      if (!all.length) setErr('Не удалось распознать клиентов. Проверьте, что это анкета ПКБ или список с заголовками (ФИО, Телефон, ИИН…).')
+    } catch (e) {
+      setErr('Ошибка чтения файла: ' + (e.message || e))
+      setParsed([])
+    } finally { setBusy(false) }
+  }
+
+  async function doImport() {
+    setBusy(true)
+    const res = await onImport(parsed || [])
+    setBusy(false); setDone(res)
+  }
+
+  const th = { padding:'7px 9px', textAlign:'left', fontSize:10, fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'.04em', borderBottom:'1.5px solid #e2e8f0', whiteSpace:'nowrap' }
+  const td = { padding:'6px 9px', fontSize:12, borderBottom:'1px solid #f1f5f9', whiteSpace:'nowrap' }
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.55)',zIndex:600,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(4px)',padding:16}}>
+      <div style={{background:'#fff',borderRadius:18,width:'100%',maxWidth:680,maxHeight:'90vh',display:'flex',flexDirection:'column',padding:20,boxShadow:'0 20px 60px rgba(0,0,0,.28)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+          <div style={{fontWeight:800,fontSize:17}}>📥 Импорт клиентов из Excel</div>
+          <button onClick={onClose} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+        </div>
+        <div style={{fontSize:12.5,color:'#64748b',marginBottom:14,lineHeight:1.5}}>
+          Поддерживаются <b>анкеты ПКБ</b> (лист «Анкета» — 1 клиент на файл, можно выбрать несколько)
+          и <b>списки</b> с заголовками (ФИО, Телефон, ИИН, СРЗП, Нагрузка…). Дубли по телефону/ИИН пропускаются.
+        </div>
+
+        {done ? (
+          <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:12,padding:'16px 18px',textAlign:'center'}}>
+            <div style={{fontSize:15,fontWeight:800,color:'#166534',marginBottom:4}}>✓ Готово</div>
+            <div style={{fontSize:13,color:'#15803d'}}>Создано: <b>{done.created}</b>{done.skipped ? ` · пропущено (дубли): ${done.skipped}` : ''}</div>
+            <Btn variant="primary" style={{marginTop:14,justifyContent:'center'}} onClick={onClose}>Закрыть</Btn>
+          </div>
+        ) : (<>
+          <div onClick={()=>!busy&&fileRef.current?.click()}
+            style={{border:'2.5px dashed #cbd5e1',borderRadius:14,padding:'22px',textAlign:'center',cursor:busy?'wait':'pointer',background:'#f8fafc',marginBottom:12}}>
+            <i className="ti ti-file-spreadsheet" style={{fontSize:30,color:'#3b82f6',display:'block',marginBottom:6}}/>
+            <div style={{fontWeight:700,fontSize:13,color:'#334155'}}>{busy ? 'Читаю файлы…' : 'Выбрать Excel-файл(ы)'}</div>
+            <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>.xlsx / .xls — анкета ПКБ или список клиентов</div>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{display:'none'}}
+              onChange={e=>handleFiles(e.target.files)}/>
+          </div>
+
+          {err && <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:10,padding:'10px 13px',fontSize:12.5,color:'#991b1b',marginBottom:12}}>{err}</div>}
+
+          {parsed && parsed.length > 0 && (
+            <div style={{flex:1,overflow:'auto',border:'1.5px solid #e2e8f0',borderRadius:12,marginBottom:12}}>
+              <table style={{width:'100%',borderCollapse:'collapse'}}>
+                <thead><tr style={{background:'#f8fafc',position:'sticky',top:0}}>
+                  <th style={th}>ФИО</th><th style={th}>Телефон</th><th style={th}>ИИН</th><th style={th}>Доход</th><th style={th}>Нагрузка</th>
+                </tr></thead>
+                <tbody>
+                  {parsed.slice(0,100).map((c,i)=>(
+                    <tr key={i}>
+                      <td style={td}>{c.fio||<span style={{color:'#cbd5e1'}}>—</span>}</td>
+                      <td style={td}>{c.phone||'—'}</td>
+                      <td style={td}>{c.iin||'—'}</td>
+                      <td style={td}>{c.officialIncome?fmtN(+c.officialIncome)+'₸':'—'}</td>
+                      <td style={td}>{c.monthlyLoad?fmtN(+c.monthlyLoad)+'₸':'—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <Btn variant="primary" style={{flex:1,justifyContent:'center'}}
+              disabled={!parsed||!parsed.length||busy||syncing} onClick={doImport}>
+              {busy ? <><i className="ti ti-loader spin"/>Импорт…</> : <><i className="ti ti-database-import"/>Импортировать{parsed&&parsed.length?` (${parsed.length})`:''}</>}
+            </Btn>
+            <Btn onClick={onClose}>Отмена</Btn>
+          </div>
+        </>)}
+      </div>
     </div>
   )
 }
