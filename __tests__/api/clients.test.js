@@ -48,8 +48,12 @@ jest.mock('../../lib/supabase', () => ({
   clientToDb:  (c) => c,
   addSavedCalcs: (row) => row,
   addCloseReason: (row) => row,
+  addTags: (row) => row,
+  addCustom: (row) => row,
   findMissingOptionalColumn: () => null,
 }))
+
+jest.mock('../../lib/actionLog', () => ({ logAction: jest.fn() }))
 
 // Динамический мок withAuth: возвращает role/manager_id текущего теста
 let _authRow = { role: 'admin', manager_id: null }

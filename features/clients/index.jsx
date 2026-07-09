@@ -22,6 +22,7 @@ import { Logo } from '../../components/logo'
 import {
   annuity, fmtMoney, fmtM, API_PROGRAMS_FALLBACK,
 } from '../../lib/calcData'
+import { fillDocTemplate, DOC_TEMPLATES_FALLBACK } from '../../lib/docTemplates'
 
 
 // ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
@@ -141,6 +142,19 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const [showCalc,   setShowCalc]   = useState(false)
   const [showStageDrawer, setShowStageDrawer] = useState(false)
   const [closeAsk,   setCloseAsk]   = useState(false)  // модалка «причина закрытия»
+  const [tagInp,     setTagInp]     = useState(null)   // null = скрыт, '' = ввод тега
+  const [docDlg,     setDocDlg]     = useState(null)   // {templates, selId, text} — генератор документов
+  const [customFields, setCustomFields] = useState([]) // конфиг доп. полей (миграция 014)
+
+  // Загружаем описания доп. полей один раз при открытии карточки (доступно всем ролям)
+  useEffect(() => {
+    let alive = true
+    api.calc('custom_fields', {})
+      .then(r => { if (alive && Array.isArray(r?.fields)) setCustomFields(r.fields) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+  const setCustomVal = (key, v) => set('custom', { ...(c.custom || {}), [key]: v })
   const canEdit = user.role !== 'qa'  // техник (admin) и все остальные кроме qa могут редактировать
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
@@ -208,6 +222,35 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const ctObj    = CT[c.contractType]
   const mgr      = managers.find(m => m.id === c.manager)
 
+  // ── Генератор документов: шаблон + данные клиента → печать/PDF ──
+  function docFill(tpl) {
+    return fillDocTemplate(tpl.body, c, {
+      manager:       mgr?.name || user.name,
+      contractLabel: ctObj?.l || '',
+      date:          new Date().toLocaleDateString('ru-RU'),
+    })
+  }
+  async function openDocDlg() {
+    let templates = DOC_TEMPLATES_FALLBACK
+    try {
+      const res = await api.calc('doc_templates', {})
+      if (Array.isArray(res?.templates) && res.templates.length) templates = res.templates
+    } catch (e) { /* оффлайн/ошибка — используем дефолтные */ }
+    setDocDlg({ templates, selId: templates[0].id, text: docFill(templates[0]) })
+  }
+  function printDoc() {
+    if (!docDlg) return
+    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    const title = (docDlg.templates.find(t=>t.id===docDlg.selId)?.name || 'Документ') + ' — ' + (c.fio || '')
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>body{font-family:'Times New Roman',serif;font-size:13pt;line-height:1.55;max-width:720px;margin:40px auto;padding:0 24px;color:#000;white-space:pre-wrap}@media print{body{margin:0 auto}}</style>
+</head><body>${esc(docDlg.text)}<script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`
+    const w = window.open('', '_blank')
+    if (!w) { toast$('❌ Разрешите всплывающие окна для печати', 'err'); return }
+    w.document.write(html)
+    w.document.close()
+  }
+
   const totalPaid    = (c.payments||[]).filter(p=>p.status==='paid').reduce((s,p)=>s+p.paidAmount,0)
   const totalPartial = (c.payments||[]).filter(p=>p.status==='partial').reduce((s,p)=>s+p.paidAmount,0)
   const payPct       = c.contractAmount > 0 ? Math.round((totalPaid+totalPartial)/c.contractAmount*100) : 0
@@ -264,6 +307,34 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
         {showStageDrawer && (
           <div onClick={()=>setShowStageDrawer(false)}
             style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:998}}/>
+        )}
+        {/* Генератор документов: шаблон → подстановка → печать/PDF */}
+        {docDlg && (
+          <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.55)',zIndex:1100,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(3px)',padding:16}}>
+            <div style={{background:'#fff',borderRadius:18,width:'100%',maxWidth:640,maxHeight:'90vh',display:'flex',flexDirection:'column',padding:18,boxShadow:'0 20px 60px rgba(0,0,0,.28)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                <div style={{fontWeight:800,fontSize:16}}>📄 Документ для {c.fio || 'клиента'}</div>
+                <button onClick={()=>setDocDlg(null)} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+              </div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+                {docDlg.templates.map(t => (
+                  <button key={t.id} onClick={()=>setDocDlg(d=>({...d, selId:t.id, text:docFill(t)}))}
+                    style={{padding:'6px 12px',borderRadius:20,border:`1.5px solid ${docDlg.selId===t.id?'#3b82f6':'#e2e8f0'}`,background:docDlg.selId===t.id?'#eff6ff':'#fff',color:docDlg.selId===t.id?'#1d4ed8':'#64748b',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:11,color:'#94a3b8',marginBottom:6}}>Текст можно поправить перед печатью — прочерки «____» значат, что поле клиента не заполнено.</div>
+              <textarea value={docDlg.text} onChange={e=>setDocDlg(d=>({...d, text:e.target.value}))}
+                style={{flex:1,minHeight:280,padding:'12px 14px',border:'1.5px solid #e2e8f0',borderRadius:11,fontSize:12.5,fontFamily:'monospace',lineHeight:1.55,resize:'vertical',color:'#0f172a',outline:'none'}}/>
+              <div style={{display:'flex',gap:8,marginTop:12}}>
+                <Btn variant="primary" style={{flex:1,justifyContent:'center'}} onClick={printDoc}>
+                  <i className="ti ti-printer"/>Печать / Сохранить PDF
+                </Btn>
+                <Btn onClick={()=>setDocDlg(null)}>Закрыть</Btn>
+              </div>
+            </div>
+          </div>
         )}
         {/* Причина закрытия — обязательна при переносе в «Закрыто» */}
         {closeAsk && (
@@ -392,6 +463,29 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   </div>
                 ))}
               </div>
+              {/* Теги (миграция 012) */}
+              <div style={{display:'flex',gap:5,flexWrap:'wrap',marginTop:10,alignItems:'center'}}>
+                {(c.tags||[]).map(t => (
+                  <span key={t} style={{display:'inline-flex',alignItems:'center',gap:4,background:'rgba(255,255,255,.16)',borderRadius:20,padding:'3px 9px',fontSize:11,fontWeight:700}}>
+                    #{t}
+                    {canEdit && <i className="ti ti-x" style={{fontSize:9,cursor:'pointer',opacity:.7}} onClick={()=>set('tags',(c.tags||[]).filter(x=>x!==t))}/>}
+                  </span>
+                ))}
+                {canEdit && (tagInp !== null ? (
+                  <input autoFocus value={tagInp} onChange={e=>setTagInp(e.target.value)}
+                    onKeyDown={e=>{
+                      if (e.key==='Enter' && tagInp.trim()) { set('tags', [...new Set([...(c.tags||[]), tagInp.trim().toLowerCase().replace(/^#/,'')])]); setTagInp(null) }
+                      if (e.key==='Escape') setTagInp(null)
+                    }}
+                    onBlur={()=>setTagInp(null)} placeholder="тег + Enter"
+                    style={{width:110,padding:'3px 9px',borderRadius:20,border:'1px solid rgba(255,255,255,.35)',background:'rgba(255,255,255,.12)',color:'#fff',fontSize:11,outline:'none'}}/>
+                ) : (
+                  <button onClick={()=>setTagInp('')}
+                    style={{background:'transparent',border:'1px dashed rgba(255,255,255,.4)',borderRadius:20,padding:'3px 9px',fontSize:11,fontWeight:700,color:'rgba(255,255,255,.75)',cursor:'pointer',fontFamily:'inherit'}}>
+                    + тег
+                  </button>
+                ))}
+              </div>
               {c.contractAmount > 0 && (c.payments||[]).length > 0 && (
                 <div style={{marginTop:11}}>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:4,opacity:.8}}><span>Получено денег</span><span>{payPct}%</span></div>
@@ -492,6 +586,30 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
               <div style={{padding:'18px 19px'}}>
                 {tab==='profile'  && <>
                   <ProfileTab c={c} set={set} managers={managers} canEdit={canEdit}/>
+                  {customFields.length > 0 && (
+                    <div style={{marginTop:14}}>
+                      <Collaps title="🧩 Дополнительные поля" defaultOpen>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                          {customFields.map(f => {
+                            const key = f.key || f.id
+                            const val = (c.custom || {})[key] ?? ''
+                            const opts = String(f.options || '').split(',').map(s=>s.trim()).filter(Boolean)
+                            return (
+                              <Fl key={f.id} l={f.label || key} ch={
+                                f.type === 'select'
+                                  ? <Sel value={val} onChange={e=>canEdit&&setCustomVal(key,e.target.value)} disabled={!canEdit}>
+                                      <option value="">—</option>
+                                      {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                                    </Sel>
+                                  : <Inp type={f.type==='number'?'number':f.type==='date'?'date':'text'}
+                                      value={val} onChange={e=>canEdit&&setCustomVal(key,e.target.value)} disabled={!canEdit}/>
+                              }/>
+                            )
+                          })}
+                        </div>
+                      </Collaps>
+                    </div>
+                  )}
                   <div style={{marginTop:14}}>
                     <Collaps title="📊 Анализ платёжеспособности" defaultOpen>
                       <AnalysisTab c={c} set={set} canEdit={canEdit}/>
@@ -510,6 +628,11 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   </Collaps>
                 </>}
                 {tab==='contract' && <>
+                  <div style={{display:'flex',justifyContent:'flex-end',marginBottom:11}}>
+                    <Btn variant="primary" size="sm" onClick={openDocDlg}>
+                      <i className="ti ti-file-text"/>Сформировать документ
+                    </Btn>
+                  </div>
                   <ContractTab c={c} set={set} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} pipeline={pl}/>
                   <div style={{marginTop:14}}>
                     <Collaps title={`💰 Оплата по договору (${(c.payments||[]).length})`} defaultOpen={(c.payments||[]).length>0}>

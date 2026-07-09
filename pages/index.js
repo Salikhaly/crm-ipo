@@ -125,8 +125,11 @@ export default function CRM() {
   function closeTour() { localStorage.setItem('crm_tour_done', '1'); setShowTour(false) }
 
   // ─── ЭКСПОРТ CSV (для руководителя/техника) ──────────────
-  function exportCsv() {
-    const list = (searchRes.length || search || fStage || fMgr) ? searchRes : myCl
+  // listArg — конкретный список (например, выбранные в таблице); иначе текущий вид
+  function exportCsv(listArg) {
+    const list = Array.isArray(listArg) && listArg.length
+      ? listArg
+      : ((searchRes.length || search || fStage || fMgr) ? searchRes : myCl)
     if (!list.length) { toast$('⚠️ Нечего экспортировать', 'err'); return }
     const esc  = v => { const s = String(v ?? ''); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
     const head = ['ФИО','Телефон','ИИН','Город','Этап','Менеджер','Источник','Тип договора','Сумма договора','Получено','Дата','Статус связи','Причина закрытия']
@@ -150,6 +153,25 @@ export default function CRM() {
     a.click()
     URL.revokeObjectURL(a.href)
     toast$('📥 Экспортировано клиентов: ' + list.length)
+  }
+
+  // ─── МАССОВЫЕ ДЕЙСТВИЯ из таблицы клиентов (head/admin) ──
+  async function massUpdate(ids, patch) {
+    if (!ids.length) return
+    setSyncing(true)
+    let ok = 0
+    for (const id of ids) {
+      const c = clients.find(x => x.id === id)
+      if (!c) continue
+      const updated = { ...c, ...patch }
+      try {
+        await api.updateClient(id, updated)
+        setClients(cs => cs.map(x => x.id === id ? updated : x))
+        ok++
+      } catch (e) { /* пропускаем сбойного, продолжаем остальных */ }
+    }
+    setSyncing(false)
+    toast$(ok === ids.length ? `✅ Обновлено: ${ok}` : `⚠️ Обновлено ${ok} из ${ids.length}`, ok === ids.length ? 'ok' : 'err')
   }
 
   // ─── TOAST ──────────────────────────────────────────────
@@ -921,10 +943,11 @@ export default function CRM() {
               </div>
             </>}
             {page === 'search' && isSuperUser && (
-              <Btn size="sm" onClick={exportCsv} title="Выгрузить список в Excel (CSV)">
+              <Btn size="sm" onClick={() => exportCsv()} title="Выгрузить список в Excel (CSV)">
                 <i className="ti ti-download"/><span className="btn-text-desktop">Экспорт</span>
               </Btn>
             )}
+            <NotifBell clients={myCl} waUnread={waUnread} onOpen={c => setSelClient(c)} goWa={() => navTo('wa')} goTasks={() => navTo('tasks')}/>
             <GlobalSearch clients={myCl} pipeline={pipeline} onOpen={c => setSelClient(c)}/>
             <Btn variant="primary" size="sm" onClick={() => setModal({ type:'quick_client', c: emptyClient(user.manager_id||'') })}>
               <i className="ti ti-plus"/><span style={{display:'none'}} className="btn-text-desktop">Новый клиент</span><span style={{display:'inline'}}>+</span>
@@ -938,7 +961,7 @@ export default function CRM() {
           <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} clients={myCl} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
-            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')}/>}
+            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)}/>}
             {page==='wa'        && <WAPage chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
@@ -1083,6 +1106,65 @@ function TourModal({ onDone }) {
           </Btn>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── ЦЕНТР УВЕДОМЛЕНИЙ (колокольчик в топбаре) ───────────────────
+function NotifBell({ clients, waUnread, onOpen, goWa, goTasks }) {
+  const [open, setOpen] = useState(false)
+  const td = today()
+  const { overdue, newLeads } = useMemo(() => {
+    const overdue = [], newLeads = []
+    for (const c of clients) {
+      if ((c.tasks||[]).some(t => !t.done && t.due && t.due < td)) overdue.push(c)
+      if (c.stage === 'new_lead') newLeads.push(c)
+    }
+    return { overdue, newLeads }
+  }, [clients, td])
+  const total = overdue.length + newLeads.length + (waUnread || 0)
+
+  const Sec = ({ icon, color, title, items, onAll, allLabel }) => (
+    <div style={{borderBottom:'1px solid #f1f5f9'}}>
+      <div style={{padding:'8px 13px 4px',fontSize:10.5,fontWeight:800,color,textTransform:'uppercase',letterSpacing:'.05em'}}>{icon} {title} ({items.length})</div>
+      {items.slice(0,5).map(c => (
+        <div key={c.id} onClick={()=>{setOpen(false); onOpen(c)}}
+          style={{padding:'7px 13px',fontSize:12.5,fontWeight:600,cursor:'pointer',display:'flex',justifyContent:'space-between',gap:8}}
+          onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.fio||c.phone||'Без имени'}</span>
+          <span style={{fontSize:10.5,color:'#94a3b8',flexShrink:0}}>{c.phone}</span>
+        </div>
+      ))}
+      {items.length > 5 && onAll && (
+        <button onClick={()=>{setOpen(false); onAll()}} style={{display:'block',width:'100%',textAlign:'left',padding:'5px 13px 9px',border:'none',background:'transparent',color:'#3b82f6',fontSize:11.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>{allLabel}</button>
+      )}
+    </div>
+  )
+
+  return (
+    <div style={{position:'relative'}}>
+      <button onClick={()=>setOpen(o=>!o)} title="Уведомления"
+        style={{position:'relative',width:34,height:34,borderRadius:10,border:'1.5px solid #e2e8f0',background:open?'#eff6ff':'#f1f5f9',color:open?'#1d4ed8':'#64748b',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+        <i className="ti ti-bell" style={{fontSize:16}}/>
+        {total > 0 && <span style={{position:'absolute',top:-5,right:-5,background:'#ef4444',color:'#fff',borderRadius:20,fontSize:9,fontWeight:800,padding:'1px 5px',minWidth:16,textAlign:'center',lineHeight:1.5}}>{total>99?'99+':total}</span>}
+      </button>
+      {open && (
+        <>
+          <div onClick={()=>setOpen(false)} style={{position:'fixed',inset:0,zIndex:400}}/>
+          <div style={{position:'absolute',top:'calc(100% + 8px)',right:0,width:310,maxWidth:'calc(100vw - 24px)',background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,boxShadow:'0 14px 44px rgba(15,23,42,.18)',zIndex:401,overflow:'hidden'}}>
+            <div style={{padding:'10px 13px',borderBottom:'1.5px solid #e2e8f0',background:'#f8fafc',fontWeight:800,fontSize:13}}>🔔 Уведомления</div>
+            {total === 0 && <div style={{padding:'20px 13px',fontSize:12.5,color:'#94a3b8',textAlign:'center'}}>Всё под контролем — уведомлений нет 👍</div>}
+            {overdue.length  > 0 && <Sec icon="🔴" color="#ef4444" title="Просроченные задачи" items={overdue}  onAll={goTasks} allLabel="Все задачи →"/>}
+            {newLeads.length > 0 && <Sec icon="🆕" color="#6366f1" title="Новые лиды"          items={newLeads}/>}
+            {waUnread > 0 && (
+              <div onClick={()=>{setOpen(false); goWa()}} style={{padding:'10px 13px',fontSize:12.5,fontWeight:700,color:'#16a34a',cursor:'pointer',display:'flex',alignItems:'center',gap:7}}
+                onMouseEnter={e=>e.currentTarget.style.background='#f0fdf4'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <i className="ti ti-brand-whatsapp" style={{fontSize:15}}/>Непрочитанных в WhatsApp: {waUnread} →
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -1758,8 +1840,77 @@ className='search-card'
 }
 
 // ─── SEARCH PAGE ─────────────────────────────────────────────────
-function SearchPage({ clients, managers, pipeline, checklists, search, setSearch, fStage, setFStage, fMgr, setFMgr, onOpen, waNew }) {
+function SearchPage({ clients, managers, pipeline, checklists, search, setSearch, fStage, setFStage, fMgr, setFMgr, onOpen, waNew, canMass, onMass, onExportSel }) {
   const pl = pipeline || PIPELINE_DEFAULT
+  // Вид: карточки / таблица (запоминается)
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem('crm_list_view') || 'cards' } catch(e) { return 'cards' }
+  })
+  function switchView(v) { setView(v); try { localStorage.setItem('crm_list_view', v) } catch(e) {} }
+  const [sortK, setSortK] = useState('dateIn')
+  const [sortD, setSortD] = useState(-1)
+  const [sel,   setSel]   = useState(() => new Set())
+  const [fTag,  setFTag]  = useState('')
+  const [massStage, setMassStage] = useState('')
+  const [massMgr,   setMassMgr]   = useState('')
+
+  const allTags = useMemo(() => {
+    const s = new Set()
+    for (const c of clients) for (const t of (c.tags||[])) s.add(t)
+    return [...s].sort()
+  }, [clients])
+
+  const shown = useMemo(
+    () => fTag ? clients.filter(c => (c.tags||[]).includes(fTag)) : clients,
+    [clients, fTag]
+  )
+
+  const stageIdx = useMemo(() => Object.fromEntries(pl.map((p,i)=>[p.id,i])), [pl])
+  const mgrName  = id => managers.find(m=>m.id===id)?.name || ''
+  const sorted = useMemo(() => {
+    const get = c => sortK==='stage' ? (stageIdx[c.stage] ?? 99)
+      : sortK==='manager' ? mgrName(c.manager)
+      : sortK==='contractAmount' ? (c.contractAmount||0)
+      : (c[sortK] || '')
+    return [...shown].sort((a,b) => {
+      const x = get(a), y = get(b)
+      return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'ru')) * sortD
+    })
+  }, [shown, sortK, sortD, stageIdx, managers])
+
+  function toggleSort(k) { sortK === k ? setSortD(d=>-d) : (setSortK(k), setSortD(1)) }
+  function toggleSel(id) { setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n }) }
+  function toggleAll() { setSel(s => s.size === sorted.length ? new Set() : new Set(sorted.map(c=>c.id))) }
+  async function applyMass() {
+    const patch = {}
+    if (massStage) patch.stage   = massStage
+    if (massMgr)   patch.manager = massMgr
+    if (!Object.keys(patch).length) return
+    await onMass([...sel], patch)
+    setSel(new Set()); setMassStage(''); setMassMgr('')
+  }
+
+  const COLS = [
+    ['fio','Клиент'], ['phone','Телефон'], ['stage','Этап'], ['manager','Менеджер'],
+    ['source','Источник'], ['contractAmount','Договор'], ['dateIn','Дата'],
+  ]
+
+  // Сохранённые виды: имя + набор фильтров (localStorage)
+  const [views, setViews] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('crm_views') || '[]') } catch(e) { return [] }
+  })
+  function persistViews(v) { setViews(v); try { localStorage.setItem('crm_views', JSON.stringify(v)) } catch(e) {} }
+  function addView() {
+    const name = window.prompt('Название вида (например «Горячие Instagram»):')
+    if (!name || !name.trim()) return
+    persistViews([...views.filter(v => v.name !== name.trim()), { name: name.trim(), search, fStage, fMgr, fTag, view }])
+  }
+  function applyView(v) {
+    setSearch(v.search || ''); setFStage(v.fStage || ''); setFMgr(v.fMgr || '')
+    setFTag(v.fTag || ''); if (v.view) switchView(v.view)
+  }
+  function delView(name) { persistViews(views.filter(v => v.name !== name)) }
+
   return (
     <div>
       <div style={{background:'linear-gradient(135deg,#0f172a,#1e3a5f)',borderRadius:14,padding:'15px',marginBottom:14,color:'#fff'}}>
@@ -1785,6 +1936,20 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
         </div>
       </div>
 
+      {/* Сохранённые виды */}
+      <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center',marginBottom:12}}>
+        {views.map(v => (
+          <span key={v.name} style={{display:'inline-flex',alignItems:'center',gap:5,background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:20,padding:'4px 11px',fontSize:11.5,fontWeight:700,color:'#334155'}}>
+            <span onClick={()=>applyView(v)} style={{cursor:'pointer'}}>⭐ {v.name}</span>
+            <i className="ti ti-x" style={{fontSize:10,color:'#94a3b8',cursor:'pointer'}} onClick={()=>delView(v.name)}/>
+          </span>
+        ))}
+        <button onClick={addView}
+          style={{display:'inline-flex',alignItems:'center',gap:5,background:'transparent',border:'1.5px dashed #cbd5e1',borderRadius:20,padding:'4px 11px',fontSize:11.5,fontWeight:700,color:'#64748b',cursor:'pointer',fontFamily:'inherit'}}>
+          <i className="ti ti-bookmark-plus" style={{fontSize:12}}/>Сохранить вид
+        </button>
+      </div>
+
       {waNew?.length > 0 && !search && !fStage && !fMgr && (
         <div style={{background:'#f0fdf4',border:'2px solid #86efac',borderRadius:13,padding:'13px',marginBottom:14,display:'flex',gap:11,alignItems:'center'}}>
           <div style={{width:40,height:40,borderRadius:12,background:'#25d366',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><i className="ti ti-brand-whatsapp" style={{color:'#fff',fontSize:20}}/></div>
@@ -1794,15 +1959,97 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
       )}
 
       {clients.length > 0 && (
-        <div style={{fontSize:13,color:'#64748b',fontWeight:600,marginBottom:12,display:'flex',alignItems:'center',gap:6}}>
+        <div style={{fontSize:13,color:'#64748b',fontWeight:600,marginBottom:10,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
           <i className="ti ti-list" style={{fontSize:14}}/>
-          Найдено: <b style={{color:'#0f172a'}}>{clients.length}</b>
-          {(fStage||fMgr) && <button onClick={()=>{setFStage('');setFMgr('')}} style={{background:'#fef2f2',color:'#ef4444',border:'none',borderRadius:6,padding:'2px 8px',fontSize:11,fontWeight:700,cursor:'pointer',marginLeft:4}}>Сбросить</button>}
+          Найдено: <b style={{color:'#0f172a'}}>{shown.length}</b>
+          {(fStage||fMgr||fTag) && <button onClick={()=>{setFStage('');setFMgr('');setFTag('')}} style={{background:'#fef2f2',color:'#ef4444',border:'none',borderRadius:6,padding:'2px 8px',fontSize:11,fontWeight:700,cursor:'pointer',marginLeft:4}}>Сбросить</button>}
+          <div style={{marginLeft:'auto',display:'flex',gap:2,background:'#f1f5f9',borderRadius:9,padding:2}}>
+            {[['cards','ti-layout-grid','Карточки'],['table','ti-table','Таблица']].map(([v,ic,l])=>(
+              <button key={v} onClick={()=>switchView(v)} title={l}
+                style={{display:'flex',alignItems:'center',gap:5,padding:'5px 11px',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,fontWeight:700,
+                  background:view===v?'#fff':'transparent',color:view===v?'#1d4ed8':'#64748b',boxShadow:view===v?'0 1px 3px rgba(15,23,42,.12)':'none',transition:'all .13s'}}>
+                <i className={`ti ${ic}`} style={{fontSize:13}}/>{l}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
-      {clients.map(c => <BigClientCard key={c.id} c={c} managers={managers} pipeline={pl} checklists={checklists} onOpen={()=>onOpen(c)}/>)}
-      {clients.length === 0 && <div style={{textAlign:'center',padding:'44px 20px',color:'#64748b'}}><i className="ti ti-search" style={{fontSize:40,display:'block',marginBottom:10,opacity:.2}}/><p style={{fontSize:15,fontWeight:500}}>Ничего не найдено</p></div>}
+      {/* Фильтр по тегам */}
+      {allTags.length > 0 && (
+        <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:11,alignItems:'center'}}>
+          <i className="ti ti-tags" style={{fontSize:13,color:'#94a3b8'}}/>
+          {allTags.map(t => (
+            <button key={t} onClick={()=>setFTag(fTag===t?'':t)}
+              style={{padding:'3px 10px',borderRadius:20,border:`1.5px solid ${fTag===t?'#3b82f6':'#e2e8f0'}`,background:fTag===t?'#eff6ff':'#fff',color:fTag===t?'#1d4ed8':'#64748b',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+              #{t}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Панель массовых действий */}
+      {canMass && view==='table' && sel.size > 0 && (
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:12,padding:'9px 13px',marginBottom:11}}>
+          <span style={{fontSize:12.5,fontWeight:800,color:'#1d4ed8'}}>Выбрано: {sel.size}</span>
+          <Sel value={massStage} onChange={e=>setMassStage(e.target.value)} style={{width:170,padding:'6px 9px',fontSize:12}}>
+            <option value="">Этап — не менять</option>
+            {pl.filter(p=>p.id!=='closed').map(p=><option key={p.id} value={p.id}>{p.l}</option>)}
+          </Sel>
+          <Sel value={massMgr} onChange={e=>setMassMgr(e.target.value)} style={{width:170,padding:'6px 9px',fontSize:12}}>
+            <option value="">Менеджер — не менять</option>
+            {managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+          </Sel>
+          <Btn size="sm" variant="primary" onClick={applyMass} disabled={!massStage&&!massMgr}><i className="ti ti-bolt"/>Применить</Btn>
+          <Btn size="sm" onClick={()=>onExportSel(sorted.filter(c=>sel.has(c.id)))}><i className="ti ti-download"/>Экспорт</Btn>
+          <button onClick={()=>setSel(new Set())} style={{marginLeft:'auto',border:'none',background:'transparent',color:'#64748b',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>✕ Снять</button>
+        </div>
+      )}
+
+      {view === 'cards' && shown.map(c => <BigClientCard key={c.id} c={c} managers={managers} pipeline={pl} checklists={checklists} onOpen={()=>onOpen(c)}/>)}
+
+      {view === 'table' && shown.length > 0 && (
+        <div className="tbl-wrap" style={{background:'#fff'}}>
+          <table style={{minWidth:760}}>
+            <thead>
+              <tr>
+                {canMass && <th style={{width:34}}>
+                  <input type="checkbox" checked={sel.size===sorted.length&&sorted.length>0} onChange={toggleAll} style={{cursor:'pointer'}}/>
+                </th>}
+                {COLS.map(([k,l]) => (
+                  <th key={k} onClick={()=>toggleSort(k)} style={{cursor:'pointer',userSelect:'none'}}>
+                    {l}{sortK===k && <i className={`ti ti-chevron-${sortD>0?'up':'down'}`} style={{fontSize:11,marginLeft:3}}/>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(c => {
+                const p = pl.find(x=>x.id===c.stage)
+                return (
+                  <tr key={c.id} onClick={()=>onOpen(c)}>
+                    {canMass && <td onClick={e=>e.stopPropagation()} style={{width:34}}>
+                      <input type="checkbox" checked={sel.has(c.id)} onChange={()=>toggleSel(c.id)} style={{cursor:'pointer'}}/>
+                    </td>}
+                    <td>
+                      <div style={{fontWeight:700}}>{c.fio||'—'}</div>
+                      {(c.tags||[]).length>0 && <div style={{display:'flex',gap:3,flexWrap:'wrap',marginTop:2}}>{c.tags.map(t=><span key={t} style={{fontSize:9.5,fontWeight:700,color:'#1d4ed8',background:'#eff6ff',borderRadius:4,padding:'1px 5px'}}>#{t}</span>)}</div>}
+                    </td>
+                    <td style={{whiteSpace:'nowrap'}}>{c.phone||'—'}</td>
+                    <td>{p ? <Tag c={p.c} ch={p.l}/> : c.stage}</td>
+                    <td>{mgrName(c.manager)||'—'}</td>
+                    <td><SrTag id={c.source}/></td>
+                    <td style={{fontWeight:700,color:c.contractAmount>0?'#10b981':'#94a3b8',whiteSpace:'nowrap'}}>{c.contractAmount>0?fmtN(c.contractAmount)+'₸':'—'}</td>
+                    <td style={{whiteSpace:'nowrap',color:'#64748b'}}>{c.dateIn}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {shown.length === 0 && <div style={{textAlign:'center',padding:'44px 20px',color:'#64748b'}}><i className="ti ti-search" style={{fontSize:40,display:'block',marginBottom:10,opacity:.2}}/><p style={{fontSize:15,fontWeight:500}}>Ничего не найдено</p></div>}
     </div>
   )
 }
@@ -1811,10 +2058,95 @@ SearchPage = React.memo(SearchPage)
 
 // ─── WHATSAPP PAGE ───────────────────────────────────────────────
 
+// ─── КАЛЕНДАРЬ ЗАДАЧ (вид «Календарь» в разделе Задачи) ──────────
+function TasksCalendar({ tasks, onOpen }) {
+  const now = new Date()
+  const [ym, setYm] = useState([now.getFullYear(), now.getMonth()])
+  const [selDay, setSelDay] = useState(today())
+  const [y, m] = ym
+  const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+  const td = today()
+
+  const byDate = useMemo(() => {
+    const map = {}
+    for (const t of tasks) {
+      if (t.done || !t.due) continue
+      ;(map[t.due] = map[t.due] || []).push(t)
+    }
+    return map
+  }, [tasks])
+
+  const first   = new Date(y, m, 1)
+  const offset  = (first.getDay() + 6) % 7          // Пн-первый
+  const daysIn  = new Date(y, m + 1, 0).getDate()
+  const cells   = [...Array(offset).fill(null), ...Array.from({length: daysIn}, (_, i) => i + 1)]
+  const dstr    = d => `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+  const nav     = dir => { const dt = new Date(y, m + dir, 1); setYm([dt.getFullYear(), dt.getMonth()]) }
+  const dayTasks = byDate[selDay] || []
+
+  return (
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:9,marginBottom:11}}>
+        <Btn size="sm" onClick={()=>nav(-1)}><i className="ti ti-chevron-left"/></Btn>
+        <div style={{fontWeight:800,fontSize:15,minWidth:150,textAlign:'center'}}>{MONTHS[m]} {y}</div>
+        <Btn size="sm" onClick={()=>nav(1)}><i className="ti ti-chevron-right"/></Btn>
+        <Btn size="sm" onClick={()=>{const d=new Date(); setYm([d.getFullYear(),d.getMonth()]); setSelDay(td)}}>Сегодня</Btn>
+      </div>
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,.06)',marginBottom:12}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',borderBottom:'1.5px solid #e2e8f0',background:'#f8fafc'}}>
+          {['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(d => (
+            <div key={d} style={{padding:'7px 4px',textAlign:'center',fontSize:10.5,fontWeight:800,color:'#94a3b8',textTransform:'uppercase'}}>{d}</div>
+          ))}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
+          {cells.map((d, i) => {
+            if (d === null) return <div key={'e'+i} style={{minHeight:64,borderBottom:'1px solid #f1f5f9',borderRight:(i%7<6)?'1px solid #f1f5f9':'none'}}/>
+            const ds      = dstr(d)
+            const list    = byDate[ds] || []
+            const isToday = ds === td
+            const isSel   = ds === selDay
+            const hasOver = ds < td && list.length > 0
+            return (
+              <div key={ds} onClick={()=>setSelDay(ds)}
+                style={{minHeight:64,padding:'5px 6px',cursor:'pointer',borderBottom:'1px solid #f1f5f9',borderRight:(i%7<6)?'1px solid #f1f5f9':'none',
+                  background:isSel?'#eff6ff':'transparent',transition:'background .12s'}}>
+                <div style={{width:22,height:22,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11.5,fontWeight:isToday?800:600,
+                  background:isToday?'#3b82f6':'transparent',color:isToday?'#fff':hasOver?'#ef4444':'#334155',marginBottom:3}}>{d}</div>
+                {list.length > 0 && (
+                  <div style={{display:'flex',gap:3,alignItems:'center',flexWrap:'wrap'}}>
+                    <span style={{fontSize:9.5,fontWeight:800,color:'#fff',background:hasOver?'#ef4444':'#3b82f6',borderRadius:8,padding:'1px 6px'}}>{list.length}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
+        <div style={{padding:'10px 14px',borderBottom:'1.5px solid #e2e8f0',background:'#f8fafc',fontWeight:800,fontSize:13}}>
+          📅 {selDay}{selDay===td?' · сегодня':''} — задач: {dayTasks.length}
+        </div>
+        {dayTasks.length === 0 && <div style={{padding:'16px 14px',fontSize:12.5,color:'#94a3b8',fontStyle:'italic'}}>На этот день задач нет</div>}
+        {dayTasks.map(t => (
+          <div key={t.id} onClick={()=>onOpen(t.cl)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderBottom:'1px solid #f1f5f9',cursor:'pointer'}}
+            onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+            <div style={{width:18,height:18,borderRadius:'50%',border:`2.5px solid ${selDay<td?'#ef4444':'#cbd5e1'}`,flexShrink:0}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:13}}>{t.type||'Задача'}{t.text&&<span style={{color:'#64748b',fontWeight:400}}> — {t.text}</span>}</div>
+            </div>
+            <span style={{fontSize:12,color:'#64748b',fontWeight:600,flexShrink:0}}>{t.cFio}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── TASKS PAGE ──────────────────────────────────────────────────
 function TasksPage({ clients, managers, onOpen, user, onSave }) {
   const todayStr  = today()
   const [showNew, setShowNew] = useState(false)
+  const [tView,   setTView]   = useState('list')  // list | calendar
   const [newTask, setNewTask] = useState({ text:'', due:'', clientId:'', note:'' })
 
   function createTask() {
@@ -1868,6 +2200,20 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
         ))}
       </div>
 
+      {/* Переключатель Список / Календарь */}
+      <div style={{display:'flex',gap:2,background:'#f1f5f9',borderRadius:9,padding:2,width:'fit-content',marginBottom:13}}>
+        {[['list','ti-list','Список'],['calendar','ti-calendar','Календарь']].map(([v,ic,l])=>(
+          <button key={v} onClick={()=>setTView(v)}
+            style={{display:'flex',alignItems:'center',gap:5,padding:'5px 12px',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,fontWeight:700,
+              background:tView===v?'#fff':'transparent',color:tView===v?'#1d4ed8':'#64748b',boxShadow:tView===v?'0 1px 3px rgba(15,23,42,.12)':'none',transition:'all .13s'}}>
+            <i className={`ti ${ic}`} style={{fontSize:13}}/>{l}
+          </button>
+        ))}
+      </div>
+
+      {tView === 'calendar' && <TasksCalendar tasks={all} onOpen={onOpen}/>}
+
+      {tView === 'list' && <>
       {overdue.length > 0 && (
         <div style={{background:'#fef2f2',border:'2px solid #fecaca',borderRadius:13,overflow:'hidden',marginBottom:13}}>
           <div style={{padding:'10px 13px',fontWeight:800,fontSize:13,color:'#ef4444',borderBottom:'1px solid #fecaca',background:'#fff5f5'}}>🔴 Просроченные ({overdue.length})</div>
@@ -1913,6 +2259,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
           <p style={{fontSize:15,fontWeight:500}}>Все задачи выполнены!</p>
         </div>
       )}
+      </>}
     </div>
   )
 }

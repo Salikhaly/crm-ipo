@@ -35,6 +35,7 @@ async function handler(req, res) {
         mrp_ref, deal_steps, insurance_pct,
         d50_table, rate_presets,
         wa_auto_greeting, wa_auto_greeting_on, wa_round_robin,
+        doc_templates, custom_fields,
       } = settings
 
       const row = { id: 'main', updated_at: new Date().toISOString() }
@@ -52,13 +53,18 @@ async function handler(req, res) {
       if (wa_auto_greeting    != null) row.wa_auto_greeting    = String(wa_auto_greeting)
       if (wa_auto_greeting_on != null) row.wa_auto_greeting_on = !!wa_auto_greeting_on
       if (wa_round_robin      != null) row.wa_round_robin      = !!wa_round_robin
+      if (doc_templates       != null) row.doc_templates       = doc_templates
+      if (custom_fields       != null) row.custom_fields       = custom_fields
       if (insurance_pct != null) row.insurance_pct  = +insurance_pct
 
-      // Fallback: миграция 011 не применена (нет wa_round_robin) — сохраняем без неё
+      // Fallback: необязательные колонки (миграции 011/013/014 могут быть не применены) —
+      // при ошибке "column ... does not exist" убираем колонку и повторяем
       let { error } = await sb.from('calc_settings').upsert(row)
-      if (error && /wa_round_robin/.test(error.message || '')) {
-        const { wa_round_robin: _skip, ...bare } = row
-        ;({ error } = await sb.from('calc_settings').upsert(bare))
+      for (const col of ['wa_round_robin', 'doc_templates', 'custom_fields']) {
+        if (error && (error.message || '').includes(col) && col in row) {
+          delete row[col]
+          ;({ error } = await sb.from('calc_settings').upsert(row))
+        }
       }
       if (error) errs.push({ section: 'settings', error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
     }

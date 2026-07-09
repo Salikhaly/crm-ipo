@@ -5,6 +5,7 @@
 import { getSupabase } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
+import { logAction } from '../../../lib/actionLog'
 
 export default withAuth(async function handler(req, res) {
   const sb = getSupabase()
@@ -73,6 +74,8 @@ export default withAuth(async function handler(req, res) {
     }
     if (error) return apiError(res, error)
 
+    logAction({ action:'pipeline', entity:'settings', entityName:'Воронка',
+      detail:`этапов: ${stages.length}`, user:req.user })
     return res.status(200).json({ ok: true, pipeline: stages })
   }
 
