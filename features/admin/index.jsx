@@ -25,7 +25,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       </div>
 
       <div style={{display:'flex',gap:7,marginBottom:18,flexWrap:'wrap'}}>
-        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'},{id:'docs',l:'📄 Договоры'}].map(t => (
+        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'},{id:'docs',l:'📄 Договоры'},{id:'fields',l:'🧩 Поля карточки'},{id:'logs',l:'📜 Журнал'}].map(t => (
           <Btn key={t.id} variant={tab===t.id?'primary':'ghost'} onClick={()=>setTab(t.id)}>{t.l}</Btn>
         ))}
       </div>
@@ -167,6 +167,8 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       {tab === 'calc'       && <CalcSettingsPanel/>}
       {tab === 'wa_replies' && <WaRepliesPanel/>}
       {tab === 'docs' && <DocTemplatesPanel/>}
+      {tab === 'fields' && <CustomFieldsPanel/>}
+      {tab === 'logs' && <ActionLogPanel/>}
     </div>
   )
 }
@@ -1020,6 +1022,144 @@ function DocTemplatesPanel() {
           </div>
           <textarea value={t.body} onChange={e=>upd(t.id,'body',e.target.value)} rows={12}
             style={{width:'100%',padding:'10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:12.5,fontFamily:'monospace',lineHeight:1.55,resize:'vertical',color:'#0f172a',boxSizing:'border-box'}}/>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── ЖУРНАЛ ДЕЙСТВИЙ ────────────────────────────────────────────────────────
+// Читает action_logs через /api/logs (миграция 014). Только admin/head.
+const LOG_ACTION_META = {
+  create:   { l:'Создан',        c:'#10b981', i:'ti-plus' },
+  update:   { l:'Изменён',       c:'#3b82f6', i:'ti-pencil' },
+  stage:    { l:'Смена этапа',   c:'#8b5cf6', i:'ti-arrow-right' },
+  delete:   { l:'Удалён',        c:'#ef4444', i:'ti-trash' },
+  pipeline: { l:'Воронка',       c:'#f59e0b', i:'ti-git-branch' },
+  settings: { l:'Настройки',     c:'#64748b', i:'ti-settings' },
+}
+function ActionLogPanel() {
+  const [logs, setLogs]   = useState(null)
+  const [ready, setReady] = useState(true)
+
+  function load() {
+    setLogs(null)
+    api.getLogs().then(d => { setLogs(d?.logs || []); setReady(d?.ready !== false) })
+      .catch(() => { setLogs([]); setReady(false) })
+  }
+  useEffect(load, [])
+
+  if (logs === null) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>⏳ Загрузка...</div>
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:13}}>
+        <div style={{fontWeight:800,fontSize:16}}>Журнал действий ({logs.length})</div>
+        <Btn size="sm" onClick={load}><i className="ti ti-refresh"/>Обновить</Btn>
+      </div>
+      {!ready && (
+        <div style={{background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:12,padding:'11px 14px',marginBottom:13,fontSize:12.5,color:'#92400e',lineHeight:1.6}}>
+          Журнал ещё не активирован — примените <b>миграцию 014</b> в Supabase. После этого все действия
+          (создание, правка, смена этапа, удаление клиентов, изменения воронки) начнут записываться.
+        </div>
+      )}
+      {logs.length === 0 && ready && (
+        <div style={{textAlign:'center',padding:'34px 20px',color:'#94a3b8'}}>
+          <i className="ti ti-history" style={{fontSize:38,display:'block',marginBottom:10,opacity:.2}}/>
+          Записей пока нет — они появятся после действий пользователей.
+        </div>
+      )}
+      {logs.length > 0 && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
+          {logs.map(g => {
+            const m = LOG_ACTION_META[g.action] || { l:g.action, c:'#64748b', i:'ti-point' }
+            const when = g.created_at ? new Date(g.created_at).toLocaleString('ru',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''
+            return (
+              <div key={g.id} style={{display:'flex',alignItems:'center',gap:11,padding:'10px 14px',borderBottom:'1px solid #f1f5f9'}}>
+                <div style={{width:30,height:30,borderRadius:9,background:m.c+'18',color:m.c,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <i className={`ti ${m.i}`} style={{fontSize:15}}/>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700}}>
+                    <span style={{color:m.c}}>{m.l}</span>
+                    {g.entity_name && <span style={{color:'#0f172a'}}> · {g.entity_name}</span>}
+                  </div>
+                  <div style={{fontSize:11,color:'#94a3b8'}}>
+                    {g.user_name || 'система'}{g.detail ? ' · ' + g.detail : ''}
+                  </div>
+                </div>
+                <div style={{fontSize:11,color:'#94a3b8',flexShrink:0,whiteSpace:'nowrap'}}>{when}</div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── КОНСТРУКТОР ДОП. ПОЛЕЙ КАРТОЧКИ ────────────────────────────────────────
+// Хранится в calc_settings.custom_fields (миграция 014). Значения — в clients.custom.
+const FIELD_TYPES = [
+  { id:'text',   l:'Текст' },
+  { id:'number', l:'Число' },
+  { id:'date',   l:'Дата' },
+  { id:'select', l:'Список' },
+]
+function CustomFieldsPanel() {
+  const [fields,  setFields]  = useState(null)
+  const [saving,  setSaving]  = useState(false)
+  const [msg,     setMsg]     = useState('')
+
+  useEffect(() => {
+    api.getCalcSettings().then(d => setFields(Array.isArray(d?.settings?.custom_fields) ? d.settings.custom_fields : []))
+      .catch(() => setFields([]))
+  }, [])
+  function toast(t) { setMsg(t); setTimeout(() => setMsg(''), 3000) }
+  const upd = (id, f, v) => setFields(fs => fs.map(x => x.id === id ? { ...x, [f]: v } : x))
+
+  function add() {
+    setFields(fs => [...fs, { id:'cf_'+Date.now(), key:'field_'+(fs.length+1), label:'Новое поле', type:'text', options:'' }])
+  }
+  function del(id) { setFields(fs => fs.filter(x => x.id !== id)) }
+  async function saveAll() {
+    setSaving(true)
+    try {
+      const res = await api.saveCalcSettings({ settings: { custom_fields: fields } })
+      toast(res?.ok ? '✅ Поля сохранены' : '⚠️ Ошибка — применена ли миграция 014?')
+    } catch (e) { toast('❌ ' + e.message) }
+    setSaving(false)
+  }
+
+  if (!fields) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>⏳ Загрузка...</div>
+
+  return (
+    <div>
+      {msg && <div style={{position:'fixed',top:20,right:20,zIndex:9999,background:'#0f172a',color:'#fff',padding:'10px 16px',borderRadius:10,fontSize:13,fontWeight:600}}>{msg}</div>}
+      <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:12,padding:'11px 14px',marginBottom:13,fontSize:12.5,color:'#1e40af',lineHeight:1.6}}>
+        <b>Свои поля в карточке клиента.</b> Добавьте поля под ваш процесс (например «Ставка банка», «Дата встречи»,
+        «Ответственный юрист»). Они появятся в карточке во вкладке «Клиент». <b>Требуется миграция 014.</b>
+      </div>
+      <div style={{display:'flex',gap:8,marginBottom:13}}>
+        <Btn variant="primary" size="sm" onClick={add}><i className="ti ti-plus"/>Добавить поле</Btn>
+        <Btn variant="success" size="sm" onClick={saveAll} disabled={saving}>
+          {saving ? <><i className="ti ti-loader spin"/>Сохраняю…</> : <><i className="ti ti-device-floppy"/>Сохранить все</>}
+        </Btn>
+      </div>
+      {fields.length === 0 && <div style={{textAlign:'center',padding:'28px',color:'#94a3b8',fontSize:13}}>Пока нет доп. полей — добавьте первое.</div>}
+      {fields.map(f => (
+        <div key={f.id} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,padding:12,marginBottom:9,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+          <input value={f.label} onChange={e=>upd(f.id,'label',e.target.value)} placeholder="Название"
+            style={{flex:'1 1 160px',minWidth:0,padding:'8px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:13,fontWeight:700,color:'#0f172a',outline:'none',fontFamily:'inherit'}}/>
+          <select value={f.type} onChange={e=>upd(f.id,'type',e.target.value)}
+            style={{width:120,padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:13,color:'#0f172a',outline:'none',cursor:'pointer',fontFamily:'inherit'}}>
+            {FIELD_TYPES.map(t => <option key={t.id} value={t.id}>{t.l}</option>)}
+          </select>
+          {f.type === 'select' && (
+            <input value={f.options||''} onChange={e=>upd(f.id,'options',e.target.value)} placeholder="Варианты через запятую"
+              style={{flex:'1 1 180px',minWidth:0,padding:'8px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:12.5,color:'#0f172a',outline:'none',fontFamily:'inherit'}}/>
+          )}
+          <Btn size="sm" variant="danger" onClick={()=>del(f.id)}><i className="ti ti-trash" style={{fontSize:12}}/></Btn>
         </div>
       ))}
     </div>

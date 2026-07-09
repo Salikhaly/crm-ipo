@@ -2,9 +2,10 @@
 // GET  /api/clients        → список клиентов (с фильтрами)
 // POST /api/clients        → создать клиента
 
-import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, findMissingOptionalColumn } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, addCustom, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
+import { logAction } from '../../../lib/actionLog'
 
 // Экранирует спецсимволы PostgreSQL ILIKE: %, _, \
 function escapeLike(s) {
@@ -72,6 +73,7 @@ export default withAuth(async function handler(req, res) {
     addSavedCalcs(row, client)
     addCloseReason(row, client)
     addTags(row, client)
+    addCustom(row, client)
     let { data, error } = await sb
       .from('clients')
       .insert(row)
@@ -85,6 +87,7 @@ export default withAuth(async function handler(req, res) {
     }
 
     if (error) return apiError(res, error)
+    logAction({ action:'create', entity:'client', entityId:data.id, entityName:data.fio, user:req.user })
     return res.status(201).json({ client: dbToClient(data) })
   }
 

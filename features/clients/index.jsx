@@ -144,6 +144,17 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const [closeAsk,   setCloseAsk]   = useState(false)  // модалка «причина закрытия»
   const [tagInp,     setTagInp]     = useState(null)   // null = скрыт, '' = ввод тега
   const [docDlg,     setDocDlg]     = useState(null)   // {templates, selId, text} — генератор документов
+  const [customFields, setCustomFields] = useState([]) // конфиг доп. полей (миграция 014)
+
+  // Загружаем описания доп. полей один раз при открытии карточки (доступно всем ролям)
+  useEffect(() => {
+    let alive = true
+    api.calc('custom_fields', {})
+      .then(r => { if (alive && Array.isArray(r?.fields)) setCustomFields(r.fields) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+  const setCustomVal = (key, v) => set('custom', { ...(c.custom || {}), [key]: v })
   const canEdit = user.role !== 'qa'  // техник (admin) и все остальные кроме qa могут редактировать
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
@@ -575,6 +586,30 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
               <div style={{padding:'18px 19px'}}>
                 {tab==='profile'  && <>
                   <ProfileTab c={c} set={set} managers={managers} canEdit={canEdit}/>
+                  {customFields.length > 0 && (
+                    <div style={{marginTop:14}}>
+                      <Collaps title="🧩 Дополнительные поля" defaultOpen>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                          {customFields.map(f => {
+                            const key = f.key || f.id
+                            const val = (c.custom || {})[key] ?? ''
+                            const opts = String(f.options || '').split(',').map(s=>s.trim()).filter(Boolean)
+                            return (
+                              <Fl key={f.id} l={f.label || key} ch={
+                                f.type === 'select'
+                                  ? <Sel value={val} onChange={e=>canEdit&&setCustomVal(key,e.target.value)} disabled={!canEdit}>
+                                      <option value="">—</option>
+                                      {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                                    </Sel>
+                                  : <Inp type={f.type==='number'?'number':f.type==='date'?'date':'text'}
+                                      value={val} onChange={e=>canEdit&&setCustomVal(key,e.target.value)} disabled={!canEdit}/>
+                              }/>
+                            )
+                          })}
+                        </div>
+                      </Collaps>
+                    </div>
+                  )}
                   <div style={{marginTop:14}}>
                     <Collaps title="📊 Анализ платёжеспособности" defaultOpen>
                       <AnalysisTab c={c} set={set} canEdit={canEdit}/>

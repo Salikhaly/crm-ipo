@@ -57,6 +57,8 @@ async function loadCfg(sb) {
       kd:         s?.kd         || DEFAULT_CFG.kd,
       // Шаблоны документов (миграция 013) — null если колонки/данных нет, фронт возьмёт дефолт
       docTemplates: Array.isArray(s?.doc_templates) && s.doc_templates.length ? s.doc_templates : null,
+      // Доп. поля карточки (миграция 014) — конфигурация полей, доступна всем ролям
+      customFields: Array.isArray(s?.custom_fields) ? s.custom_fields : [],
       programs:   Object.keys(programs).length > 0 ? programs : DEFAULT_PROGRAMS,
       // Если в БD есть программы — берём их nauryzKeys; иначе дефолтные
       nauryzKeys: Object.keys(programs).length > 0 ? nauryzKeys : DEFAULT_CFG.nauryzKeys,
@@ -97,6 +99,8 @@ export default withAuth(async function handler(req, res) {
     settings:           () => ({ ok: true, mrp: cfg.mrp, pmNauryz: cfg.pmNauryz, pmOther: cfg.pmOther, kd: cfg.kd }),
     // Шаблоны документов — доступны любой роли (менеджер формирует договор из карточки)
     doc_templates:      () => ({ ok: true, templates: cfg.docTemplates }),
+    // Доп. поля карточки — доступны любой роли (рендер в карточке клиента)
+    custom_fields:      () => ({ ok: true, fields: cfg.customFields || [] }),
   }
 
   if (!ACTIONS[action]) {

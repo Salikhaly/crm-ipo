@@ -3,9 +3,10 @@
 // PUT    /api/clients/:id  → обновить клиента
 // DELETE /api/clients/:id  → удалить клиента
 
-import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, findMissingOptionalColumn } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, addCustom, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
+import { logAction } from '../../../lib/actionLog'
 
 export default withAuth(async function handler(req, res) {
   const sb = getSupabase()
@@ -105,6 +106,7 @@ export default withAuth(async function handler(req, res) {
     addSavedCalcs(row, client)
     addCloseReason(row, client)
     addTags(row, client)
+    addCustom(row, client)
 
     let { data, error } = await sb
       .from('clients')
@@ -120,6 +122,14 @@ export default withAuth(async function handler(req, res) {
     }
 
     if (error) return apiError(res, error)
+
+    // Журнал: смена этапа фиксируется отдельно (детальнее), прочие правки — как update
+    if (client.stage && existing && client.stage !== existing.stage) {
+      logAction({ action:'stage', entity:'client', entityId:id, entityName:client.fio,
+        detail:`${existing.stage} → ${client.stage}`, user:req.user })
+    } else {
+      logAction({ action:'update', entity:'client', entityId:id, entityName:client.fio, user:req.user })
+    }
     return res.status(200).json({ client: dbToClient(data) })
   }
 
@@ -129,8 +139,11 @@ export default withAuth(async function handler(req, res) {
       return res.status(403).json({ error: 'Нет доступа для удаления' })
     }
 
+    // Имя клиента для журнала — до удаления
+    const { data: victim } = await sb.from('clients').select('fio').eq('id', id).maybeSingle()
     const { error } = await sb.from('clients').delete().eq('id', id)
     if (error) return apiError(res, error)
+    logAction({ action:'delete', entity:'client', entityId:id, entityName:victim?.fio, user:req.user })
     return res.status(200).json({ ok: true })
   }
 
