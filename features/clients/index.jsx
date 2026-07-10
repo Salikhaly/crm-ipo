@@ -24,6 +24,7 @@ import {
 } from '../../lib/calcData'
 import { fillDocTemplate, DOC_TEMPLATES_FALLBACK } from '../../lib/docTemplates'
 import { anketaCells, anketaFileName } from '../../lib/exportAnketa'
+import { fillXlsxTemplate } from '../../lib/xlsxTemplate'
 
 
 // ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
@@ -240,7 +241,8 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     setDocDlg({ templates, selId: templates[0].id, text: docFill(templates[0]) })
   }
   // Скачать заполненную анкету ПКБ (.xlsx на основе шаблона со стилями).
-  // ExcelJS грузится лениво; шаблон лежит в public/pkb-template.xlsx.
+  // Шаблон в public/pkb-template.xlsx; заполняем точечным патчем XML внутри zip
+  // (lib/xlsxTemplate + JSZip lazy) — книга НЕ пересобирается, Excel не ругается.
   const [anketaBusy, setAnketaBusy] = useState(false)
   async function downloadAnketa() {
     setAnketaBusy(true)
@@ -248,15 +250,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
       const resp = await fetch('/pkb-template.xlsx')
       if (!resp.ok) throw new Error('Шаблон анкеты не найден (public/pkb-template.xlsx)')
       const buf = await resp.arrayBuffer()
-      const mod = await import('exceljs')
-      const ExcelJS = mod.default || mod
-      const wb = new ExcelJS.Workbook()
-      await wb.xlsx.load(buf)
-      for (const { sheet, ref, value } of anketaCells(c, { contractLabel: ctObj?.l || '', managerName: mgr?.name || user.name })) {
-        const ws = wb.getWorksheet(sheet)
-        if (ws) ws.getCell(ref).value = value
-      }
-      const out = await wb.xlsx.writeBuffer()
+      const zipMod = await import('jszip')
+      const JSZip = zipMod.default || zipMod
+      const cellsToFill = anketaCells(c, { contractLabel: ctObj?.l || '', managerName: mgr?.name || user.name })
+      const out = await fillXlsxTemplate(buf, cellsToFill, JSZip)
       const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
