@@ -22,6 +22,7 @@ import {
 } from '../components/ui'
 import { Logo } from '../components/logo'
 import { clientFromAnketa, clientsFromList } from '../lib/importAnketa'
+import { baseRows } from '../lib/exportAnketa'
 import { CalcPage } from '../features/calc'
 import { WAPage } from '../features/wa'
 import { AdminPage, CalcSettingsPanel } from '../features/admin'
@@ -125,35 +126,27 @@ export default function CRM() {
   }, [user])
   function closeTour() { localStorage.setItem('crm_tour_done', '1'); setShowTour(false) }
 
-  // ─── ЭКСПОРТ CSV (для руководителя/техника) ──────────────
+  // ─── ЭКСПОРТ списка в формате база_анкет.xlsx (руководитель/техник) ──
+  // Тот же формат, что у приложения ПКБ — файл читается обратно кнопкой «Импорт».
   // listArg — конкретный список (например, выбранные в таблице); иначе текущий вид
-  function exportCsv(listArg) {
+  async function exportCsv(listArg) {
     const list = Array.isArray(listArg) && listArg.length
       ? listArg
       : ((searchRes.length || search || fStage || fMgr) ? searchRes : myCl)
     if (!list.length) { toast$('⚠️ Нечего экспортировать', 'err'); return }
-    const esc  = v => { const s = String(v ?? ''); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
-    const head = ['ФИО','Телефон','ИИН','Город','Этап','Менеджер','Источник','Тип договора','Сумма договора','Получено','Дата','Статус связи','Причина закрытия']
-    const rows = list.map(c => {
-      const paid = (c.payments||[]).filter(p => p.status==='paid'||p.status==='partial').reduce((s,p) => s+(p.paidAmount||0), 0)
-      return [
-        c.fio, c.phone, c.iin, c.city,
-        pipeline.find(p => p.id === c.stage)?.l || c.stage,
-        mgrById[c.manager]?.name || '',
-        SRC[c.source]?.l || c.source || '',
-        CT[c.contractType]?.l || '',
-        c.contractAmount || 0, paid,
-        c.dateIn || '', c.contactStatus || '', c.closeReason || '',
-      ].map(esc).join(';')
-    })
-    // BOM — чтобы Excel открыл кириллицу; ; — разделитель для русской локали
-    const blob = new Blob(['\uFEFF' + head.join(';') + '\n' + rows.join('\n')], { type:'text/csv;charset=utf-8' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = 'клиенты_' + today() + '.csv'
-    a.click()
-    URL.revokeObjectURL(a.href)
-    toast$('📥 Экспортировано клиентов: ' + list.length)
+    try {
+      const XLSX = await import('xlsx')
+      const rows = baseRows(list, {
+        mgrName:    id => mgrById[id]?.name || '',
+        stageLabel: id => pipeline.find(p => p.id === id)?.l || id || '',
+      })
+      const ws = XLSX.utils.aoa_to_sheet(rows)
+      ws['!cols'] = [16,12,16,26,14,6,12,12,20,14,12,14,16].map(wch => ({ wch }))
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'База')
+      XLSX.writeFile(wb, 'база_клиентов_' + today() + '.xlsx')
+      toast$('📥 Экспортировано клиентов: ' + list.length)
+    } catch (e) { toast$('❌ ' + (e.message || e), 'err') }
   }
 
   // ─── ИМПОРТ клиентов из Excel (head/admin) ──

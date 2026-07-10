@@ -23,6 +23,7 @@ import {
   annuity, fmtMoney, fmtM, API_PROGRAMS_FALLBACK,
 } from '../../lib/calcData'
 import { fillDocTemplate, DOC_TEMPLATES_FALLBACK } from '../../lib/docTemplates'
+import { anketaCells, anketaFileName } from '../../lib/exportAnketa'
 
 
 // ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
@@ -238,6 +239,36 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     } catch (e) { /* оффлайн/ошибка — используем дефолтные */ }
     setDocDlg({ templates, selId: templates[0].id, text: docFill(templates[0]) })
   }
+  // Скачать заполненную анкету ПКБ (.xlsx на основе шаблона со стилями).
+  // ExcelJS грузится лениво; шаблон лежит в public/pkb-template.xlsx.
+  const [anketaBusy, setAnketaBusy] = useState(false)
+  async function downloadAnketa() {
+    setAnketaBusy(true)
+    try {
+      const resp = await fetch('/pkb-template.xlsx')
+      if (!resp.ok) throw new Error('Шаблон анкеты не найден (public/pkb-template.xlsx)')
+      const buf = await resp.arrayBuffer()
+      const mod = await import('exceljs')
+      const ExcelJS = mod.default || mod
+      const wb = new ExcelJS.Workbook()
+      await wb.xlsx.load(buf)
+      for (const { sheet, ref, value } of anketaCells(c, { contractLabel: ctObj?.l || '', managerName: mgr?.name || user.name })) {
+        const ws = wb.getWorksheet(sheet)
+        if (ws) ws.getCell(ref).value = value
+      }
+      const out = await wb.xlsx.writeBuffer()
+      const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = anketaFileName(c)
+      a.click()
+      URL.revokeObjectURL(a.href)
+      toast$('📥 Анкета ПКБ скачана')
+    } catch (e) {
+      toast$('❌ ' + (e.message || e), 'err')
+    } finally { setAnketaBusy(false) }
+  }
+
   function printDoc() {
     if (!docDlg) return
     const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -628,7 +659,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   </Collaps>
                 </>}
                 {tab==='contract' && <>
-                  <div style={{display:'flex',justifyContent:'flex-end',marginBottom:11}}>
+                  <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:11}}>
+                    <Btn size="sm" onClick={downloadAnketa} disabled={anketaBusy} title="Заполненная анкета ПКБ на основе шаблона">
+                      {anketaBusy ? <i className="ti ti-loader spin"/> : <i className="ti ti-file-spreadsheet"/>}Анкета ПКБ (.xlsx)
+                    </Btn>
                     <Btn variant="primary" size="sm" onClick={openDocDlg}>
                       <i className="ti ti-file-text"/>Сформировать документ
                     </Btn>
