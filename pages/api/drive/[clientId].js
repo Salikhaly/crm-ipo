@@ -129,18 +129,93 @@ async function getOrCreateClientFolder(drive, clientId, folderName, managerFolde
   return created.data
 }
 
+// ── Fallback-хранилище: Supabase Storage ─────────────────────────────────────
+// Если Google Drive не настроен (нет env) — файлы НЕ теряются, а складываются
+// в приватный bucket Supabase (создаётся сам при первой загрузке). Ссылки —
+// подписанные, сроком на 1 год; при каждом открытии вкладки生成уются свежие.
+const BUCKET = 'client-docs'
+const SIGN_TTL = 60 * 60 * 24 * 365   // 1 год
+let _bucketReady = false
+
+async function ensureBucket(sb) {
+  if (_bucketReady) return
+  try { await sb.storage.createBucket(BUCKET, { public: false, fileSizeLimit: 20 * 1024 * 1024 }) } catch (e) { /* уже есть */ }
+  _bucketReady = true
+}
+
+function safeStorageName(name) {
+  return String(name || 'file').replace(/[^\w.\-а-яА-ЯёЁ ]/g, '_').replace(/\s+/g, '_').slice(0, 120)
+}
+
+async function storageGet(sb, clientId, res) {
+  await ensureBucket(sb)
+  const { data: list, error } = await sb.storage.from(BUCKET)
+    .list(clientId, { limit: 100, sortBy: { column: 'created_at', order: 'desc' } })
+  if (error) return apiError(res, error)
+  const files = (list || []).filter(f => f.name)
+  const paths = files.map(f => `${clientId}/${f.name}`)
+  let signed = []
+  if (paths.length) {
+    const { data } = await sb.storage.from(BUCKET).createSignedUrls(paths, SIGN_TTL)
+    signed = data || []
+  }
+  return res.status(200).json({
+    storage: true,
+    folderId: null, folderLink: '', managerFolder: 'Хранилище CRM',
+    files: files.map((f, i) => ({
+      id:          `${clientId}/${f.name}`,
+      name:        f.name.replace(/^\d{13}_/, ''),   // прячем тех-префикс времени
+      mimeType:    f.metadata?.mimetype || '',
+      size:        f.metadata?.size || 0,
+      createdTime: f.created_at || '',
+      webViewLink: signed[i]?.signedUrl || '',
+      webContentLink: signed[i]?.signedUrl || '',
+    })),
+  })
+}
+
+async function storagePost(sb, clientId, req, res) {
+  await ensureBucket(sb)
+  const form = formidable({ maxFileSize: 20 * 1024 * 1024 })
+  const [fields, files] = await form.parse(req)
+  const file    = files.file?.[0]
+  const docName = fields.docName?.[0] || ''
+  if (!file) return res.status(400).json({ error: 'Файл не передан' })
+  let uploadName = file.originalFilename || 'file'
+  if (docName) {
+    const ext = uploadName.includes('.') ? uploadName.slice(uploadName.lastIndexOf('.')) : ''
+    uploadName = `${docName}${ext}`
+  }
+  const path = `${clientId}/${Date.now()}_${safeStorageName(uploadName)}`
+  let buf
+  try { buf = fs.readFileSync(file.filepath) } finally { fs.unlink(file.filepath, () => {}) }
+  const { error } = await sb.storage.from(BUCKET).upload(path, buf, {
+    contentType: file.mimetype || 'application/octet-stream', upsert: false,
+  })
+  if (error) return apiError(res, error)
+  const { data: signed } = await sb.storage.from(BUCKET).createSignedUrl(path, SIGN_TTL)
+  return res.status(200).json({
+    storage: true,
+    folderId: null, folderLink: '', managerFolder: 'Хранилище CRM',
+    file: {
+      id: path, name: safeStorageName(uploadName),
+      mimeType: file.mimetype || '', size: file.size || 0,
+      createdTime: new Date().toISOString(),
+      webViewLink: signed?.signedUrl || '', webContentLink: signed?.signedUrl || '',
+    },
+  })
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 export default withAuth(async function handler(req, res) {
   const { clientId } = req.query
   const { role, manager_id: mid } = req.user
 
-  // Проверяем наличие переменных окружения
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON === 'placeholder') {
-    return res.status(503).json({ error: 'Google Drive не настроен. Добавьте GOOGLE_SERVICE_ACCOUNT_JSON в переменные окружения.' })
-  }
-  if (!process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID === 'placeholder') {
-    return res.status(503).json({ error: 'Google Drive не настроен. Добавьте GOOGLE_DRIVE_ROOT_FOLDER_ID в переменные окружения.' })
-  }
+  // Google Drive настроен? Если нет — работаем через Supabase Storage (fallback),
+  // файлы больше не теряются с 503.
+  const driveConfigured =
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_SERVICE_ACCOUNT_JSON !== 'placeholder' &&
+    process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID !== 'placeholder'
 
   // Проверяем доступ к клиенту для ролей с ограничениями
   if (role === 'manager' || role === 'specialist') {
@@ -158,6 +233,29 @@ export default withAuth(async function handler(req, res) {
       : client.responsible_manager === mid
 
     if (!allowed) return res.status(403).json({ error: 'Нет доступа к файлам этого клиента' })
+  }
+
+  // ── Drive не настроен → Supabase Storage (файлы не теряются) ────────────────
+  if (!driveConfigured) {
+    const sb = getSupabase()
+    try {
+      if (req.method === 'GET')  return await storageGet(sb, clientId, res)
+      if (req.method === 'POST') return await storagePost(sb, clientId, req, res)
+      if (req.method === 'DELETE') {
+        const { fileId } = req.query
+        if (!fileId) return res.status(400).json({ error: 'fileId обязателен' })
+        if (role === 'manager' || role === 'specialist') {
+          return res.status(403).json({ error: 'Нет доступа для удаления файлов' })
+        }
+        const { error } = await sb.storage.from(BUCKET).remove([fileId])
+        if (error) return apiError(res, error)
+        return res.status(200).json({ ok: true })
+      }
+      return res.status(405).json({ error: 'Метод не разрешён' })
+    } catch (err) {
+      console.error('[storage]', err.message)
+      return apiError(res, err)
+    }
   }
 
   // ── GET: список файлов клиента ─────────────────────────────────────────────
