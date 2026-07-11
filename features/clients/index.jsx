@@ -1820,6 +1820,7 @@ function DriveTab({ c, setC, user }) {
   const [uploadName, setUploadName] = useState('')
   const [error,      setError]      = useState('')
   const [folderLink, setFolderLink] = useState(c.driveLink || '')
+  const [storageMode, setStorageMode] = useState(false)  // true = Supabase Storage (Drive не настроен)
   const driveInputRef = useRef(null)
 
   // Загружаем список файлов при открытии вкладки
@@ -1836,6 +1837,7 @@ function DriveTab({ c, setC, user }) {
       const data = await api.getDriveFiles(c.id, c.driveFolderName || c.fio || '')
       if (cancelled) return
       setFiles(data.files || [])
+      setStorageMode(!!data.storage)
       if (data.folderLink && !c.driveLink) {
         setFolderLink(data.folderLink)
         setC({ ...c, driveLink: data.folderLink })
@@ -1895,6 +1897,16 @@ function DriveTab({ c, setC, user }) {
 
   return (
     <div style={{padding:'4px 0'}}>
+      {/* Понятность: где лежат файлы */}
+      <div className="hint">
+        <span className="hint-icon">📁</span>
+        <div>
+          Сюда загружайте документы клиента — удостоверение, справки, выписки. Файлы <b>сохраняются
+          {storageMode ? ' в защищённом хранилище CRM' : ' в Google Drive'}</b> и не пропадут.
+          {storageMode && <> Google Drive можно подключить позже (инструкция GOOGLE_DRIVE_SETUP.md) — тогда появятся общие папки по менеджерам.</>}
+          {' '}Документы конкретного этапа удобнее грузить во вкладке «Сопровождение» — там они привязаны к шагу сделки.
+        </div>
+      </div>
       {/* Заголовок + кнопки */}
       <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, gap:10}}>
         <div style={{fontWeight:700, fontSize:14, color:'#0f172a'}}>

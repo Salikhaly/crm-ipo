@@ -71,7 +71,21 @@ const mockFrom = jest.fn((table) => {
   return baseChain
 })
 
-jest.mock('../../lib/supabase', () => ({ getSupabase: () => ({ from: mockFrom }) }))
+// Мок Supabase Storage — fallback-хранилище, когда Drive не настроен
+const storageList      = jest.fn().mockResolvedValue({ data: [], error: null })
+const storageUpload    = jest.fn().mockResolvedValue({ data: { path: 'c1/x' }, error: null })
+const storageRemove    = jest.fn().mockResolvedValue({ data: [], error: null })
+const storageSignedMany= jest.fn().mockResolvedValue({ data: [], error: null })
+const storageSignedOne = jest.fn().mockResolvedValue({ data: { signedUrl: 'https://signed/x' }, error: null })
+const mockStorage = {
+  createBucket: jest.fn().mockResolvedValue({ data: {}, error: null }),
+  from: jest.fn().mockReturnValue({
+    list: storageList, upload: storageUpload, remove: storageRemove,
+    createSignedUrls: storageSignedMany, createSignedUrl: storageSignedOne,
+  }),
+}
+
+jest.mock('../../lib/supabase', () => ({ getSupabase: () => ({ from: mockFrom, storage: mockStorage }) }))
 
 const handler   = require('../../pages/api/drive/[clientId]').default
 const makeToken = (role = 'admin') =>
@@ -86,31 +100,47 @@ beforeEach(() => {
   mockUpdateEq.mockResolvedValue({ data: {}, error: null })
 })
 
-describe('Drive endpoint when not configured', () => {
-  test('503 если GOOGLE_SERVICE_ACCOUNT_JSON = placeholder', async () => {
+describe('Drive не настроен → fallback в Supabase Storage (файлы не теряются)', () => {
+  test('GET при placeholder JSON → 200 из хранилища, storage:true', async () => {
     const orig = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON = 'placeholder'
-    const res = makeRes()
-    await handler({
-      method: 'GET',
-      headers: { authorization: makeToken() },
-      query: { clientId: 'c1' },
-    }, res)
-    expect(res.status).toHaveBeenCalledWith(503)
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON = orig
+    try {
+      const res = makeRes()
+      await handler({
+        method: 'GET',
+        headers: { authorization: makeToken() },
+        query: { clientId: 'c1' },
+      }, res)
+      expect(res.status).toHaveBeenCalledWith(200)
+      const data = res.json.mock.calls[0][0]
+      expect(data.storage).toBe(true)
+      expect(Array.isArray(data.files)).toBe(true)
+    } finally {
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON = orig
+    }
   })
 
-  test('503 если GOOGLE_DRIVE_ROOT_FOLDER_ID = placeholder', async () => {
+  test('POST при placeholder ROOT_FOLDER → файл уходит в Storage (200)', async () => {
     const orig = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
     process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID = 'placeholder'
-    const res = makeRes()
-    await handler({
-      method: 'GET',
-      headers: { authorization: makeToken() },
-      query: { clientId: 'c1' },
-    }, res)
-    expect(res.status).toHaveBeenCalledWith(503)
-    process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID = orig
+    try {
+      // POST читает файл с диска — мокаем readFileSync
+      const fs = require('fs')
+      fs.readFileSync = jest.fn().mockReturnValue(Buffer.from('test'))
+      const res = makeRes()
+      await handler({
+        method: 'POST',
+        headers: { authorization: makeToken() },
+        query: { clientId: 'c1' },
+      }, res)
+      expect(res.status).toHaveBeenCalledWith(200)
+      const data = res.json.mock.calls[0][0]
+      expect(data.storage).toBe(true)
+      expect(data.file.webViewLink).toContain('signed')
+      expect(storageUpload).toHaveBeenCalled()
+    } finally {
+      process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID = orig
+    }
   })
 })
 

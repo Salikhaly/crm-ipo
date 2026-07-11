@@ -2401,9 +2401,9 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
         ))}
       </div>
 
-      {/* Переключатель Список / Календарь */}
+      {/* Переключатель Список / Календарь / Выполненные */}
       <div style={{display:'flex',gap:2,background:'#f1f5f9',borderRadius:9,padding:2,width:'fit-content',marginBottom:13}}>
-        {[['list','ti-list','Список'],['calendar','ti-calendar','Календарь']].map(([v,ic,l])=>(
+        {[['list','ti-list','Список'],['calendar','ti-calendar','Календарь'],['done','ti-checks',`Выполненные (${done.length})`]].map(([v,ic,l])=>(
           <button key={v} onClick={()=>setTView(v)}
             style={{display:'flex',alignItems:'center',gap:5,padding:'5px 12px',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,fontWeight:700,
               background:tView===v?'#fff':'transparent',color:tView===v?'#1d4ed8':'#64748b',boxShadow:tView===v?'0 1px 3px rgba(15,23,42,.12)':'none',transition:'all .13s'}}>
@@ -2413,6 +2413,42 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
       </div>
 
       {tView === 'calendar' && <TasksCalendar tasks={all} onOpen={onOpen}/>}
+
+      {/* Лог выполненных задач: кто, что, когда, по какому клиенту + комментарий */}
+      {tView === 'done' && (
+        <div>
+          <div className="hint">
+            <span className="hint-icon">📜</span>
+            <div>История выполненных задач: видно, <b>что сделано, когда и по какому клиенту</b>. Клик по строке — открыть карточку. Снять отметку можно в самой карточке (вкладка Задачи) — тогда задача вернётся в открытые.</div>
+          </div>
+          {done.length === 0 && (
+            <div style={{textAlign:'center',padding:'44px 20px',color:'#64748b'}}>
+              <i className="ti ti-checkbox" style={{fontSize:40,display:'block',marginBottom:10,opacity:.2}}/>
+              <p style={{fontSize:15,fontWeight:500}}>Выполненных задач пока нет</p>
+            </div>
+          )}
+          {[...done].sort((a,b)=>String(b.doneAt||'').localeCompare(String(a.doneAt||''))).map(t => (
+            <div key={t.id} onClick={()=>onOpen(t.cl)}
+              style={{display:'flex',alignItems:'flex-start',gap:10,padding:'11px 13px',background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:11,marginBottom:7,cursor:'pointer',transition:'all .1s'}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor='#86efac';e.currentTarget.style.background='#f0fdf4'}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor='#e2e8f0';e.currentTarget.style.background='#fff'}}>
+              <div style={{width:20,height:20,borderRadius:'50%',background:'#10b981',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>
+                <i className="ti ti-check" style={{fontSize:11,color:'#fff'}}/>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13,color:'#334155'}}>
+                  {t.type||'Задача'}{t.text&&<span style={{color:'#64748b',fontWeight:400}}> — {t.text}</span>}
+                </div>
+                {t.note && <div style={{fontSize:11.5,color:'#0d9488',marginTop:2,fontStyle:'italic'}}>💬 {t.note}</div>}
+                <div style={{fontSize:10.5,color:'#94a3b8',marginTop:2}}>
+                  {t.doneAt ? '✅ выполнена: ' + t.doneAt : '✅ выполнена'}{t.due ? ' · срок был: ' + t.due : ''}{t.created ? ' · создана: ' + t.created : ''}
+                </div>
+              </div>
+              <span style={{fontSize:12,color:'#64748b',fontWeight:700,flexShrink:0}}>{t.cFio}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {tView === 'list' && <>
       {overdue.length > 0 && (
