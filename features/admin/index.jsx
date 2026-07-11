@@ -25,7 +25,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       </div>
 
       <div style={{display:'flex',gap:7,marginBottom:18,flexWrap:'wrap'}}>
-        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'},{id:'docs',l:'📄 Договоры'},{id:'routes',l:'🗺 Маршруты'},{id:'fields',l:'🧩 Поля карточки'},{id:'logs',l:'📜 Журнал'}].map(t => (
+        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'},{id:'docs',l:'📄 Договоры'},{id:'routes',l:'🗺 Маршруты'},{id:'fields',l:'🧩 Поля карточки'},{id:'logs',l:'📜 Журнал'},{id:'trash',l:'🗑 Корзина'}].map(t => (
           <Btn key={t.id} variant={tab===t.id?'primary':'ghost'} onClick={()=>setTab(t.id)}>{t.l}</Btn>
         ))}
       </div>
@@ -170,6 +170,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       {tab === 'routes' && <RoutesPanel/>}
       {tab === 'fields' && <CustomFieldsPanel/>}
       {tab === 'logs' && <ActionLogPanel/>}
+      {tab === 'trash' && <TrashPanel reload={reload}/>}
     </div>
   )
 }
@@ -1281,6 +1282,83 @@ function RoutesPanel() {
                 style={{width:'100%',padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:12,lineHeight:1.5,resize:'vertical',color:'#0f172a',boxSizing:'border-box',fontFamily:'inherit'}}/>
             </div>
           </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+
+// ─── КОРЗИНА КЛИЕНТОВ ────────────────────────────────────────────────────────
+// Удалённые клиенты (deleted_clients, миграция 015): восстановить или удалить навсегда.
+function TrashPanel({ reload }) {
+  const [items, setItems] = useState(null)
+  const [ready, setReady] = useState(true)
+  const [busy,  setBusy]  = useState('')
+  const [msg,   setMsg]   = useState('')
+
+  function toast(t) { setMsg(t); setTimeout(() => setMsg(''), 3500) }
+  function load() {
+    setItems(null)
+    api.getTrash().then(d => { setItems(d?.items || []); setReady(d?.ready !== false) })
+      .catch(() => { setItems([]); setReady(false) })
+  }
+  useEffect(load, [])
+
+  async function restore(id) {
+    setBusy(id)
+    try {
+      await api.restoreClient(id)
+      toast('✅ Клиент восстановлен — появится в списке')
+      load(); reload && reload()
+    } catch (e) { toast('❌ ' + e.message) }
+    setBusy('')
+  }
+  async function purge(id) {
+    if (!window.confirm('Удалить НАВСЕГДА? Это действие необратимо.')) return
+    setBusy(id)
+    try { await api.purgeClient(id); toast('🗑 Удалено навсегда'); load() }
+    catch (e) { toast('❌ ' + e.message) }
+    setBusy('')
+  }
+
+  if (items === null) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>⏳ Загрузка...</div>
+
+  return (
+    <div>
+      {msg && <div style={{position:'fixed',top:20,right:20,zIndex:9999,background:'#0f172a',color:'#fff',padding:'10px 16px',borderRadius:10,fontSize:13,fontWeight:600}}>{msg}</div>}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:13}}>
+        <div style={{fontWeight:800,fontSize:16}}>Корзина ({items.length})</div>
+        <Btn size="sm" onClick={load}><i className="ti ti-refresh"/>Обновить</Btn>
+      </div>
+      {!ready && (
+        <div style={{background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:12,padding:'11px 14px',marginBottom:13,fontSize:12.5,color:'#92400e',lineHeight:1.6}}>
+          Корзина не активирована — примените <b>миграцию 015</b> в Supabase. До этого удаление клиентов безвозвратное.
+        </div>
+      )}
+      {items.length === 0 && ready && (
+        <div style={{textAlign:'center',padding:'34px 20px',color:'#94a3b8'}}>
+          <i className="ti ti-trash" style={{fontSize:38,display:'block',marginBottom:10,opacity:.2}}/>
+          Корзина пуста. Удалённые клиенты будут появляться здесь — их можно восстановить.
+        </div>
+      )}
+      {items.map(it => (
+        <div key={it.id} style={{display:'flex',alignItems:'center',gap:11,background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,padding:'11px 14px',marginBottom:8}}>
+          <div style={{width:34,height:34,borderRadius:10,background:'#fef2f2',color:'#ef4444',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <i className="ti ti-user-x" style={{fontSize:16}}/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:700,fontSize:13.5}}>{it.fio || 'Без имени'}</div>
+            <div style={{fontSize:11.5,color:'#94a3b8'}}>
+              {it.phone || '—'} · удалил: {it.deleted_by || '—'} · {it.deleted_at ? new Date(it.deleted_at).toLocaleString('ru',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''}
+            </div>
+          </div>
+          <Btn size="sm" variant="success" onClick={()=>restore(it.id)} disabled={busy===it.id}>
+            {busy===it.id ? <i className="ti ti-loader spin"/> : <><i className="ti ti-restore"/>Восстановить</>}
+          </Btn>
+          <Btn size="sm" variant="danger" onClick={()=>purge(it.id)} disabled={busy===it.id}>
+            <i className="ti ti-trash-x" style={{fontSize:12}}/>
+          </Btn>
         </div>
       ))}
     </div>
