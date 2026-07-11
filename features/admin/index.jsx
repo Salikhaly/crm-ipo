@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
-import { ROLE, COLORS, PIPELINE_DEFAULT, ALL_ACCOMP_STAGES, DEFAULT_CHECKLISTS, uid, TI, TC, TB } from '../../lib/constants'
+import { ROLE, COLORS, PIPELINE_DEFAULT, ALL_ACCOMP_STAGES, DEFAULT_CHECKLISTS, ACCOMP_TEMPLATES, STAGE_GUIDE, uid, TI, TC, TB } from '../../lib/constants'
 import { Btn, Tag } from '../../components/ui'
 import { DOC_TEMPLATES_FALLBACK, DOC_PLACEHOLDERS } from '../../lib/docTemplates'
 
@@ -25,7 +25,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       </div>
 
       <div style={{display:'flex',gap:7,marginBottom:18,flexWrap:'wrap'}}>
-        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'},{id:'docs',l:'📄 Договоры'},{id:'fields',l:'🧩 Поля карточки'},{id:'logs',l:'📜 Журнал'}].map(t => (
+        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'},{id:'docs',l:'📄 Договоры'},{id:'routes',l:'🗺 Маршруты'},{id:'fields',l:'🧩 Поля карточки'},{id:'logs',l:'📜 Журнал'}].map(t => (
           <Btn key={t.id} variant={tab===t.id?'primary':'ghost'} onClick={()=>setTab(t.id)}>{t.l}</Btn>
         ))}
       </div>
@@ -167,6 +167,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       {tab === 'calc'       && <CalcSettingsPanel/>}
       {tab === 'wa_replies' && <WaRepliesPanel/>}
       {tab === 'docs' && <DocTemplatesPanel/>}
+      {tab === 'routes' && <RoutesPanel/>}
       {tab === 'fields' && <CustomFieldsPanel/>}
       {tab === 'logs' && <ActionLogPanel/>}
     </div>
@@ -1160,6 +1161,126 @@ function CustomFieldsPanel() {
               style={{flex:'1 1 180px',minWidth:0,padding:'8px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:12.5,color:'#0f172a',outline:'none',fontFamily:'inherit'}}/>
           )}
           <Btn size="sm" variant="danger" onClick={()=>del(f.id)}><i className="ti ti-trash" style={{fontSize:12}}/></Btn>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── МАРШРУТЫ СОПРОВОЖДЕНИЯ ПО ГРУППАМ ПРОГРАММ ─────────────────────────────
+// Редактор этапов: у каждой группы (полное, онлайн, доп. доход, Отбасы,
+// госпрограмма, поиск дома, коммерческая) свой список этапов + «что делать»
+// и «что говорить» для менеджера. Хранится в calc_settings.accomp_templates
+// (миграция 015); пока не сохранено — карточки работают на встроенных маршрутах.
+function RoutesPanel() {
+  const [tpls,   setTpls]   = useState(null)   // { groupKey: {l, stages:[{name,do,say}]} }
+  const [grp,    setGrp]    = useState('full')
+  const [saving, setSaving] = useState(false)
+  const [msg,    setMsg]    = useState('')
+
+  // Стартовое состояние: настройки из БД, недостающие группы — из кода (+гайды)
+  function seed(fromDb) {
+    const out = {}
+    for (const [key, t] of Object.entries(ACCOMP_TEMPLATES)) {
+      const db = fromDb && fromDb[key]
+      if (db && Array.isArray(db.stages) && db.stages.length) {
+        out[key] = { l: db.l || t.l, stages: db.stages.map(s => ({ name: s.name || s, do: s.do || '', say: s.say || '' })) }
+      } else {
+        out[key] = { l: t.l, stages: t.stages.map(n => ({ name: n, do: (STAGE_GUIDE[n]||{}).do || '', say: (STAGE_GUIDE[n]||{}).say || '' })) }
+      }
+    }
+    return out
+  }
+
+  useEffect(() => {
+    api.getCalcSettings()
+      .then(d => setTpls(seed(d?.settings?.accomp_templates)))
+      .catch(() => setTpls(seed(null)))
+  }, [])
+
+  function toast(t) { setMsg(t); setTimeout(() => setMsg(''), 3000) }
+  const cur = tpls?.[grp]
+
+  function updStage(i, f, v) {
+    setTpls(ts => ({ ...ts, [grp]: { ...ts[grp], stages: ts[grp].stages.map((s, idx) => idx === i ? { ...s, [f]: v } : s) } }))
+  }
+  function addStage() {
+    setTpls(ts => ({ ...ts, [grp]: { ...ts[grp], stages: [...ts[grp].stages, { name: 'Новый этап', do: '', say: '' }] } }))
+  }
+  function delStage(i) {
+    if (!window.confirm('Удалить этап? Отметки клиентов на этапах ПОСЛЕ него сдвинутся на один назад.')) return
+    setTpls(ts => ({ ...ts, [grp]: { ...ts[grp], stages: ts[grp].stages.filter((_, idx) => idx !== i) } }))
+  }
+  function mvStage(i, dir) {
+    setTpls(ts => {
+      const arr = [...ts[grp].stages]
+      const j = i + dir
+      if (j < 0 || j >= arr.length) return ts
+      ;[arr[i], arr[j]] = [arr[j], arr[i]]
+      return { ...ts, [grp]: { ...ts[grp], stages: arr } }
+    })
+  }
+  async function saveAll() {
+    setSaving(true)
+    try {
+      const res = await api.saveCalcSettings({ settings: { accomp_templates: tpls } })
+      toast(res?.ok ? '✅ Маршруты сохранены' : '⚠️ Ошибка — применена ли миграция 015?')
+    } catch (e) { toast('❌ ' + e.message) }
+    setSaving(false)
+  }
+
+  if (!tpls) return <div style={{textAlign:'center',padding:40,color:'#94a3b8'}}>⏳ Загрузка...</div>
+
+  return (
+    <div>
+      {msg && <div style={{position:'fixed',top:20,right:20,zIndex:9999,background:'#0f172a',color:'#fff',padding:'10px 16px',borderRadius:10,fontSize:13,fontWeight:600}}>{msg}</div>}
+
+      <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:12,padding:'11px 14px',marginBottom:13,fontSize:12.5,color:'#1e40af',lineHeight:1.6}}>
+        <b>У каждой группы программ — свой маршрут.</b> Название этапа + «что делать» (инструкция менеджеру)
+        + «что говорить» (готовый скрипт клиенту). Всё это менеджер видит в карточке на вкладке Сопровождение.
+        <br/><b>⚠️ Важно:</b> прогресс клиентов привязан к порядковому номеру этапа. Переименовывать и править
+        тексты можно свободно; новые этапы добавляйте <b>в конец</b> — вставка/удаление в середине сдвинет
+        отметки уже ведущихся клиентов. <b>Требуется миграция 015.</b>
+      </div>
+
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:13}}>
+        {Object.entries(tpls).map(([key, t]) => (
+          <button key={key} onClick={()=>setGrp(key)}
+            style={{padding:'7px 13px',borderRadius:20,border:`1.5px solid ${grp===key?'#3b82f6':'#e2e8f0'}`,background:grp===key?'#eff6ff':'#fff',color:grp===key?'#1d4ed8':'#64748b',fontSize:12.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+            {t.l} <span style={{opacity:.6}}>({t.stages.length})</span>
+          </button>
+        ))}
+      </div>
+
+      <div style={{display:'flex',gap:8,marginBottom:13,alignItems:'center'}}>
+        <Btn variant="primary" size="sm" onClick={addStage}><i className="ti ti-plus"/>Добавить этап (в конец)</Btn>
+        <Btn variant="success" size="sm" onClick={saveAll} disabled={saving}>
+          {saving ? <><i className="ti ti-loader spin"/>Сохраняю…</> : <><i className="ti ti-device-floppy"/>Сохранить все маршруты</>}
+        </Btn>
+      </div>
+
+      {cur && cur.stages.map((s, i) => (
+        <div key={i} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:13,marginBottom:10}}>
+          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:9}}>
+            <span style={{width:26,height:26,borderRadius:8,background:'#eff6ff',color:'#1d4ed8',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:12,flexShrink:0}}>{i+1}</span>
+            <input value={s.name} onChange={e=>updStage(i,'name',e.target.value)}
+              style={{flex:1,padding:'8px 11px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:14,fontWeight:700,color:'#0f172a',outline:'none',fontFamily:'inherit'}}/>
+            <Btn size="sm" onClick={()=>mvStage(i,-1)} disabled={i===0} style={{width:28,height:28,padding:0,opacity:i===0?.3:1}}><i className="ti ti-arrow-up" style={{fontSize:11}}/></Btn>
+            <Btn size="sm" onClick={()=>mvStage(i,1)} disabled={i===cur.stages.length-1} style={{width:28,height:28,padding:0,opacity:i===cur.stages.length-1?.3:1}}><i className="ti ti-arrow-down" style={{fontSize:11}}/></Btn>
+            <Btn size="sm" variant="danger" onClick={()=>delStage(i)} style={{width:28,height:28,padding:0}}><i className="ti ti-trash" style={{fontSize:11}}/></Btn>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',marginBottom:4}}>🛠 Что делать (менеджеру)</div>
+              <textarea value={s.do} onChange={e=>updStage(i,'do',e.target.value)} rows={3} placeholder="Инструкция менеджеру на этом этапе…"
+                style={{width:'100%',padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:12,lineHeight:1.5,resize:'vertical',color:'#0f172a',boxSizing:'border-box',fontFamily:'inherit'}}/>
+            </div>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',marginBottom:4}}>💬 Что говорить (клиенту)</div>
+              <textarea value={s.say} onChange={e=>updStage(i,'say',e.target.value)} rows={3} placeholder="Готовый скрипт для клиента…"
+                style={{width:'100%',padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:12,lineHeight:1.5,resize:'vertical',color:'#0f172a',boxSizing:'border-box',fontFamily:'inherit'}}/>
+            </div>
+          </div>
         </div>
       ))}
     </div>

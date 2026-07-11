@@ -3,7 +3,7 @@
 // PUT    /api/clients/:id  → обновить клиента
 // DELETE /api/clients/:id  → удалить клиента
 
-import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, addCustom, findMissingOptionalColumn } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, addCustom, addPkbFields, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 import { logAction } from '../../../lib/actionLog'
@@ -107,6 +107,7 @@ export default withAuth(async function handler(req, res) {
     addCloseReason(row, client)
     addTags(row, client)
     addCustom(row, client)
+    addPkbFields(row, client)
 
     let { data, error } = await sb
       .from('clients')

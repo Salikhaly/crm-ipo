@@ -96,3 +96,49 @@ describe('clientsFromList — формат база_анкет.xlsx', () => {
     expect(clientsFromList([['a','b'],['1','2']])).toEqual([])  // нет распознанных заголовков
   })
 })
+
+describe('creditsFromAnketa — кредитная история из листа «Кредиты»', () => {
+  const cells = {
+    'Кредиты!B6': 'Займ', 'Кредиты!C6': 'АО Банк ЦентрКредит', 'Кредиты!D6': '5 000 000',
+    'Кредиты!E6': '120 000', 'Кредиты!F6': '3 200 000', 'Кредиты!G6': '', 'Кредиты!H6': '',
+    'Кредиты!B7': 'Кредитная карта', 'Кредиты!C7': 'Kaspi Bank', 'Кредиты!E7': '25 000',
+    'Кредиты!G7': '15', 'Кредиты!H7': '40 000',
+    'Кредиты!B30': 'ТОО МФО Деньги', 'Кредиты!D30': 'ТОО Коллектор', 'Кредиты!F30': '01.03.2024',
+    'Кредиты!G30': '90', 'Кредиты!H30': '150 000',
+    'Кредиты!B46': 'АО Народный банк', 'Кредиты!F46': '10.05.2018',
+  }
+  const getCell = (s, r) => cells[`${s}!${r}`] ?? ''
+  const { creditsFromAnketa } = require('../../lib/importAnketa')
+  const list = creditsFromAnketa(getCell)
+
+  test('активные, завершённые и старые распознаны', () => {
+    expect(list.filter(k => k.status === 'active').length).toBe(2)
+    expect(list.filter(k => k.status === 'closed').length).toBe(1)
+    expect(list.filter(k => k.status === 'old').length).toBe(1)
+  })
+  test('поля активного кредита', () => {
+    const a = list[0]
+    expect(a.creditor).toBe('АО Банк ЦентрКредит')
+    expect(a.amount).toBe(5000000)
+    expect(a.payment).toBe(120000)
+    expect(a.outstanding).toBe(3200000)
+  })
+  test('просрочка и цессионарий у завершённого', () => {
+    const c1 = list.find(k => k.status === 'closed')
+    expect(c1.cessionary).toBe('ТОО Коллектор')
+    expect(c1.overdueDays).toBe(90)
+    expect(c1.endDate).toBe('01.03.2024')
+  })
+  test('симметрия: anketaCells(credits) → creditsFromAnketa возвращает те же кредиты', () => {
+    const { anketaCells } = require('../../lib/exportAnketa')
+    const client = { fio:'X', credits: list }
+    const map = {}
+    for (const { sheet, ref, value } of anketaCells(client, {})) map[`${sheet}!${ref}`] = value
+    const back = creditsFromAnketa((s, r) => map[`${s}!${r}`] ?? '')
+    expect(back.filter(k => k.status === 'active').length).toBe(2)
+    expect(back[0].creditor).toBe('АО Банк ЦентрКредит')
+    expect(back[0].payment).toBe(120000)
+    const closed = back.find(k => k.status === 'closed')
+    expect(closed.cessionary).toBe('ТОО Коллектор')
+  })
+})
