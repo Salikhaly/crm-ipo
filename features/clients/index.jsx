@@ -12,7 +12,7 @@ import {
   today, uid, nowStr, CT, CONTRACTS, ACCOMP, PIPELINE_DEFAULT,
   SRC, SRCS, CR, CR_ST, ROLE, MARITAL, CITIES, WORK_T, DOWN_T, CONTACT_ST,
   TASK_T, PAY_ST, TI, TC, TB, TL, fmtN,
-  getAccompTemplate, getChecklist, STAGE_GUIDE,
+  getAccompTemplate, getChecklist, STAGE_GUIDE, getStageGuide,
   CLOSE_REASONS, STAGE_AUTO_TASK, canMoveToStage,
 } from '../../lib/constants'
 import {
@@ -20,12 +20,19 @@ import {
 } from '../../components/ui'
 import { Logo } from '../../components/logo'
 import {
-  annuity, fmtMoney, fmtM, API_PROGRAMS_FALLBACK,
+  annuity, fmtMoney, fmtM, API_PROGRAMS_FALLBACK, PROGRAMS_FALLBACK,
 } from '../../lib/calcData'
 import { fillDocTemplate, DOC_TEMPLATES_FALLBACK } from '../../lib/docTemplates'
 import { anketaCells, anketaFileName } from '../../lib/exportAnketa'
 import { fillXlsxTemplate } from '../../lib/xlsxTemplate'
 
+
+
+// Запись в ленту о выполнении/переоткрытии задачи — история действий по задачам
+function taskLogEntry(t, done, userName) {
+  const label = ((t?.type || '') + (t?.text ? ' — ' + t.text : '')).trim() || 'Задача'
+  return { id: uid(), text: (done ? '✅ Выполнена задача: ' : '↩️ Задача снова открыта: ') + label, author: userName || '', date: nowStr(), sys: true }
+}
 
 // ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
 function Collaps({ title, defaultOpen = false, children }) {
@@ -55,12 +62,14 @@ function SideTimeline({ c, setCd, user, canEdit }) {
 
   function togTask(id) {
     if (!canEdit) return
+    const target = tasks.find(t => t.id === id)
     const toggle = t => t.id===id ? { ...t, done:!t.done, doneAt: !t.done ? nowStr() : null } : t
     // синхронно обновляем копии задач в этапах сопровождения
     const newStages = Object.fromEntries(
       Object.entries(c.accompStages||{}).map(([k,v]) => [k, {...v, tasks:(v.tasks||[]).map(toggle)}])
     )
-    setCd({ ...c, tasks: tasks.map(toggle), accompStages: newStages })
+    setCd({ ...c, tasks: tasks.map(toggle), accompStages: newStages,
+      comments: [...(c.comments||[]), taskLogEntry(target, !target?.done, user.name)] })
   }
   function addTask() {
     const t = ntText.trim()
@@ -147,12 +156,16 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const [tagInp,     setTagInp]     = useState(null)   // null = скрыт, '' = ввод тега
   const [docDlg,     setDocDlg]     = useState(null)   // {templates, selId, text} — генератор документов
   const [customFields, setCustomFields] = useState([]) // конфиг доп. полей (миграция 014)
+  const [accompOv,     setAccompOv]     = useState(null) // маршруты из админки (миграция 015)
 
-  // Загружаем описания доп. полей один раз при открытии карточки (доступно всем ролям)
+  // Загружаем конфиги один раз при открытии карточки (доступно всем ролям)
   useEffect(() => {
     let alive = true
     api.calc('custom_fields', {})
       .then(r => { if (alive && Array.isArray(r?.fields)) setCustomFields(r.fields) })
+      .catch(() => {})
+    api.calc('accomp_templates', {})
+      .then(r => { if (alive && r?.templates && typeof r.templates === 'object') setAccompOv(r.templates) })
       .catch(() => {})
     return () => { alive = false }
   }, [])
@@ -161,8 +174,8 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const pl      = pipeline || PIPELINE_DEFAULT
   const cls     = checklists || {}
 
-  // Маршрут сопровождения зависит от типа договора (7 групп программ)
-  const accTpl    = getAccompTemplate(c.contractType)
+  // Маршрут сопровождения: тип договора → группа; правки из админки главнее хардкода
+  const accTpl    = getAccompTemplate(c.contractType, accompOv)
   const accStages = accTpl.stages
 
   function set(k, v) { setC(x=>({...x,[k]:v})); setIsDirty(true); setHasChanges(true) }
@@ -482,6 +495,23 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                 {c.isWhatsApp && <span style={{background:'#25d36633',color:'#25d366',borderRadius:20,padding:'4px 9px',fontSize:11,fontWeight:700}}>WhatsApp</span>}
                 {cr && <Tag c={cr.c} ch={cr.l}/>}
                 {ctObj && <span style={{padding:'4px 9px',borderRadius:20,fontSize:11,fontWeight:700,background:'rgba(255,255,255,.15)',color:'#fff'}}>{ctObj.l}</span>}
+                {c.program && <span style={{padding:'4px 9px',borderRadius:20,fontSize:11,fontWeight:700,background:'#fbbf2433',color:'#fbbf24',border:'1px solid #fbbf2455'}}>🏦 {c.program}</span>}
+                {c.isReassignment && (() => {
+                  const rs = c.reassStatus || {}
+                  const chip = (ok, l) => (
+                    <span key={l} style={{padding:'4px 9px',borderRadius:20,fontSize:10.5,fontWeight:700,
+                      background: ok ? '#10b98133' : 'rgba(255,255,255,.1)',
+                      color: ok ? '#34d399' : 'rgba(255,255,255,.55)',
+                      border: `1px solid ${ok ? '#10b98155' : 'rgba(255,255,255,.2)'}`}}>
+                      {ok ? '✓' : '○'} {l}
+                    </span>
+                  )
+                  return <>
+                    {chip(rs.debtCert,  'Справка о задолж.')}
+                    {chip(rs.reassCert, 'Справка о переуступке')}
+                    {chip(rs.closed,    'Кредит закрыт')}
+                  </>
+                })()}
               </div>
               <div className='hero-grid'>
                 {[['Телефон',c.phone||'—'],['ИИН',c.iin||'—'],['Менеджер',mgr?.name||'—'],['Источник',SRC[c.source]?.l||'—'],['Договор',c.contractAmount>0?fmtN(c.contractAmount)+'₸':'—'],['Дата',c.dateIn]].map(([l,v])=>(
@@ -645,6 +675,9 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   </div>
                 </>}
                 {tab==='finance'  && <>
+                  <Collaps title={`🏦 Кредиты из ПКБ (${(c.credits||[]).length})`} defaultOpen={(c.credits||[]).length>0}>
+                    <CreditsBlock c={c} set={set} canEdit={canEdit} toast$={toast$}/>
+                  </Collaps>
                   <Collaps title="💳 Кредитная история" defaultOpen>
                     <CreditTab c={c} set={set} canEdit={canEdit}/>
                   </Collaps>
@@ -671,7 +704,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                     </Collaps>
                   </div>
                 </>}
-                {tab==='accomp'   && <AccompTab   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} managers={managers} canEdit={canEdit} checklists={cls} user={user} accIdx={Math.min(accIdx, accStages.length-1)} setAccIdx={setAccIdx} autoBanner={autoBanner} setAutoBanner={setAutoBanner} toggleCheck={toggleCheck} overallPct={overallPct} totalDone={totalDone} totalItems={totalItems} getSD={getSD} setSD={setSD} toast$={toast$} stages={accStages} tplLabel={accTpl.l}/>}
+                {tab==='accomp'   && <AccompTab   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} managers={managers} canEdit={canEdit} checklists={cls} user={user} accIdx={Math.min(accIdx, accStages.length-1)} setAccIdx={setAccIdx} autoBanner={autoBanner} setAutoBanner={setAutoBanner} toggleCheck={toggleCheck} overallPct={overallPct} totalDone={totalDone} totalItems={totalItems} getSD={getSD} setSD={setSD} toast$={toast$} stages={accStages} tplLabel={accTpl.l} tpl={accTpl}/>}
                 {tab==='tasks'    && <TasksTabC   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user} canEdit={canEdit}/>}
                 {tab==='history'  && <HistoryTab  c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
                 {tab==='drive'    && <DriveTab     c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
@@ -712,6 +745,105 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   )
 }
 
+// ─── КРЕДИТНАЯ ИСТОРИЯ (из анкеты ПКБ / вручную) ─────────────────────────────
+// c.credits (миграция 015): [{status:'active'|'closed'|'old', type, creditor,
+// amount, payment, outstanding, overdueDays, overdueAmount, cessionary, endDate}]
+function CreditsBlock({ c, set, canEdit, toast$ }) {
+  const credits = Array.isArray(c.credits) ? c.credits : []
+  const active  = credits.filter(k => k.status === 'active')
+  const other   = credits.filter(k => k.status !== 'active')
+  const [nc, setNc] = useState({ creditor:'', payment:'', outstanding:'' })
+  const paySum = active.reduce((s, k) => s + (+k.payment || 0), 0)
+  const money = v => v ? fmtN(+v) + '₸' : '—'
+
+  function delRow(idx) { set('credits', credits.filter((_, i) => i !== idx)) }
+  function addRow() {
+    if (!nc.creditor.trim()) return
+    set('credits', [...credits, { status:'active', type:'', creditor:nc.creditor.trim(),
+      amount:'', payment:+nc.payment || '', outstanding:+nc.outstanding || '', overdueDays:'', overdueAmount:'' }])
+    setNc({ creditor:'', payment:'', outstanding:'' })
+  }
+
+  const th = { padding:'7px 9px', textAlign:'left', fontSize:10, fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'.04em', borderBottom:'1.5px solid #e2e8f0', whiteSpace:'nowrap', background:'#f8fafc' }
+  const td = { padding:'7px 9px', fontSize:12.5, borderBottom:'1px solid #f1f5f9', whiteSpace:'nowrap' }
+
+  return (
+    <div>
+      {credits.length === 0 && (
+        <div style={{fontSize:12.5,color:'#94a3b8',fontStyle:'italic',marginBottom:10}}>
+          Кредитов пока нет — подтянутся из анкеты ПКБ при импорте/автопередаче, или добавьте вручную ниже.
+        </div>
+      )}
+      {active.length > 0 && (
+        <div style={{border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'auto',marginBottom:10}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:640}}>
+            <thead><tr>
+              <th style={th}>Кредитор</th><th style={th}>Тип</th><th style={th}>Сумма</th><th style={th}>Платёж/мес</th>
+              <th style={th}>Остаток</th><th style={th}>Просрочка</th>{canEdit && <th style={{...th,width:30}}/>}
+            </tr></thead>
+            <tbody>
+              {credits.map((k, idx) => k.status === 'active' && (
+                <tr key={idx}>
+                  <td style={{...td,fontWeight:700,whiteSpace:'normal'}}>{k.creditor||'—'}</td>
+                  <td style={td}>{k.type||'—'}</td>
+                  <td style={td}>{money(k.amount)}</td>
+                  <td style={{...td,fontWeight:700,color:'#1d4ed8'}}>{money(k.payment)}</td>
+                  <td style={td}>{money(k.outstanding)}</td>
+                  <td style={{...td,color:+k.overdueDays>0?'#ef4444':'#94a3b8',fontWeight:+k.overdueDays>0?700:400}}>
+                    {+k.overdueDays > 0 ? `${k.overdueDays} дн. · ${money(k.overdueAmount)}` : 'нет'}
+                  </td>
+                  {canEdit && <td style={td}><i className="ti ti-trash" style={{fontSize:12,color:'#94a3b8',cursor:'pointer'}} onClick={()=>delRow(idx)}/></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {other.length > 0 && (
+        <div style={{border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'auto',marginBottom:10}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:560}}>
+            <thead><tr>
+              <th style={th}>Завершённые / переуступленные</th><th style={th}>Цессионарий</th><th style={th}>Завершён</th><th style={th}>Макс. просрочка</th>{canEdit && <th style={{...th,width:30}}/>}
+            </tr></thead>
+            <tbody>
+              {credits.map((k, idx) => k.status !== 'active' && (
+                <tr key={idx}>
+                  <td style={{...td,whiteSpace:'normal'}}>{k.creditor||'—'}{k.status==='old' ? <span style={{fontSize:10,color:'#94a3b8'}}> · &gt;5 лет</span> : null}</td>
+                  <td style={{...td,whiteSpace:'normal',color:k.cessionary?'#d97706':'#94a3b8'}}>{k.cessionary||'—'}</td>
+                  <td style={td}>{k.endDate||'—'}</td>
+                  <td style={{...td,color:+k.overdueDays>0?'#ef4444':'#94a3b8'}}>{+k.overdueDays>0?`${k.overdueDays} дн. · ${money(k.overdueAmount)}`:'нет'}</td>
+                  {canEdit && <td style={td}><i className="ti ti-trash" style={{fontSize:12,color:'#94a3b8',cursor:'pointer'}} onClick={()=>delRow(idx)}/></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{display:'flex',alignItems:'center',gap:9,flexWrap:'wrap'}}>
+        {active.length > 0 && (
+          <div style={{fontSize:12.5,fontWeight:700,color:'#334155'}}>
+            Итого платежей: <span style={{color:'#1d4ed8'}}>{fmtN(paySum)}₸/мес</span>
+          </div>
+        )}
+        {canEdit && active.length > 0 && String(paySum) !== String(c.monthlyLoad||'') && (
+          <Btn size="sm" onClick={()=>{set('monthlyLoad', String(paySum)); toast$('✅ Нагрузка/мес обновлена: ' + fmtN(paySum) + '₸')}}>
+            <i className="ti ti-refresh"/>В «нагрузку/мес»
+          </Btn>
+        )}
+      </div>
+      {canEdit && (
+        <div style={{display:'flex',gap:7,marginTop:10,flexWrap:'wrap'}}>
+          <Inp value={nc.creditor} onChange={e=>setNc(x=>({...x,creditor:e.target.value}))} placeholder="Кредитор (банк/МФО)" style={{flex:'2 1 180px'}}/>
+          <Inp type="number" value={nc.payment} onChange={e=>setNc(x=>({...x,payment:e.target.value}))} placeholder="Платёж/мес" style={{flex:'1 1 110px'}}/>
+          <Inp type="number" value={nc.outstanding} onChange={e=>setNc(x=>({...x,outstanding:e.target.value}))} placeholder="Остаток" style={{flex:'1 1 110px'}}
+            onKeyDown={e=>e.key==='Enter'&&addRow()}/>
+          <Btn variant="primary" size="sm" onClick={addRow} disabled={!nc.creditor.trim()}><i className="ti ti-plus"/>Добавить</Btn>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── TAB COMPONENTS ──────────────────────────────────────────────
 function ProfileTab({ c, set, managers, canEdit }) {
   return <>
@@ -729,9 +861,15 @@ function ProfileTab({ c, set, managers, canEdit }) {
       <Fl l="Менеджер" ch={<Sel value={c.manager||''} onChange={e=>set('manager',e.target.value)} disabled={!canEdit}><option value="">—</option>{managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Sel>}/>
       <Fl l="Источник" ch={<Sel value={c.source}  onChange={e=>set('source',e.target.value)}  disabled={!canEdit}>{SRCS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}</Sel>}/>
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
       <Fl l="Дата поступления" ch={<Inp type="date" value={c.dateIn} onChange={e=>set('dateIn',e.target.value)}/>}/>
       <Fl l="КИ" ch={<Sel value={c.creditStatus} onChange={e=>set('creditStatus',e.target.value)} disabled={!canEdit}>{CR_ST.map(x=><option key={x.id} value={x.id}>{x.l}</option>)}</Sel>}/>
+      <Fl l="Ипотечная программа" ch={
+        <Sel value={c.program||''} onChange={e=>set('program',e.target.value)} disabled={!canEdit}>
+          <option value="">Не выбрана</option>
+          {PROGRAMS_FALLBACK.map(p=><option key={p.id} value={p.n}>{p.n}</option>)}
+        </Sel>
+      }/>
     </div>
     <div style={{display:'flex',alignItems:'center',gap:10,padding:'11px 13px',background:'#f8fafc',borderRadius:11,border:'2px solid #e2e8f0',marginBottom:13}}>
       <i className="ti ti-brand-whatsapp" style={{fontSize:18,color:'#25d366'}}/>
@@ -1025,6 +1163,28 @@ function ReassTab({ c, set, canEdit }) {
           </div>
         ))}
       </div>
+
+      {/* Статусы процесса переуступки: справки и закрытие кредита (миграция 015).
+          Видны чипами в шапке карточки — сразу понятно, на каком шаге клиент. */}
+      <div style={{marginTop:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:7}}>Статус переуступки</div>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          {[['debtCert','📄 Справка о задолженности получена','#3b82f6'],
+            ['reassCert','📄 Справка о переуступке получена','#8b5cf6'],
+            ['closed','✅ Кредит закрыт','#10b981']].map(([k,l,col])=>{
+            const on = !!(c.reassStatus||{})[k]
+            return (
+              <div key={k} onClick={()=>canEdit&&set('reassStatus',{...(c.reassStatus||{}),[k]:!on})}
+                style={{flex:'1 1 200px',display:'flex',alignItems:'center',gap:10,padding:12,border:`2px solid ${on?col:'#e2e8f0'}`,borderRadius:11,cursor:canEdit?'pointer':'default',background:on?col+'11':'#f8fafc'}}>
+                <div style={{width:19,height:19,borderRadius:5,border:`2px solid ${on?col:'#cbd5e1'}`,background:on?col:'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  {on && <i className="ti ti-check" style={{fontSize:11,color:'#fff'}}/>}
+                </div>
+                <span style={{fontSize:13,fontWeight:700,color:on?col:'#0f172a'}}>{l}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
     </>}
   </>
 }
@@ -1164,7 +1324,7 @@ function DealStepsBlock({ c, setC, canEdit }) {
   )
 }
 
-function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAccIdx, autoBanner, setAutoBanner, toggleCheck, overallPct, totalDone, totalItems, getSD, setSD, toast$, stages, tplLabel }) {
+function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAccIdx, autoBanner, setAutoBanner, toggleCheck, overallPct, totalDone, totalItems, getSD, setSD, toast$, stages, tplLabel, tpl }) {
   const [newCmt,  setNewCmt]  = useState({})
   const [newTask, setNewTask] = useState({})
   const fileRefs = useRef({})
@@ -1195,9 +1355,11 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
   }
   function toggleTask(si, tid) {
     const sd = getSD(si)
+    const target = (c.tasks||[]).find(t => t.id === tid) || (sd.tasks||[]).find(t => t.id === tid)
     const toggle = t => t.id===tid ? {...t, done:!t.done, doneAt: !t.done ? nowStr() : null} : t
     setSD(si, {...sd, tasks:(sd.tasks||[]).map(toggle)})
-    setC({...c, tasks:(c.tasks||[]).map(toggle)})
+    setC(prev => ({...prev, tasks:(prev.tasks||[]).map(toggle),
+      comments: [...(prev.comments||[]), taskLogEntry(target, !target?.done, user.name)]}))
   }
   const [uploading, setUploading] = useState(false)
 
@@ -1333,7 +1495,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
         const stageTasks = sd.tasks||[]
         const stageDocs  = sd.docs||[]
         const stageCmts  = sd.comments||[]
-        const guide      = STAGE_GUIDE[sName]
+        const guide      = getStageGuide(sName, tpl)
 
         return (
           <div key={sName}>
@@ -1556,7 +1718,12 @@ function TasksTabC({ c, setC, user, canEdit }) {
     setC({...c, tasks:[...tasks,{id:uid(),...nTask,done:false,created:nowStr()}]})
     setNTask({type:TASK_T[0],text:'',due:''})
   }
-  function tog(id) { setC({...c, tasks:tasks.map(t=>t.id===id?{...t,done:!t.done,doneAt:!t.done?nowStr():null}:t)}) }
+  function tog(id) {
+    const target = tasks.find(t => t.id === id)
+    setC(prev => ({...prev,
+      tasks: (prev.tasks||[]).map(t => t.id===id ? {...t, done:!t.done, doneAt:!t.done?nowStr():null} : t),
+      comments: [...(prev.comments||[]), taskLogEntry(target, !target?.done, user.name)]}))
+  }
   function del(id) {
     // Удаляем из c.tasks и синхронно из accompStages (задачи дублируются там)
     const newTasks = tasks.filter(t => t.id !== id)

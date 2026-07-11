@@ -35,7 +35,7 @@ async function handler(req, res) {
         mrp_ref, deal_steps, insurance_pct,
         d50_table, rate_presets,
         wa_auto_greeting, wa_auto_greeting_on, wa_round_robin,
-        doc_templates, custom_fields,
+        doc_templates, custom_fields, accomp_templates,
       } = settings
 
       const row = { id: 'main', updated_at: new Date().toISOString() }
@@ -55,12 +55,13 @@ async function handler(req, res) {
       if (wa_round_robin      != null) row.wa_round_robin      = !!wa_round_robin
       if (doc_templates       != null) row.doc_templates       = doc_templates
       if (custom_fields       != null) row.custom_fields       = custom_fields
+      if (accomp_templates    != null) row.accomp_templates    = accomp_templates
       if (insurance_pct != null) row.insurance_pct  = +insurance_pct
 
-      // Fallback: необязательные колонки (миграции 011/013/014 могут быть не применены) —
+      // Fallback: необязательные колонки (миграции 011/013/014/015 могут быть не применены) —
       // при ошибке "column ... does not exist" убираем колонку и повторяем
       let { error } = await sb.from('calc_settings').upsert(row)
-      for (const col of ['wa_round_robin', 'doc_templates', 'custom_fields']) {
+      for (const col of ['wa_round_robin', 'doc_templates', 'custom_fields', 'accomp_templates']) {
         if (error && (error.message || '').includes(col) && col in row) {
           delete row[col]
           ;({ error } = await sb.from('calc_settings').upsert(row))

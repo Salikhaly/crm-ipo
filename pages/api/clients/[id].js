@@ -3,7 +3,7 @@
 // PUT    /api/clients/:id  → обновить клиента
 // DELETE /api/clients/:id  → удалить клиента
 
-import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, addCustom, findMissingOptionalColumn } from '../../../lib/supabase'
+import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, addTags, addCustom, addPkbFields, findMissingOptionalColumn } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 import { logAction } from '../../../lib/actionLog'
@@ -107,6 +107,7 @@ export default withAuth(async function handler(req, res) {
     addCloseReason(row, client)
     addTags(row, client)
     addCustom(row, client)
+    addPkbFields(row, client)
 
     let { data, error } = await sb
       .from('clients')
@@ -139,12 +140,23 @@ export default withAuth(async function handler(req, res) {
       return res.status(403).json({ error: 'Нет доступа для удаления' })
     }
 
-    // Имя клиента для журнала — до удаления
-    const { data: victim } = await sb.from('clients').select('fio').eq('id', id).maybeSingle()
+    // Мягкое удаление: полная копия клиента уезжает в корзину (deleted_clients,
+    // миграция 015) — восстановление из админки. Если таблицы ещё нет —
+    // деградация до старого поведения (безвозвратное удаление).
+    const { data: victim } = await sb.from('clients').select('*').eq('id', id).maybeSingle()
+    let trashed = false
+    if (victim) {
+      const { error: trashErr } = await sb.from('deleted_clients').upsert({
+        id: victim.id, data: victim, fio: victim.fio || '', phone: victim.phone || '',
+        deleted_by: req.user?.name || '',
+      })
+      trashed = !trashErr
+    }
     const { error } = await sb.from('clients').delete().eq('id', id)
     if (error) return apiError(res, error)
-    logAction({ action:'delete', entity:'client', entityId:id, entityName:victim?.fio, user:req.user })
-    return res.status(200).json({ ok: true })
+    logAction({ action:'delete', entity:'client', entityId:id, entityName:victim?.fio,
+      detail: trashed ? 'в корзину' : 'безвозвратно (нет миграции 015)', user:req.user })
+    return res.status(200).json({ ok: true, trashed })
   }
 
   return res.status(405).json({ error: 'Метод не разрешён' })

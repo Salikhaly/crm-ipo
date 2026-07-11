@@ -50,6 +50,7 @@ jest.mock('../../lib/supabase', () => ({
   addCloseReason: (row) => row,
   addTags: (row) => row,
   addCustom: (row) => row,
+  addPkbFields: (row) => row,
   findMissingOptionalColumn: () => null,
 }))
 

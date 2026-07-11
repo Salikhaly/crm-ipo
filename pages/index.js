@@ -172,6 +172,19 @@ export default function CRM() {
     return { created, skipped }
   }
 
+  // ─── СЛИЯНИЕ ДУБЛЕЙ (head/admin) ──────────────────────────
+  async function doMerge(primaryId, secondaryId) {
+    setSyncing(true)
+    try {
+      const res = await api.mergeClients(primaryId, secondaryId)
+      if (res?.client) {
+        setClients(cs => cs.filter(x => x.id !== secondaryId).map(x => x.id === primaryId ? res.client : x))
+        toast$('🔗 Клиенты объединены — дубль в корзине')
+      }
+    } catch (e) { toast$('❌ ' + e.message, 'err') }
+    setSyncing(false)
+  }
+
   // ─── МАССОВЫЕ ДЕЙСТВИЯ из таблицы клиентов (head/admin) ──
   async function massUpdate(ids, patch) {
     if (!ids.length) return
@@ -983,7 +996,7 @@ export default function CRM() {
           <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} clients={myCl} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
-            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)}/>}
+            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge}/>}
             {page==='wa'        && <WAPage chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
@@ -1978,7 +1991,8 @@ className='search-card'
 }
 
 // ─── SEARCH PAGE ─────────────────────────────────────────────────
-function SearchPage({ clients, managers, pipeline, checklists, search, setSearch, fStage, setFStage, fMgr, setFMgr, onOpen, waNew, canMass, onMass, onExportSel }) {
+function SearchPage({ clients, managers, pipeline, checklists, search, setSearch, fStage, setFStage, fMgr, setFMgr, onOpen, waNew, canMass, onMass, onExportSel, onMerge }) {
+  const [mergeDlg, setMergeDlg] = useState(null)   // { a, b, primary } — диалог слияния дублей
   const pl = pipeline || PIPELINE_DEFAULT
   // Вид: карточки / таблица (запоминается)
   const [view, setView] = useState(() => {
@@ -2140,6 +2154,12 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
           </Sel>
           <Btn size="sm" variant="primary" onClick={applyMass} disabled={!massStage&&!massMgr}><i className="ti ti-bolt"/>Применить</Btn>
           <Btn size="sm" onClick={()=>onExportSel(sorted.filter(c=>sel.has(c.id)))}><i className="ti ti-download"/>Экспорт</Btn>
+          {sel.size === 2 && onMerge && (
+            <Btn size="sm" variant="warn" onClick={()=>{
+              const [a, b] = sorted.filter(c => sel.has(c.id))
+              setMergeDlg({ a, b, primary: a.id })
+            }}><i className="ti ti-arrows-join"/>Объединить дубли</Btn>
+          )}
           <button onClick={()=>setSel(new Set())} style={{marginLeft:'auto',border:'none',background:'transparent',color:'#64748b',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>✕ Снять</button>
         </div>
       )}
@@ -2188,6 +2208,49 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
       )}
 
       {shown.length === 0 && <div style={{textAlign:'center',padding:'44px 20px',color:'#64748b'}}><i className="ti ti-search" style={{fontSize:40,display:'block',marginBottom:10,opacity:.2}}/><p style={{fontSize:15,fontWeight:500}}>Ничего не найдено</p></div>}
+
+      {/* Диалог слияния дублей */}
+      {mergeDlg && (
+        <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,.55)',zIndex:700,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(4px)',padding:16}}>
+          <div style={{background:'#fff',borderRadius:18,width:'100%',maxWidth:520,padding:20,boxShadow:'0 20px 60px rgba(0,0,0,.28)'}}>
+            <div style={{fontWeight:800,fontSize:16,marginBottom:4}}>🔗 Объединить дубли</div>
+            <div style={{fontSize:12,color:'#64748b',marginBottom:14,lineHeight:1.5}}>
+              Выберите <b>главную карточку</b> — она останется. Задачи, лента, теги, платежи и кредиты
+              второй перенесутся в неё, пустые поля заполнятся. Дубль уедет в корзину.
+            </div>
+            {[mergeDlg.a, mergeDlg.b].map(cl => {
+              const p = pl.find(x => x.id === cl.stage)
+              const isP = mergeDlg.primary === cl.id
+              return (
+                <div key={cl.id} onClick={()=>setMergeDlg(d=>({...d, primary: cl.id}))}
+                  style={{display:'flex',alignItems:'center',gap:11,padding:'12px 14px',border:`2px solid ${isP?'#3b82f6':'#e2e8f0'}`,borderRadius:12,marginBottom:8,cursor:'pointer',background:isP?'#eff6ff':'#fff'}}>
+                  <div style={{width:20,height:20,borderRadius:'50%',border:`2.5px solid ${isP?'#3b82f6':'#cbd5e1'}`,background:isP?'#3b82f6':'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                    {isP && <i className="ti ti-check" style={{fontSize:11,color:'#fff'}}/>}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:800,fontSize:14}}>{cl.fio || 'Без имени'}{isP && <span style={{fontSize:10,color:'#1d4ed8',marginLeft:7,fontWeight:700}}>ГЛАВНАЯ</span>}</div>
+                    <div style={{fontSize:11.5,color:'#64748b',marginTop:2}}>
+                      {cl.phone || '—'}{cl.iin ? ' · ИИН ' + cl.iin : ''} · {p?.l || cl.stage} · с {cl.dateIn || '—'}
+                      {' · задач: ' + (cl.tasks||[]).filter(t=>!t.done).length}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+            <div style={{display:'flex',gap:8,marginTop:14}}>
+              <Btn variant="primary" style={{flex:1,justifyContent:'center'}} onClick={async()=>{
+                const primary   = mergeDlg.primary
+                const secondary = primary === mergeDlg.a.id ? mergeDlg.b.id : mergeDlg.a.id
+                setMergeDlg(null); setSel(new Set())
+                await onMerge(primary, secondary)
+              }}>
+                <i className="ti ti-arrows-join"/>Объединить
+              </Btn>
+              <Btn onClick={()=>setMergeDlg(null)}>Отмена</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

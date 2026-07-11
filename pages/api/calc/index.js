@@ -59,6 +59,8 @@ async function loadCfg(sb) {
       docTemplates: Array.isArray(s?.doc_templates) && s.doc_templates.length ? s.doc_templates : null,
       // Доп. поля карточки (миграция 014) — конфигурация полей, доступна всем ролям
       customFields: Array.isArray(s?.custom_fields) ? s.custom_fields : [],
+      // Маршруты сопровождения по группам программ (миграция 015) — правки из админки
+      accompTemplates: (s?.accomp_templates && typeof s.accomp_templates === 'object') ? s.accomp_templates : null,
       programs:   Object.keys(programs).length > 0 ? programs : DEFAULT_PROGRAMS,
       // Если в БD есть программы — берём их nauryzKeys; иначе дефолтные
       nauryzKeys: Object.keys(programs).length > 0 ? nauryzKeys : DEFAULT_CFG.nauryzKeys,
@@ -101,6 +103,8 @@ export default withAuth(async function handler(req, res) {
     doc_templates:      () => ({ ok: true, templates: cfg.docTemplates }),
     // Доп. поля карточки — доступны любой роли (рендер в карточке клиента)
     custom_fields:      () => ({ ok: true, fields: cfg.customFields || [] }),
+    // Маршруты сопровождения — карточка строит этапы по ним (fallback — хардкод)
+    accomp_templates:   () => ({ ok: true, templates: cfg.accompTemplates }),
   }
 
   if (!ACTIONS[action]) {
