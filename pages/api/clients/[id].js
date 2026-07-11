@@ -22,10 +22,8 @@ export default withAuth(async function handler(req, res) {
 
     if (!data) return res.status(404).json({ error: 'Клиент не найден' })
 
-    // Менеджер видит только своих; специалист — только где он ответственный
-    if (role === 'manager' && data.manager !== mid) {
-      return res.status(403).json({ error: 'Нет доступа' })
-    }
+    // Менеджеры — одна команда: видят карточки друг друга (решение бизнеса).
+    // Специалист — только где он ответственный.
     if (role === 'specialist' && data.responsible_manager !== mid) {
       return res.status(403).json({ error: 'Нет доступа' })
     }
@@ -64,12 +62,11 @@ export default withAuth(async function handler(req, res) {
       .from('clients').select('manager, responsible_manager, stage, comments').eq('id', id).maybeSingle()
     if (!existing) return res.status(404).json({ error: 'Клиент не найден' })
 
-    // SEC FIX: проверяем владельца ДО обновления
+    // Менеджер может редактировать любого клиента команды, но НЕ переназначать
+    // менеджера (защита от «увода» лидов). Ничейного клиента (без менеджера) —
+    // можно взять себе.
     if (role === 'manager') {
-      if (existing.manager !== mid) {
-        return res.status(403).json({ error: 'Нет доступа к этому клиенту' })
-      }
-      client.manager = mid  // менеджер не может переназначить
+      client.manager = existing.manager || client.manager
     }
     if (role === 'specialist') {
       if (existing.responsible_manager !== mid) {

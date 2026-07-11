@@ -112,6 +112,7 @@ export default function CRM() {
   const [drag,        setDrag]       = useState(null)
   const [dragOv,      setDragOv]     = useState(null)
   const [toast,       setToast]      = useState(null)
+  const [waConfigured, setWaConfigured] = useState(true)  // Green API подключён?
   const [syncing,     setSyncing]    = useState(false)
   const [hasChanges,  setHasChanges] = useState(false)
   const [exitDlg,     setExitDlg]    = useState(null)
@@ -336,6 +337,7 @@ export default function CRM() {
 
     // Загружает список чатов, уведомляет о новых
     const loadChats = () => api.getWaChats().then(d => {
+      if (d && d.configured !== undefined) setWaConfigured(!!d.configured)
       if (!d?.chats) return
       setWaChats(prev => {
         const prevUnread = prev.reduce((s,c) => s+(c.unread_count||0), 0)
@@ -805,13 +807,15 @@ export default function CRM() {
   const filtered = useMemo(() => {
     if (!search && !fMgr && !fStage) return myCl          // fast path: нет фильтров
     const q = search ? search.toLowerCase() : null
-    return myCl.filter(c => {
+    // Менеджер выбрал в фильтре коллегу — показываем клиентов коллеги (общая команда)
+    const base = (isMgr && fMgr && fMgr !== user?.manager_id) ? clients : myCl
+    return base.filter(c => {
       if (q && !c.fio.toLowerCase().includes(q) && !c.phone.includes(q) && !(c.iin||'').includes(q)) return false
       if (fMgr   && c.manager !== fMgr)   return false
       if (fStage && c.stage   !== fStage) return false
       return true
     })
-  }, [myCl, search, fMgr, fStage])
+  }, [myCl, clients, isMgr, user, search, fMgr, fStage])
 
   // Единый проход по задачам вместо двух flatMap
   const { openTasks, overdueTasks } = useMemo(() => {
@@ -845,7 +849,7 @@ export default function CRM() {
   const NAV = [
     { id:'dashboard', l:'Дашборд',            i:'ti-layout-dashboard' },
     { id:'clients',   l:'Клиенты',            i:'ti-users' },
-    { id:'search',    l:'Поиск / Все клиенты',i:'ti-search' },
+    { id:'search',    l:'Список клиентов', i:'ti-list-details' },
     { id:'wa',        l:'WhatsApp',           i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
     { id:'calc',      l:'Калькулятор',        i:'ti-calculator' },
     { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
@@ -962,7 +966,7 @@ export default function CRM() {
                 <input style={{border:'none',background:'transparent',fontSize:13,color:'#0f172a',width:'100%',outline:'none'}} placeholder="Поиск..." value={search} onChange={e => setSearch(e.target.value)}/>
               </div>
               <div className="topbar-filters" style={{display:'contents'}}>
-                {!isMgr && <Sel value={fMgr} onChange={e => setFMgr(e.target.value)} style={{width:140}}>
+                {<Sel value={fMgr} onChange={e => setFMgr(e.target.value)} style={{width:140}}>
                   <option value="">Все менеджеры</option>
                   {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </Sel>}
@@ -983,7 +987,7 @@ export default function CRM() {
               </Btn>
             )}
             <NotifBell clients={myCl} waUnread={waUnread} onOpen={c => setSelClient(c)} goWa={() => navTo('wa')} goTasks={() => navTo('tasks')}/>
-            <GlobalSearch clients={myCl} pipeline={pipeline} onOpen={c => setSelClient(c)}/>
+            <GlobalSearch clients={clients} pipeline={pipeline} onOpen={c => setSelClient(c)}/>
             <Btn variant="primary" size="sm" onClick={() => setModal({ type:'quick_client', c: emptyClient(user.manager_id||'') })}>
               <i className="ti ti-plus"/><span style={{display:'none'}} className="btn-text-desktop">Новый клиент</span><span style={{display:'inline'}}>+</span>
             </Btn>
@@ -996,8 +1000,8 @@ export default function CRM() {
           <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} clients={myCl} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
-            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge}/>}
-            {page==='wa'        && <WAPage chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
+            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:clients} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge}/>}
+            {page==='wa'        && <WAPage waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod}/>}
@@ -1528,7 +1532,7 @@ LoginPage = React.memo(LoginPage)
 function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
   const items = [
     { id:'dashboard', l:'Главная',    i:'ti-home' },
-    { id:'search',    l:'Поиск',      i:'ti-search' },
+    { id:'clients',   l:'Клиенты',    i:'ti-layout-kanban' },
     { id:'wa',        l:'WhatsApp',   i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
     { id:'calc',      l:'Калькулятор',i:'ti-calculator' },
     { id:'tasks',     l:'Задачи',     i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
@@ -2066,8 +2070,8 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
   return (
     <div>
       <div style={{background:'linear-gradient(135deg,#0f172a,#1e3a5f)',borderRadius:14,padding:'15px',marginBottom:14,color:'#fff'}}>
-        <div style={{fontSize:16,fontWeight:900,marginBottom:3}}>🔍 Поиск клиентов</div>
-        <div style={{fontSize:12,color:'#94a3b8',marginBottom:12}}>ИИН, имя, телефон или город</div>
+        <div style={{fontSize:16,fontWeight:900,marginBottom:3}}>📋 Список клиентов</div>
+        <div style={{fontSize:12,color:'#94a3b8',marginBottom:12}}>Вся команда: поиск, фильтры, виды, импорт/экспорт, слияние дублей</div>
         <div style={{display:'flex',alignItems:'center',gap:10,background:'rgba(255,255,255,.1)',borderRadius:11,padding:'10px 13px',border:'1px solid rgba(255,255,255,.15)',marginBottom:9}}>
           <i className="ti ti-search" style={{color:'rgba(255,255,255,.6)',fontSize:18,flexShrink:0}}/>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Начните вводить..." autoFocus

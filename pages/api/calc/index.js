@@ -59,6 +59,8 @@ async function loadCfg(sb) {
       docTemplates: Array.isArray(s?.doc_templates) && s.doc_templates.length ? s.doc_templates : null,
       // Доп. поля карточки (миграция 014) — конфигурация полей, доступна всем ролям
       customFields: Array.isArray(s?.custom_fields) ? s.custom_fields : [],
+      // Налоговые константы (миграция 016) — правки из админки, дефолт в движке
+      taxConfig: (s?.tax_config && typeof s.tax_config === 'object') ? s.tax_config : null,
       // Маршруты сопровождения по группам программ (миграция 015) — правки из админки
       accompTemplates: (s?.accomp_templates && typeof s.accomp_templates === 'object') ? s.accomp_templates : null,
       programs:   Object.keys(programs).length > 0 ? programs : DEFAULT_PROGRAMS,
@@ -93,10 +95,10 @@ export default withAuth(async function handler(req, res) {
     mortgage_by_price:  p => calcMortgageByPrice(p, cfg),
     mortgage_by_salary: p => calcMortgageBySalary(p, cfg),
     bank_approval:      p => calcBankApproval(p, cfg),
-    opv_var:            p => calcOpvVar(p),
-    opv_eq:             p => calcOpvEq(p),
-    buh:                p => calcBuh(p),
-    scenario:           p => calcScenario(p),
+    opv_var:            p => calcOpvVar(p, cfg.taxConfig),
+    opv_eq:             p => calcOpvEq(p, cfg.taxConfig),
+    buh:                p => calcBuh(p, cfg.taxConfig),
+    scenario:           p => calcScenario(p, cfg.taxConfig),
     programs:           () => ({ ok: true, programs: Object.values(cfg.programs) }),
     settings:           () => ({ ok: true, mrp: cfg.mrp, pmNauryz: cfg.pmNauryz, pmOther: cfg.pmOther, kd: cfg.kd }),
     // Шаблоны документов — доступны любой роли (менеджер формирует договор из карточки)

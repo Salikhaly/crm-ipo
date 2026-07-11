@@ -73,7 +73,11 @@ export default withAuth(async function handler(req, res) {
       )
     }
 
-    return res.status(200).json({ chats: result })
+    return res.status(200).json({
+      chats: result,
+      // Подключён ли WhatsApp (Green API): фронт показывает инструкцию вместо пустого раздела
+      configured: !!(process.env.GREEN_API_ID && process.env.GREEN_API_TOKEN),
+    })
   }
 
   // ── PATCH ─────────────────────────────────────────────

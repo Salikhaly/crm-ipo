@@ -675,10 +675,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   </div>
                 </>}
                 {tab==='finance'  && <>
-                  <Collaps title={`🏦 Кредиты из ПКБ (${(c.credits||[]).length})`} defaultOpen={(c.credits||[]).length>0}>
+                  <Collaps title={`📋 Кредиты клиента — из отчёта ПКБ (${(c.credits||[]).length})`} defaultOpen={(c.credits||[]).length>0}>
                     <CreditsBlock c={c} set={set} canEdit={canEdit} toast$={toast$}/>
                   </Collaps>
-                  <Collaps title="💳 Кредитная история" defaultOpen>
+                  <Collaps title="⭐ Оценка кредитной истории (вывод по кредитам выше)" defaultOpen>
                     <CreditTab c={c} set={set} canEdit={canEdit}/>
                   </Collaps>
                   <Collaps title="🏦 Отбасы банк" defaultOpen={!!(c.otbasyDeposit || c.otbasyQueue || c.depositAmount)}>

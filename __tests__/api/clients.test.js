@@ -111,7 +111,7 @@ describe('GET /api/clients', () => {
     expect(Array.isArray(data.clients)).toBe(true)
   })
 
-  test('менеджер вызывает eq("manager", manager_id)', async () => {
+  test('менеджер видит всех клиентов команды (решение бизнеса, июль 2026)', async () => {
     const chain = makeFullChain([])
     mockFrom.mockReturnValueOnce(chain)
     const res = makeRes()
@@ -120,7 +120,7 @@ describe('GET /api/clients', () => {
       headers: { authorization: makeToken('manager', 'm1') },
       query: {},
     }, res)
-    expect(chain.eq).toHaveBeenCalledWith('manager', 'm1')
+    expect(chain.eq).not.toHaveBeenCalledWith('manager', 'm1')
     expect(res.status).toHaveBeenCalledWith(200)
   })
 
@@ -210,7 +210,7 @@ describe('GET /api/clients/:id', () => {
     expect(res.status).toHaveBeenCalledWith(404)
   })
 
-  test('403 если менеджер запрашивает чужого клиента', async () => {
+  test('менеджер видит чужого клиента (командный доступ)', async () => {
     const chain = makeFullChain(null)
     chain.maybeSingle = jest.fn().mockResolvedValue({
       data: { id: 'c1', manager: 'other-mgr', stage: 'new_lead' },
@@ -223,7 +223,7 @@ describe('GET /api/clients/:id', () => {
       headers: { authorization: makeToken('manager', 'my-mgr') },
       query: { id: 'c1' },
     }, res)
-    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.status).toHaveBeenCalledWith(200)
   })
 
   test('403 для DELETE от manager', async () => {

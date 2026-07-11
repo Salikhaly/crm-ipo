@@ -23,20 +23,18 @@ export default withAuth(async function handler(req, res) {
 
     let query = sb.from('clients').select('*').order('created_at', { ascending: false })
 
-    // Роль определяет видимость клиентов:
-    // - manager: только свои (по полю manager)
-    // - specialist: только где назначен ответственным (по полю responsible_manager)
-    // - head / admin: все клиенты
-    if (role === 'manager' && mid) {
-      query = query.eq('manager', mid)
-    } else if (role === 'specialist' && mid) {
+    // Видимость клиентов (решение бизнеса, июль 2026): менеджеры — одна команда,
+    // видят и находят клиентов друг друга (чтобы не плодить дубли и подхватывать
+    // сопровождение). Канбан на фронте по-прежнему показывает «своих» по умолчанию.
+    // specialist: только где назначен ответственным (как раньше).
+    if (role === 'specialist' && mid) {
       query = query.eq('responsible_manager', mid)
     }
 
     // Фильтры из query string
     const { stage, manager, search } = req.query
     if (stage)   query = query.eq('stage', stage)
-    if (manager && role !== 'manager' && role !== 'specialist') query = query.eq('manager', manager)
+    if (manager && role !== 'specialist') query = query.eq('manager', manager)
     if (search)  query = query.or(
       `fio.ilike.%${escapeLike(search)}%,phone.ilike.%${escapeLike(search)}%,iin.ilike.%${escapeLike(search)}%`
     )

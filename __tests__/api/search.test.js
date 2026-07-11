@@ -74,7 +74,7 @@ describe('GET /api/search', () => {
     expect(Array.isArray(data.results)).toBe(true)
   })
 
-  test('менеджер ищет только среди своих клиентов', async () => {
+  test('менеджер ищет по всем клиентам команды', async () => {
     chain.limit.mockResolvedValueOnce({ data: [mockClients[0]], error: null })
     const res = makeRes()
     await handler({
@@ -82,7 +82,7 @@ describe('GET /api/search', () => {
       headers: { authorization: makeToken('manager', 'm1') },
       query: { q: 'Иван' },
     }, res)
-    expect(chain.eq).toHaveBeenCalledWith('manager', 'm1')
+    expect(chain.eq).not.toHaveBeenCalledWith('manager', 'm1')
   })
 
   test('405 для POST', async () => {

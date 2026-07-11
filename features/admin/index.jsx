@@ -24,9 +24,22 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
         </Btn>
       </div>
 
-      <div style={{display:'flex',gap:7,marginBottom:18,flexWrap:'wrap'}}>
-        {[{id:'managers',l:'👤 Менеджеры'},{id:'pipeline',l:'🔄 Воронка'},{id:'checklists',l:'✅ Чек-листы'},{id:'users',l:'🔐 Пользователи'},{id:'calc',l:'🧮 Калькулятор'},{id:'wa_replies',l:'⚡ Быстрые ответы WA'},{id:'docs',l:'📄 Договоры'},{id:'routes',l:'🗺 Маршруты'},{id:'fields',l:'🧩 Поля карточки'},{id:'logs',l:'📜 Журнал'},{id:'trash',l:'🗑 Корзина'}].map(t => (
-          <Btn key={t.id} variant={tab===t.id?'primary':'ghost'} onClick={()=>setTab(t.id)}>{t.l}</Btn>
+      {/* Вкладки сгруппированы по смыслу — 11 в один ряд не находились глазами */}
+      <div style={{display:'flex',gap:14,marginBottom:18,flexWrap:'wrap'}}>
+        {[
+          { g:'КОМАНДА',      items:[{id:'managers',l:'👤 Менеджеры'},{id:'users',l:'🔐 Пользователи'}] },
+          { g:'ПРОЦЕССЫ',     items:[{id:'pipeline',l:'🔄 Воронка'},{id:'routes',l:'🗺 Маршруты'},{id:'checklists',l:'✅ Чек-листы'}] },
+          { g:'ИНСТРУМЕНТЫ',  items:[{id:'calc',l:'🧮 Калькулятор'},{id:'docs',l:'📄 Договоры'},{id:'fields',l:'🧩 Поля карточки'},{id:'wa_replies',l:'⚡ WhatsApp'}] },
+          { g:'СИСТЕМА',      items:[{id:'logs',l:'📜 Журнал'},{id:'trash',l:'🗑 Корзина'}] },
+        ].map(grp => (
+          <div key={grp.g} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,padding:'8px 10px'}}>
+            <div style={{fontSize:9,fontWeight:800,color:'#94a3b8',letterSpacing:'.08em',marginBottom:6}}>{grp.g}</div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {grp.items.map(t => (
+                <Btn key={t.id} size="sm" variant={tab===t.id?'primary':'ghost'} onClick={()=>setTab(t.id)}>{t.l}</Btn>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
 
@@ -231,6 +244,10 @@ export function CalcSettingsPanel() {
       if (d?.settings?.mrp_ref?.length)         setMrpRef(d.settings.mrp_ref)
       if (d?.settings?.deal_steps?.length)      setDealSteps(d.settings.deal_steps)
       if (d?.settings?.insurance_pct)           setInsPct(+(d.settings.insurance_pct * 100).toFixed(2))
+      if (d?.settings?.tax_config) {
+        const t = d.settings.tax_config
+        setTaxCfg(x => ({ ...x, ...t, soRate: t.soRate != null ? +(t.soRate * 100).toFixed(2) : x.soRate }))
+      }
       // Если программ в БД нет — используем дефолты (до migration 005)
       if (d?.programs?.length) {
         setPrograms(d.programs.map(p => ({
@@ -283,6 +300,8 @@ export function CalcSettingsPanel() {
   const [dealSteps,  setDealSteps]  = useState([])
   const [progsNew,   setProgsNew]   = useState([])
   const [insPct,     setInsPct]     = useState(0.3)
+  // Налоги калькулятора «Налоги» (миграция 016); дефолты = DEFAULT_TAX движка
+  const [taxCfg, setTaxCfg] = useState({ vosmsCap:34000, soRate:4.5, soCap:29750, ipnDeduction:129750, ipnThreshold:147444, workFee:15000 })
   const [activeSection, setActiveSection] = useState('main') // main|progs_api|progs_new|expenses|steps|mrp
 
   async function saveAll() {
@@ -302,6 +321,7 @@ export function CalcSettingsPanel() {
           mrp_ref:        mrpRef,
           deal_steps:     dealSteps,
           insurance_pct:  insPct / 100,
+          tax_config: { ...taxCfg, soRate: taxCfg.soRate / 100 },
         },
         programs: programsToSave,
       })
@@ -351,6 +371,7 @@ export function CalcSettingsPanel() {
           {id:'expenses',  l:'💸 Расходы'},
           {id:'steps',     l:'📋 Этапы'},
           {id:'mrp',       l:'📌 МРП справочник'},
+          {id:'taxes',     l:'🧾 Налоги'},
         ].map(s=>(
           <button key={s.id} onClick={()=>setActiveSection(s.id)}
             style={{padding:'5px 10px',border:'none',borderRadius:7,cursor:'pointer',fontSize:11,fontWeight:500,
@@ -360,6 +381,38 @@ export function CalcSettingsPanel() {
           </button>
         ))}
       </div>
+
+      {/* ── Секция «Налоги» (activeSection==='taxes') — константы калькулятора Налоги ── */}
+      {activeSection==='taxes' && (
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:6,color:'#0f172a'}}>🧾 Налоги и отчисления (калькулятор «Налоги»)</div>
+          <div style={{fontSize:11.5,color:'#64748b',marginBottom:14,lineHeight:1.5}}>
+            При изменении налогов РК правьте здесь — без программиста. Применяется сразу после сохранения
+            (кнопка «Сохранить» внизу). ОПВ 10%, ВОСМС 2%, ставки работодателя (ОПВР 3,5% / ООСМС 3%) — фиксированы законом.
+            <b> Требуется миграция 016.</b>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
+            {[
+              ['vosmsCap','Потолок ВОСМС, ₸','максимум взноса 2%'],
+              ['soRate','СО, % от ЗП','социальные отчисления'],
+              ['soCap','Потолок СО, ₸','максимум СО'],
+              ['ipnDeduction','Вычет ИПН, ₸','30 МРП стандартный вычет'],
+              ['ipnThreshold','Порог ИПН, ₸','до этой ЗП ИПН = 0 (Трудовой)'],
+              ['workFee','Работа бухгалтера, ₸','фикс за оформление'],
+            ].map(([k,l,sub])=>(
+              <div key={k}>
+                <div style={{fontSize:11,fontWeight:700,color:'#64748b',marginBottom:2}}>{l}</div>
+                <div style={{fontSize:10,color:'#94a3b8',marginBottom:4}}>{sub}</div>
+                <input type="number" step="0.1" value={taxCfg[k]} onChange={e=>setTaxCfg(x=>({...x,[k]:+e.target.value||0}))}
+                  style={{width:'100%',padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:9,fontSize:13,color:'#0f172a',outline:'none',boxSizing:'border-box'}}/>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:12,fontSize:11.5,color:'#1e40af',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:9,padding:'8px 12px'}}>
+            💵 В разбивке для клиента теперь есть строка <b>«Останется на руки»</b> — зарплата минус удержания работника (ОПВ, ВОСМС, СО, ИПН).
+          </div>
+        </div>
+      )}
 
       {/* ── Секция «Базовые»: МРП, ПМ, КД (видна только когда activeSection==='main') ── */}
       {activeSection==='main' && (<>

@@ -87,7 +87,7 @@ const WA_STATUSES = [
 
 
 
-export function WAPage({ chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, user, onOpenClient, mgrById }) {
+export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, user, onOpenClient, mgrById }) {
   const [msgText,         setMsgText]         = useState('')
   const [showChatView,    setShowChatView]     = useState(false)
   const [showQR,          setShowQR]           = useState(false)
@@ -762,6 +762,31 @@ export function WAPage({ chats, messages, managers, clients, selChat, onSelChat,
       </div>
     </div>
   )
+
+  // WhatsApp (Green API) не подключён — честная инструкция вместо мёртвого раздела
+  if (!waConfigured && !(chats || []).length) {
+    return (
+      <div style={{maxWidth:640,margin:'40px auto',textAlign:'center',padding:'0 16px'}}>
+        <div style={{width:72,height:72,borderRadius:22,background:'#f0fdf4',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+          <i className="ti ti-brand-whatsapp" style={{fontSize:38,color:'#25d366'}}/>
+        </div>
+        <div style={{fontSize:19,fontWeight:900,marginBottom:8}}>WhatsApp ещё не подключён</div>
+        <div style={{fontSize:13.5,color:'#64748b',lineHeight:1.65,marginBottom:18}}>
+          Когда подключите — входящие сообщения будут сами создавать лидов, менеджеры смогут
+          переписываться прямо из CRM, работать автоответ и утренние напоминания о задачах.
+        </div>
+        <div style={{textAlign:'left',background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,padding:'16px 18px',fontSize:13,lineHeight:1.7,color:'#334155'}}>
+          <div style={{fontWeight:800,marginBottom:8}}>Как подключить (10–15 минут):</div>
+          1. Зарегистрируйтесь на <b>green-api.com</b> и создайте инстанс (тариф Developer подходит для старта).<br/>
+          2. Привяжите рабочий номер WhatsApp по QR-коду в кабинете Green API.<br/>
+          3. В Vercel → Settings → Environment Variables добавьте <b>GREEN_API_ID</b> и <b>GREEN_API_TOKEN</b> → Redeploy.<br/>
+          4. В кабинете Green API укажите webhook: <b>https://crm-ipo.vercel.app/api/wa/webhook</b>.<br/>
+          5. Готово: напишите на номер с другого телефона — лид появится в CRM.
+        </div>
+        <div style={{fontSize:11.5,color:'#94a3b8',marginTop:12}}>Эта инструкция видна, пока переменные Green API не настроены.</div>
+      </div>
+    )
+  }
 
   return (
     <div style={{position:'relative',overflow:'hidden'}}>

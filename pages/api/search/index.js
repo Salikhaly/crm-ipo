@@ -26,12 +26,12 @@ export default withAuth(async function handler(req, res) {
   let query = sb.from('clients').select('*').order('created_at', { ascending: false })
 
   // Роль определяет видимость (зеркалим логику clients/index.js)
-  if (role === 'manager'    && mid) query = query.eq('manager', mid)
+  // Менеджеры ищут по всем клиентам команды (решение бизнеса, июль 2026)
   if (role === 'specialist' && mid) query = query.eq('responsible_manager', mid)
 
   // Фильтры (менеджер и специалист не могут обойти свои ограничения через query string)
   if (stage)   query = query.eq('stage', stage)
-  if (manager && role !== 'manager' && role !== 'specialist') query = query.eq('manager', manager)
+  if (manager && role !== 'specialist') query = query.eq('manager', manager)
 
   // Поиск (минимум 2 символа)
   if (q.length >= 2) {
