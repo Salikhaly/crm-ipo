@@ -8,7 +8,8 @@ import { withAuth } from '../../../lib/auth'
 
 // Экранирует спецсимволы PostgreSQL ILIKE: %, _, \
 function escapeLike(s) {
-  return s.replace(/[%_\\]/g, '\\$&')
+  // %_\ — спецсимволы ILIKE; запятые и скобки — синтаксис фильтра .or() PostgREST
+  return s.replace(/[%_\\]/g, '\\$&').replace(/[,()]/g, ' ')
 }
 
 export default withAuth(async function handler(req, res) {

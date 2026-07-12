@@ -26,16 +26,9 @@ async function handler(req, res) {
 
   const merged = mergeClients(dbToClient(pRow), dbToClient(sRow), { userName: req.user?.name })
 
-  // 1) Дубль в корзину (если есть таблица) и удаление — ДО обновления главного,
-  //    чтобы освободить уникальный телефон/ИИН
-  await sb.from('deleted_clients').upsert({
-    id: sRow.id, data: sRow, fio: sRow.fio || '', phone: sRow.phone || '',
-    deleted_by: (req.user?.name || '') + ' (объединение)',
-  })
-  const { error: delErr } = await sb.from('clients').delete().eq('id', secondaryId)
-  if (delErr) return apiError(res, delErr)
-
-  // 2) Обновляем главного объединёнными данными
+  // 1) Сначала обновляем ГЛАВНОГО объединёнными данными — пока дубль цел,
+  //    ошибка на этом шаге ничего не теряет (порядок «удалить → обновить»
+  //    при падении update оставлял слияние наполовину и без дубля)
   const row = clientToDb(merged)
   delete row.id
   addSavedCalcs(row, merged); addCloseReason(row, merged); addTags(row, merged); addCustom(row, merged); addPkbFields(row, merged)
@@ -45,6 +38,15 @@ async function handler(req, res) {
     ;({ data, error } = await sb.from('clients').update(row).eq('id', primaryId).select().single())
   }
   if (error) return apiError(res, error)
+
+  // 2) Дубль в корзину (если миграции 015 нет — удалится безвозвратно, как в DELETE)
+  const { error: trashErr } = await sb.from('deleted_clients').upsert({
+    id: sRow.id, data: sRow, fio: sRow.fio || '', phone: sRow.phone || '',
+    deleted_by: (req.user?.name || '') + ' (объединение)',
+  })
+  if (trashErr) console.error('[merge] deleted_clients:', trashErr.message)
+  const { error: delErr } = await sb.from('clients').delete().eq('id', secondaryId)
+  if (delErr) return apiError(res, delErr) // главный уже обновлён; дубль остался — слияние можно повторить
 
   // 3) WhatsApp-чаты дубля → на главного
   await sb.from('wa_chats').update({ client_id: primaryId }).eq('client_id', secondaryId)

@@ -87,7 +87,7 @@ const WA_STATUSES = [
 
 
 
-export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, user, onOpenClient, mgrById }) {
+export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, user, onOpenClient, mgrById, toast$ }) {
   const [msgText,         setMsgText]         = useState('')
   const [showChatView,    setShowChatView]     = useState(false)
   const [showQR,          setShowQR]           = useState(false)
@@ -691,9 +691,11 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
   async function quickCalc() {
     const lc = linkedClient
     if (!lc) return
+    // Ошибки — только тостом: текст в поле ввода менеджер рефлекторно отправит клиенту
+    const notify = m => (toast$ ? toast$(m, 'err') : alert(m))
     const income = (+(lc.officialIncome)||0) + (+(lc.extraIncomeConfirmed ? lc.extraIncome : 0)||0)
     const price  = lc.contractAmount > 0 ? lc.contractAmount : 0
-    if (!income && !price) { setMsgText('⚠️ У клиента не заполнен доход или сумма договора'); return }
+    if (!income && !price) { notify('⚠️ У клиента не заполнен доход или сумма договора'); return }
     setCalcBusy(true)
     try {
       const name = lc.fio?.split(' ')[0] || 'Уважаемый клиент'
@@ -721,7 +723,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
       }
       if (msg) setMsgText(msg)
     } catch(e) {
-      setMsgText('❌ Ошибка расчёта: ' + e.message)
+      notify('❌ Ошибка расчёта: ' + e.message)
     } finally {
       setCalcBusy(false)
     }
@@ -780,7 +782,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
           1. Зарегистрируйтесь на <b>green-api.com</b> и создайте инстанс (тариф Developer подходит для старта).<br/>
           2. Привяжите рабочий номер WhatsApp по QR-коду в кабинете Green API.<br/>
           3. В Vercel → Settings → Environment Variables добавьте <b>GREEN_API_ID</b> и <b>GREEN_API_TOKEN</b> → Redeploy.<br/>
-          4. В кабинете Green API укажите webhook: <b>https://crm-ipo.vercel.app/api/wa/webhook</b>.<br/>
+          4. В кабинете Green API укажите webhook: <b>{(typeof window !== 'undefined' ? window.location.origin : '') + '/api/wa/webhook'}</b>.<br/>
           5. Готово: напишите на номер с другого телефона — лид появится в CRM.
         </div>
         <div style={{fontSize:11.5,color:'#94a3b8',marginTop:12}}>Эта инструкция видна, пока переменные Green API не настроены.</div>

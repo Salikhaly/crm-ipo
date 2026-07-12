@@ -37,13 +37,17 @@ async function loadCfg(sb) {
     const programs = {}
     const nauryzKeys = []
     pgs.forEach(p => {
+      // Варианты с coeff<=0 дают деление на ноль (Infinity/NaN в расчётах),
+      // программа совсем без вариантов роняет variants[0] — отсеиваем на входе
+      const variants = (Array.isArray(p.variants) ? p.variants : []).filter(v => +(v && v.coeff) > 0)
+      if (!variants.length) return
       programs[p.key] = {
         key:       p.key,
         name:      p.name,
         icon:      p.icon || '🏠',
         downRatio: parseFloat(p.down_ratio) || 0.20,
         desc:      p.desc_text || '',
-        variants:  Array.isArray(p.variants) ? p.variants : [],
+        variants,
       }
       // Собираем nauryzKeys из БД (колонка is_nauryz), а не из хардкода.
       // Иначе галочка «Наурыз ПМ» в админке игнорировалась и ПМ считался неверно.
@@ -51,7 +55,7 @@ async function loadCfg(sb) {
     })
 
     _cfgCache = {
-      mrp:        s?.mrp        || DEFAULT_CFG.mrp,
+      mrp:        +s?.mrp > 0 ? +s.mrp : DEFAULT_CFG.mrp,
       pmNauryz:   s?.pm_nauryz  || DEFAULT_CFG.pmNauryz,
       pmOther:    s?.pm_other   || DEFAULT_CFG.pmOther,
       kd:         s?.kd         || DEFAULT_CFG.kd,

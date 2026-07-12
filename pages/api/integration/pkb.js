@@ -41,9 +41,12 @@ export default async function handler(req, res) {
     // ── Поиск существующего клиента (телефон → ИИН) ──
     let existing = null
     if (phone) {
-      const np = normalizePhone(phone)
-      const { data } = await sb.from('clients').select('*').eq('phone', np).maybeSingle()
-      existing = data || null
+      // Хвост из 10 цифр находит и старые ненормализованные записи (8707… / 707…)
+      const tail = String(normalizePhone(phone)).replace(/\D/g, '').slice(-10)
+      if (tail.length === 10) {
+        const { data } = await sb.from('clients').select('*').ilike('phone', '%' + tail).limit(1)
+        existing = (data && data[0]) || null
+      }
     }
     if (!existing && iin) {
       const { data } = await sb.from('clients').select('*').eq('iin', iin).maybeSingle()

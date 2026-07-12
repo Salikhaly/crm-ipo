@@ -1277,7 +1277,11 @@ function RoutesPanel() {
   async function saveAll() {
     setSaving(true)
     try {
-      const res = await api.saveCalcSettings({ settings: { accomp_templates: tpls } })
+      // Этапы без названия не сохраняем — они бессмысленны и ломали бы карточку
+      const cleaned = Object.fromEntries(Object.entries(tpls).map(([k, t]) => [k, {
+        ...t, stages: t.stages.filter(st => (st.name || '').trim()),
+      }]))
+      const res = await api.saveCalcSettings({ settings: { accomp_templates: cleaned } })
       toast(res?.ok ? '✅ Маршруты сохранены' : '⚠️ Ошибка — применена ли миграция 015?')
     } catch (e) { toast('❌ ' + e.message) }
     setSaving(false)

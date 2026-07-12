@@ -128,3 +128,23 @@ describe('amoCRM-механики', () => {
     }
   })
 })
+
+
+describe('getAccompTemplate — override из админки', () => {
+  const { getAccompTemplate } = require('../../lib/constants')
+  test('свои этапы главнее хардкода', () => {
+    const t = getAccompTemplate('full', { full: { l:'Мой маршрут', stages:[{name:'Шаг 1'},{name:'Шаг 2'}] } })
+    expect(t.stages).toEqual(['Шаг 1','Шаг 2'])
+    expect(t.l).toBe('Мой маршрут')
+  })
+  test('пустое имя этапа не роняет карточку (всегда строка)', () => {
+    const t = getAccompTemplate('full', { full: { stages:[{name:''},{name:'  '},{name:'Ок'}] } })
+    for (const s of t.stages) expect(typeof s).toBe('string')
+    expect(t.stages[2]).toBe('Ок')
+  })
+  test('без override — хардкод', () => {
+    const t = getAccompTemplate('online', null)
+    expect(Array.isArray(t.stages)).toBe(true)
+    expect(t.stages.length).toBeGreaterThan(3)
+  })
+})

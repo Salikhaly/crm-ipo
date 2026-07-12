@@ -7,7 +7,9 @@ import React from 'react'
 import Head from 'next/head'
 import { Logo } from '../components/logo'
 
-const WA_PHONE = '77000000000' // ← ЗАМЕНИТЬ на свой номер (без +)
+// Номер задаётся в Vercel → Environment Variables → NEXT_PUBLIC_WA_PHONE (без +).
+// Пока не задан — используется заглушка: ЗАЯВКИ С ЛЕНДИНГА НИКУДА НЕ ПРИХОДЯТ!
+const WA_PHONE = process.env.NEXT_PUBLIC_WA_PHONE || '77000000000'
 const WA_TEXT  = encodeURIComponent('Здравствуйте! Интересует Ипотека CRM — хочу демо.')
 const WA_LINK  = `https://wa.me/${WA_PHONE}?text=${WA_TEXT}`
 
