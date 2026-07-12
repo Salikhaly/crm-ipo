@@ -152,13 +152,19 @@ export default function CRM() {
     if (!list.length) { toast$('⚠️ Нечего экспортировать', 'err'); return }
     try {
       const XLSX = await import('xlsx')
+      // Свои маршруты из админки (если настроены) — названия этапов как в карточке
+      let accompOv = null
+      try {
+        const r = await api.calc('accomp_templates', {})
+        if (r?.templates && typeof r.templates === 'object') accompOv = r.templates
+      } catch (e) { /* оффлайн/ошибка — дефолтные названия */ }
       const rows = baseRows(list, {
         mgrName:    id => mgrById[id]?.name || '',
         stageLabel: id => pipeline.find(p => p.id === id)?.l || id || '',
         // «Сопровождение»: 3/7 · Название текущего этапа маршрута
         accompLabel: c => {
           if (!c.contractType) return ''
-          const t = getAccompTemplate(c.contractType)
+          const t = getAccompTemplate(c.contractType, accompOv)
           const i = Math.min(c.accompStageIndex || 0, t.stages.length - 1)
           return `${i + 1}/${t.stages.length} · ${t.stages[i]}`
         },
