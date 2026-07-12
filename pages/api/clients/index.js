@@ -9,7 +9,8 @@ import { logAction } from '../../../lib/actionLog'
 
 // Экранирует спецсимволы PostgreSQL ILIKE: %, _, \
 function escapeLike(s) {
-  return s.replace(/[%_\\]/g, '\\$&')
+  // %_\ — спецсимволы ILIKE; запятые и скобки — синтаксис фильтра .or() PostgREST
+  return s.replace(/[%_\\]/g, '\\$&').replace(/[,()]/g, ' ')
 }
 
 export default withAuth(async function handler(req, res) {
@@ -23,20 +24,18 @@ export default withAuth(async function handler(req, res) {
 
     let query = sb.from('clients').select('*').order('created_at', { ascending: false })
 
-    // Роль определяет видимость клиентов:
-    // - manager: только свои (по полю manager)
-    // - specialist: только где назначен ответственным (по полю responsible_manager)
-    // - head / admin: все клиенты
-    if (role === 'manager' && mid) {
-      query = query.eq('manager', mid)
-    } else if (role === 'specialist' && mid) {
+    // Видимость клиентов (решение бизнеса, июль 2026): менеджеры — одна команда,
+    // видят и находят клиентов друг друга (чтобы не плодить дубли и подхватывать
+    // сопровождение). Канбан на фронте по-прежнему показывает «своих» по умолчанию.
+    // specialist: только где назначен ответственным (как раньше).
+    if (role === 'specialist' && mid) {
       query = query.eq('responsible_manager', mid)
     }
 
     // Фильтры из query string
     const { stage, manager, search } = req.query
     if (stage)   query = query.eq('stage', stage)
-    if (manager && role !== 'manager' && role !== 'specialist') query = query.eq('manager', manager)
+    if (manager && role !== 'specialist') query = query.eq('manager', manager)
     if (search)  query = query.or(
       `fio.ilike.%${escapeLike(search)}%,phone.ilike.%${escapeLike(search)}%,iin.ilike.%${escapeLike(search)}%`
     )
@@ -67,6 +66,18 @@ export default withAuth(async function handler(req, res) {
     // Менеджер может создавать только себе
     if (role === 'manager') {
       client.manager = mid
+    }
+
+    // Дубль по телефону/ИИН — проверка по ВСЕЙ базе (фронт видит максимум
+    // загруженную страницу: при базе >1000 или гонке двух менеджеров молчал)
+    const dupTail = String(client.phone || '').replace(/\D/g, '').replace(/^8/, '7').slice(-10)
+    if (dupTail.length === 10) {
+      const { data: dup } = await sb.from('clients').select('id, fio, phone').ilike('phone', '%' + dupTail).limit(1)
+      if (dup?.length) return res.status(409).json({ error: 'Телефон уже есть у клиента: ' + (dup[0].fio || dup[0].phone) })
+    }
+    if (client.iin && /^\d{12}$/.test(client.iin)) {
+      const { data: dupI } = await sb.from('clients').select('id, fio').eq('iin', client.iin).limit(1)
+      if (dupI?.length) return res.status(409).json({ error: 'ИИН уже есть у клиента: ' + (dupI[0].fio || 'без имени') })
     }
 
     const row = clientToDb(client)

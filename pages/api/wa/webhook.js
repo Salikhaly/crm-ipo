@@ -152,74 +152,50 @@ export default async function handler(req, res) {
       .maybeSingle()   // maybeSingle() не бросает ошибку если 0 строк
 
     if (!existingChat) {
-      // ── Новый чат: создаём клиента через upsert по номеру телефона ──
-      // upsert на phone предотвращает дублирование при повторных вебхуках
-      const { data: newClient, error: clientErr } = await sb
-        .from('clients')
-        .upsert({
-          phone,
-          fio:            name || phone,
-          source:         'whatsapp',
-          stage:          'new_lead',
-          is_whatsapp:    true,
-          wa_msg_preview: preview,
-          date_in:        now.split('T')[0],
-          created_at:     now,
-          comments:       [],
-          tasks:          [],
-          payments:       [],
-          accomp_stages:  {},
-        }, { onConflict: 'phone', ignoreDuplicates: false })
-        .select('id')
-        .single()
-
-      if (clientErr) {
-        console.error('Client upsert error:', clientErr.message)
-        // Попытка найти существующего клиента по номеру телефона (если upsert упал на constraint)
-        const { data: existingClient } = await sb
-          .from('clients')
-          .select('id')
-          .eq('phone', phone)
-          .maybeSingle()
-
-        if (existingClient) {
-          // Клиент уже есть — просто привяжем чат к нему
-          await sb.from('wa_chats').upsert({
-            id:              chatId,
-            phone,
-            name:            name || phone,
-            last_message:    preview,
-            last_message_at: sentAt,
-            unread_count:    direction === 'in' ? 1 : 0,
-            client_id:       existingClient.id,
-            status:          'new',
-          }, { onConflict: 'id' })
-        } else {
-          // Клиент не создан и не найден — создаём чат с пометкой для ручной обработки
-          await sb.from('wa_chats').upsert({
-            id:              chatId,
-            phone,
-            name:            name || phone,
-            last_message:    preview,
-            last_message_at: sentAt,
-            unread_count:    direction === 'in' ? 1 : 0,
-            client_id:       null,
-            status:          'new',   // остаётся в очереди для ручного назначения
-          }, { onConflict: 'id' })
-        }
-      } else {
-        // Клиент успешно создан/обновлён — создаём чат с привязкой
-        await sb.from('wa_chats').upsert({
-          id:              chatId,
-          phone,
-          name:            name || phone,
-          last_message:    preview,
-          last_message_at: sentAt,
-          unread_count:    direction === 'in' ? 1 : 0,
-          client_id:       newClient?.id ?? null,
-          status:          'new',
-        }, { onConflict: 'id' })
+      // ── Новый чат: клиента сначала ИЩЕМ по номеру, создаём только если нет ──
+      // Ранее здесь был upsert по phone: без unique constraint он падал (42P10),
+      // а с constraint — затирал бы карточку существующего клиента (fio, stage,
+      // comments → пустые). Существующего клиента не трогаем — только линкуем чат.
+      const tail = String(phone || '').replace(/\D/g, '').slice(-10)
+      let clientId = null
+      if (tail.length === 10) {
+        const { data: found } = await sb
+          .from('clients').select('id').ilike('phone', '%' + tail).limit(1)
+        clientId = found?.[0]?.id || null
       }
+      if (!clientId) {
+        const { data: newClient, error: clientErr } = await sb
+          .from('clients')
+          .insert({
+            phone,
+            fio:            name || phone,
+            source:         'whatsapp',
+            stage:          'new_lead',
+            is_whatsapp:    true,
+            wa_msg_preview: preview,
+            date_in:        now.split('T')[0],
+            created_at:     now,
+            comments:       [],
+            tasks:          [],
+            payments:       [],
+            accomp_stages:  {},
+          })
+          .select('id')
+          .single()
+        if (clientErr) console.error('Client insert error:', clientErr.message)
+        clientId = newClient?.id || null
+      }
+      // client_id: null оставляет чат в очереди для ручного назначения
+      await sb.from('wa_chats').upsert({
+        id:              chatId,
+        phone,
+        name:            name || phone,
+        last_message:    preview,
+        last_message_at: sentAt,
+        unread_count:    direction === 'in' ? 1 : 0,
+        client_id:       clientId,
+        status:          'new',
+      }, { onConflict: 'id' })
 
     } else {
       // Обновляем существующий чат

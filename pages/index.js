@@ -86,6 +86,13 @@ export default function CRM() {
     if (p && p !== 'dashboard') setPage(p)
     // Кнопка «назад»/«вперёд»
     const onPop = () => {
+      // Открытую карточку клиента системная «Назад» закрывает, а не выкидывает из CRM
+      if (selClientHistRef.current) {
+        selClientHistRef.current = null
+        setHasChanges(false)
+        setSelClient(null)
+        return
+      }
       const pp = new URLSearchParams(window.location.search).get('p') || 'dashboard'
       setPage(pp)
     }
@@ -102,6 +109,14 @@ export default function CRM() {
     }
   }, [page])
   const [selClient,   setSelClient]  = useState(null)
+  // Карточка клиента — отдельная запись в истории браузера (см. onPop выше)
+  const selClientHistRef = useRef(null)
+  // Ссылка на save() открытой карточки — для «Сохранить и выйти» в диалоге выхода
+  const detailSaveRef    = useRef(null)
+  useEffect(() => {
+    if (selClient && !selClientHistRef.current) window.history.pushState({ clientCard: true }, '')
+    selClientHistRef.current = selClient
+  }, [selClient])
   const [selWaChat,   setSelWaChat]  = useState(null)
   const selWaChatRef = useRef(null)  // для polling без race condition
   const [modal,       setModal]      = useState(null)
@@ -112,6 +127,7 @@ export default function CRM() {
   const [drag,        setDrag]       = useState(null)
   const [dragOv,      setDragOv]     = useState(null)
   const [toast,       setToast]      = useState(null)
+  const [waConfigured, setWaConfigured] = useState(true)  // Green API подключён?
   const [syncing,     setSyncing]    = useState(false)
   const [hasChanges,  setHasChanges] = useState(false)
   const [exitDlg,     setExitDlg]    = useState(null)
@@ -304,7 +320,7 @@ export default function CRM() {
           if (!more.hasMore) break
           pg++
         }
-        if (pg > 4) toast$('⚠️ В базе больше 1000 клиентов — старые ищите через Поиск.')
+        if (pg > 4) toast$('⚠️ В базе больше 1000 клиентов — старые ищите в «Списке клиентов» или через Ctrl+K.')
       }
     } catch (e) {
       toast$('❌ Ошибка загрузки: ' + e.message, 'err')
@@ -336,6 +352,7 @@ export default function CRM() {
 
     // Загружает список чатов, уведомляет о новых
     const loadChats = () => api.getWaChats().then(d => {
+      if (d && d.configured !== undefined) setWaConfigured(!!d.configured)
       if (!d?.chats) return
       setWaChats(prev => {
         const prevUnread = prev.reduce((s,c) => s+(c.unread_count||0), 0)
@@ -488,13 +505,23 @@ export default function CRM() {
   }, [search, fStage, fMgr, page])
 
   // ─── CLIENT ACTIONS ──────────────────────────────────────
-  // opts.quiet — тихий режим для автосохранения: без тостов и закрытия модалок.
-  // Возвращает сохранённого клиента при успехе, false при ошибке.
+  // opts.quiet — тихий режим для автосохранения: без тостов успеха и закрытия
+  // модалок. Но ПРИЧИНУ несохранения показываем и в тихом режиме (иначе
+  // менеджер часами заполняет карточку, которая молча не сохраняется) —
+  // с троттлингом, чтобы не спамить на каждую паузу в наборе.
+  const quietErrRef = useRef({ msg: '', ts: 0 })
+  function quietErr(msg) {
+    const now = Date.now()
+    if (quietErrRef.current.msg === msg && now - quietErrRef.current.ts < 30000) return
+    quietErrRef.current = { msg, ts: now }
+    toast$(msg, 'err')
+  }
   async function saveClient(c, opts = {}) {
     const quiet = !!opts.quiet
     // Валидация ИИН
     if (c.iin && !/^\d{12}$/.test(c.iin)) {
       if (!quiet) toast$('❌ ИИН должен содержать ровно 12 цифр', 'err')
+      else quietErr('⚠️ Не сохраняется: ИИН должен содержать ровно 12 цифр')
       return false
     }
     // Проверка дубля по ИИН
@@ -502,6 +529,7 @@ export default function CRM() {
       const dup = clients.find(x => x.id !== c.id && x.iin === c.iin)
       if (dup) {
         if (!quiet) toast$(`⚠️ ИИН уже есть у клиента: ${dup.fio || dup.phone}`, 'err')
+        else quietErr(`⚠️ Не сохраняется: ИИН уже есть у клиента ${dup.fio || dup.phone}`)
         return false
       }
     }
@@ -511,6 +539,7 @@ export default function CRM() {
       const dup = clients.find(x => x.id !== c.id && x.phone && x.phone.replace(/\D/g, '') === phone)
       if (dup) {
         if (!quiet) toast$(`⚠️ Телефон уже есть у клиента: ${dup.fio || dup.phone}`, 'err')
+        else quietErr(`⚠️ Не сохраняется: телефон уже есть у клиента ${dup.fio || dup.phone}`)
         return false
       }
     }
@@ -539,6 +568,7 @@ export default function CRM() {
       return saved || c
     } catch (e) {
       if (!quiet) { toast$('❌ ' + e.message, 'err'); setSyncing(false) }
+      else quietErr('⚠️ Не сохраняется: ' + e.message)
       return false
     }
   }
@@ -779,8 +809,8 @@ export default function CRM() {
 
   // ─── NAV ─────────────────────────────────────────────────
   function goBack() {
-    if (hasChanges) { setExitDlg({ onConfirm: () => { setHasChanges(false); setSelClient(null); setExitDlg(null) } }) }
-    else setSelClient(null)
+    if (hasChanges) { setExitDlg({ onConfirm: () => { setExitDlg(null); window.history.back() } }) }
+    else window.history.back()
   }
 
   function navTo(p) {
@@ -805,13 +835,15 @@ export default function CRM() {
   const filtered = useMemo(() => {
     if (!search && !fMgr && !fStage) return myCl          // fast path: нет фильтров
     const q = search ? search.toLowerCase() : null
-    return myCl.filter(c => {
+    // Менеджер выбрал в фильтре коллегу — показываем клиентов коллеги (общая команда)
+    const base = (isMgr && fMgr && fMgr !== user?.manager_id) ? clients : myCl
+    return base.filter(c => {
       if (q && !c.fio.toLowerCase().includes(q) && !c.phone.includes(q) && !(c.iin||'').includes(q)) return false
       if (fMgr   && c.manager !== fMgr)   return false
       if (fStage && c.stage   !== fStage) return false
       return true
     })
-  }, [myCl, search, fMgr, fStage])
+  }, [myCl, clients, isMgr, user, search, fMgr, fStage])
 
   // Единый проход по задачам вместо двух flatMap
   const { openTasks, overdueTasks } = useMemo(() => {
@@ -845,7 +877,7 @@ export default function CRM() {
   const NAV = [
     { id:'dashboard', l:'Дашборд',            i:'ti-layout-dashboard' },
     { id:'clients',   l:'Клиенты',            i:'ti-users' },
-    { id:'search',    l:'Поиск / Все клиенты',i:'ti-search' },
+    { id:'search',    l:'Список клиентов', i:'ti-list-details' },
     { id:'wa',        l:'WhatsApp',           i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
     { id:'calc',      l:'Калькулятор',        i:'ti-calculator' },
     { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
@@ -885,7 +917,7 @@ export default function CRM() {
         }
       }}
       onSave={saveClient} onDelete={delClient} onMove={moveClient}
-      onBack={goBack} toast$={toast$}
+      onBack={goBack} toast$={toast$} saveRef={detailSaveRef}
       setHasChanges={setHasChanges} syncing={syncing}
     />
   )
@@ -894,7 +926,7 @@ export default function CRM() {
     <>
       <Head>
         <title>Ипотека CRM</title>
-        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+        <meta name="viewport" content="width=device-width,initial-scale=1"/>
         <link rel="icon" href="/favicon.svg"/>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
@@ -962,7 +994,7 @@ export default function CRM() {
                 <input style={{border:'none',background:'transparent',fontSize:13,color:'#0f172a',width:'100%',outline:'none'}} placeholder="Поиск..." value={search} onChange={e => setSearch(e.target.value)}/>
               </div>
               <div className="topbar-filters" style={{display:'contents'}}>
-                {!isMgr && <Sel value={fMgr} onChange={e => setFMgr(e.target.value)} style={{width:140}}>
+                {<Sel value={fMgr} onChange={e => setFMgr(e.target.value)} style={{width:140}}>
                   <option value="">Все менеджеры</option>
                   {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </Sel>}
@@ -978,14 +1010,14 @@ export default function CRM() {
               </Btn>
             )}
             {page === 'search' && isSuperUser && (
-              <Btn size="sm" onClick={() => exportCsv()} title="Выгрузить список в Excel (CSV)">
+              <Btn size="sm" onClick={() => exportCsv()} title="Выгрузить список в Excel">
                 <i className="ti ti-download"/><span className="btn-text-desktop">Экспорт</span>
               </Btn>
             )}
             <NotifBell clients={myCl} waUnread={waUnread} onOpen={c => setSelClient(c)} goWa={() => navTo('wa')} goTasks={() => navTo('tasks')}/>
-            <GlobalSearch clients={myCl} pipeline={pipeline} onOpen={c => setSelClient(c)}/>
+            <GlobalSearch clients={clients} pipeline={pipeline} onOpen={c => setSelClient(c)}/>
             <Btn variant="primary" size="sm" onClick={() => setModal({ type:'quick_client', c: emptyClient(user.manager_id||'') })}>
-              <i className="ti ti-plus"/><span style={{display:'none'}} className="btn-text-desktop">Новый клиент</span><span style={{display:'inline'}}>+</span>
+              <i className="ti ti-plus"/><span className="btn-text-desktop">Новый клиент</span>
             </Btn>
             <Btn size="sm" onClick={loadAll} disabled={syncing}>
               <i className={`ti ti-refresh${syncing?' spin':''}`}/>
@@ -996,8 +1028,8 @@ export default function CRM() {
           <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} clients={myCl} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
-            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:myCl} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge}/>}
-            {page==='wa'        && <WAPage chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
+            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:clients} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge}/>}
+            {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod}/>}
@@ -1074,8 +1106,12 @@ export default function CRM() {
             <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
             <div style={{fontSize:18,fontWeight:800,marginBottom:8}}>Несохранённые изменения</div>
             <div style={{fontSize:14,color:'#64748b',marginBottom:22}}>Выйти без сохранения? Все изменения будут потеряны.</div>
-            <div style={{display:'flex',gap:9,justifyContent:'center'}}>
+            <div style={{display:'flex',gap:9,justifyContent:'center',flexWrap:'wrap'}}>
               <Btn onClick={() => setExitDlg(null)}>Остаться</Btn>
+              <Btn variant="primary" onClick={async () => {
+                const ok = detailSaveRef.current ? await detailSaveRef.current() : false
+                if (ok) { setExitDlg(null); window.history.back() }
+              }}><i className="ti ti-device-floppy"/>Сохранить и выйти</Btn>
               <Btn variant="danger" onClick={() => exitDlg.onConfirm()}><i className="ti ti-arrow-left"/>Выйти</Btn>
             </div>
           </div>
@@ -1269,9 +1305,9 @@ function ImportModal({ onImport, onClose, syncing }) {
         </div>
 
         {done ? (
-          <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:12,padding:'16px 18px',textAlign:'center'}}>
-            <div style={{fontSize:15,fontWeight:800,color:'#166534',marginBottom:4}}>✓ Готово</div>
-            <div style={{fontSize:13,color:'#15803d'}}>Создано: <b>{done.created}</b>{done.skipped ? ` · пропущено (дубли): ${done.skipped}` : ''}</div>
+          <div style={{background:done.created?'#f0fdf4':'#fffbeb',border:`1.5px solid ${done.created?'#86efac':'#fcd34d'}`,borderRadius:12,padding:'16px 18px',textAlign:'center'}}>
+            <div style={{fontSize:15,fontWeight:800,color:done.created?'#166534':'#92400e',marginBottom:4}}>{done.created ? '✓ Готово' : '⚠ Ничего не импортировано'}</div>
+            <div style={{fontSize:13,color:done.created?'#15803d':'#b45309'}}>{done.created ? <>Создано: <b>{done.created}</b></> : 'Все записи оказались дублями или пустыми'}{done.skipped ? ` · пропущено (дубли): ${done.skipped}` : ''}</div>
             <Btn variant="primary" style={{marginTop:14,justifyContent:'center'}} onClick={onClose}>Закрыть</Btn>
           </div>
         ) : (<>
@@ -1483,7 +1519,7 @@ function LoginPage({ onLogin }) {
   return (
     <div style={{minHeight:'100vh',background:'linear-gradient(160deg,#0f172a,#1e3a5f)',display:'flex',alignItems:'center',justifyContent:'center',padding:20,fontFamily:"'Inter',system-ui,sans-serif"}}>
       <Head>
-        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+        <meta name="viewport" content="width=device-width,initial-scale=1"/>
         <link rel="icon" href="/favicon.svg"/>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
@@ -1528,7 +1564,7 @@ LoginPage = React.memo(LoginPage)
 function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
   const items = [
     { id:'dashboard', l:'Главная',    i:'ti-home' },
-    { id:'search',    l:'Поиск',      i:'ti-search' },
+    { id:'clients',   l:'Клиенты',    i:'ti-layout-kanban' },
     { id:'wa',        l:'WhatsApp',   i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
     { id:'calc',      l:'Калькулятор',i:'ti-calculator' },
     { id:'tasks',     l:'Задачи',     i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
@@ -1760,7 +1796,7 @@ function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragO
       <div className="empty-state-icon">🗂️</div>
       <div className="empty-state-title">Пока нет клиентов</div>
       <div className="empty-state-text">
-        Нажмите кнопку <b style={{color:'#3b82f6'}}>+</b> внизу справа, чтобы добавить первого клиента.
+        Нажмите кнопку <b style={{color:'#3b82f6'}}>+</b> вверху справа, чтобы добавить первого клиента.
         Или дождитесь входящего сообщения в WhatsApp — лид создастся сам.
       </div>
     </div>
@@ -2066,8 +2102,8 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
   return (
     <div>
       <div style={{background:'linear-gradient(135deg,#0f172a,#1e3a5f)',borderRadius:14,padding:'15px',marginBottom:14,color:'#fff'}}>
-        <div style={{fontSize:16,fontWeight:900,marginBottom:3}}>🔍 Поиск клиентов</div>
-        <div style={{fontSize:12,color:'#94a3b8',marginBottom:12}}>ИИН, имя, телефон или город</div>
+        <div style={{fontSize:16,fontWeight:900,marginBottom:3}}>📋 Список клиентов</div>
+        <div style={{fontSize:12,color:'#94a3b8',marginBottom:12}}>Вся команда: поиск, фильтры, виды, импорт/экспорт, слияние дублей</div>
         <div style={{display:'flex',alignItems:'center',gap:10,background:'rgba(255,255,255,.1)',borderRadius:11,padding:'10px 13px',border:'1px solid rgba(255,255,255,.15)',marginBottom:9}}>
           <i className="ti ti-search" style={{color:'rgba(255,255,255,.6)',fontSize:18,flexShrink:0}}/>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Начните вводить..." autoFocus
@@ -2357,14 +2393,15 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
     if (!client) return
     const task = {
       id:         'task_' + Date.now(),
-      text:       newTask.text.trim(),
+      type:       newTask.text.trim(),   // списки показывают type как заголовок
+      text:       '',
       due:        newTask.due || '',
       note:       newTask.note || '',
       done:       false,
       // admin/head не привязаны к manager_id — задача создаётся без назначения,
       // менеджер клиента (client.manager) остаётся основным ответственным
       assignedTo: user?.role === 'manager' ? (user?.manager_id || '') : '',
-      createdAt:  new Date().toISOString().slice(0,10),
+      created:    new Date().toISOString().slice(0,10),
     }
     onSave && onSave({ ...client, tasks: [...(client.tasks||[]), task] })
     setShowNew(false)
@@ -2401,16 +2438,40 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
         ))}
       </div>
 
-      {/* Переключатель Список / Календарь / Выполненные */}
-      <div style={{display:'flex',gap:2,background:'#f1f5f9',borderRadius:9,padding:2,width:'fit-content',marginBottom:13}}>
-        {[['list','ti-list','Список'],['calendar','ti-calendar','Календарь'],['done','ti-checks',`Выполненные (${done.length})`]].map(([v,ic,l])=>(
-          <button key={v} onClick={()=>setTView(v)}
-            style={{display:'flex',alignItems:'center',gap:5,padding:'5px 12px',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,fontWeight:700,
-              background:tView===v?'#fff':'transparent',color:tView===v?'#1d4ed8':'#64748b',boxShadow:tView===v?'0 1px 3px rgba(15,23,42,.12)':'none',transition:'all .13s'}}>
-            <i className={`ti ${ic}`} style={{fontSize:13}}/>{l}
-          </button>
-        ))}
+      {/* Переключатель Список / Календарь / Выполненные + создание задачи */}
+      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:13}}>
+        <div style={{display:'flex',gap:2,background:'#f1f5f9',borderRadius:9,padding:2,width:'fit-content'}}>
+          {[['list','ti-list','Список'],['calendar','ti-calendar','Календарь'],['done','ti-checks',`Выполненные (${done.length})`]].map(([v,ic,l])=>(
+            <button key={v} onClick={()=>setTView(v)}
+              style={{display:'flex',alignItems:'center',gap:5,padding:'5px 12px',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,fontWeight:700,
+                background:tView===v?'#fff':'transparent',color:tView===v?'#1d4ed8':'#64748b',boxShadow:tView===v?'0 1px 3px rgba(15,23,42,.12)':'none',transition:'all .13s'}}>
+              <i className={`ti ${ic}`} style={{fontSize:13}}/>{l}
+            </button>
+          ))}
+        </div>
+        <Btn size="sm" variant="primary" onClick={()=>setShowNew(v=>!v)}><i className="ti ti-plus"/>Задача</Btn>
       </div>
+
+      {showNew && (
+        <div style={{...S,padding:16,marginBottom:13}}>
+          <div style={{fontWeight:800,fontSize:13,marginBottom:10}}>Новая задача</div>
+          <div className="mg2" style={{marginBottom:8}}>
+            <Inp placeholder="Что сделать (например: Позвонить)" value={newTask.text} onChange={e=>setNewTask(t=>({...t,text:e.target.value}))} autoFocus/>
+            <Inp type="date" value={newTask.due} onChange={e=>setNewTask(t=>({...t,due:e.target.value}))}/>
+          </div>
+          <div className="mg2" style={{marginBottom:10}}>
+            <Sel value={newTask.clientId} onChange={e=>setNewTask(t=>({...t,clientId:e.target.value}))}>
+              <option value="">— выберите клиента —</option>
+              {clients.map(c=><option key={c.id} value={c.id}>{c.fio||c.phone||'Без имени'}</option>)}
+            </Sel>
+            <Inp placeholder="Комментарий (необязательно)" value={newTask.note} onChange={e=>setNewTask(t=>({...t,note:e.target.value}))}/>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <Btn variant="primary" size="sm" disabled={!newTask.text.trim()||!newTask.clientId} onClick={createTask}><i className="ti ti-check"/>Создать</Btn>
+            <Btn size="sm" onClick={()=>setShowNew(false)}>Отмена</Btn>
+          </div>
+        </div>
+      )}
 
       {tView === 'calendar' && <TasksCalendar tasks={all} onOpen={onOpen}/>}
 
@@ -2457,7 +2518,9 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
           {overdue.map(t => (
             <div key={t.id} onClick={()=>onOpen(t.cl)} style={{display:'flex',alignItems:'center',gap:10,padding:'11px 13px',borderBottom:'1px solid #fecaca',cursor:'pointer',background:'transparent',transition:'background .1s'}}
               onMouseEnter={e=>e.currentTarget.style.background='#fff5f5'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-              <div style={{width:20,height:20,borderRadius:'50%',border:'2.5px solid #ef4444',flexShrink:0}}/>
+              <div onClick={e=>{e.stopPropagation(); onSave && onSave({ ...t.cl, tasks:(t.cl.tasks||[]).map(x=>x.id===t.id?{...x,done:true,doneAt:new Date().toLocaleString('ru',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}:x) })}}
+                title="Отметить выполненной" className="task-tick"
+                style={{width:20,height:20,borderRadius:'50%',border:'2.5px solid #ef4444',flexShrink:0,cursor:'pointer'}}/>
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,color:'#ef4444'}}>{t.type}</div>
                 {t.text && <div style={{fontSize:12,color:'#64748b'}}>{t.text}</div>}
@@ -2479,7 +2542,9 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
             <div key={t.id} onClick={()=>onOpen(t.cl)} style={{display:'flex',alignItems:'center',gap:10,padding:'11px 13px',background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:11,marginBottom:7,cursor:'pointer',transition:'all .1s'}}
               onMouseEnter={e=>{e.currentTarget.style.borderColor='#cbd5e1';e.currentTarget.style.boxShadow='0 1px 4px rgba(0,0,0,.07)'}}
               onMouseLeave={e=>{e.currentTarget.style.borderColor='#e2e8f0';e.currentTarget.style.boxShadow='none'}}>
-              <div style={{width:20,height:20,borderRadius:'50%',border:'2.5px solid #cbd5e1',flexShrink:0}}/>
+              <div onClick={e=>{e.stopPropagation(); onSave && onSave({ ...t.cl, tasks:(t.cl.tasks||[]).map(x=>x.id===t.id?{...x,done:true,doneAt:new Date().toLocaleString('ru',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}:x) })}}
+                title="Отметить выполненной" className="task-tick"
+                style={{width:20,height:20,borderRadius:'50%',border:'2.5px solid #cbd5e1',flexShrink:0,cursor:'pointer'}}/>
               <div style={{flex:1}}>
                 <div style={{fontWeight:600,fontSize:13}}>{t.type}{t.text&&<span style={{color:'#64748b',fontWeight:400}}> — {t.text}</span>}</div>
                 {t.due && <div style={{fontSize:11,color:'#94a3b8'}}>{t.due}</div>}
@@ -2729,7 +2794,7 @@ function NewClientModal({ client, managers, pipeline, onSave, onClose, syncing }
           <span style={{fontSize:17}}>⚠️</span>
           <div style={{fontSize:12.5,color:'#991b1b',lineHeight:1.5}}>
             <b>Этот номер уже есть в базе:</b> {dup.fio} (менеджер: {dup.manager}).
-            Проверьте через Поиск, прежде чем создавать дубль.
+            Проверьте в «Списке клиентов» (или Ctrl+K), прежде чем создавать дубль.
           </div>
         </div>
       )}

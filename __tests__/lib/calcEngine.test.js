@@ -314,11 +314,28 @@ describe('calcBuh', () => {
     expect(total.val).toBeGreaterThan(0)
   })
 
-  test('ИТОГО = сумма всех ненулевых строк', () => {
+  test('ИТОГО = сумма всех ненулевых строк (кроме «на руки»)', () => {
     const r = calcBuh({ type:'Трудовой', salary:300000 })
     const total    = r.breakdown.find(b => b.isTotal)
-    const sumLines = r.breakdown.filter(b => !b.isTotal && b.val !== null).reduce((a,b) => a + b.val, 0)
+    const sumLines = r.breakdown.filter(b => !b.isTotal && !b.isNet && b.val !== null).reduce((a,b) => a + b.val, 0)
     expect(total.val).toBe(sumLines)
+  })
+
+  test('«Останется на руки» = ЗП минус удержания работника', () => {
+    const r = calcBuh({ type:'Трудовой', salary:300000 })
+    const net = r.breakdown.find(b => b.isNet)
+    const g = l => r.breakdown.find(b => b.label === l).val
+    expect(net.val).toBe(300000 - g('ОПВ') - g('ВОСМС') - g('СО') - g('ИПН'))
+    expect(net.val).toBeGreaterThan(0)
+  })
+
+  test('tax_config из админки переопределяет константы', () => {
+    const { calcTax } = require('../../lib/calcEngine')
+    const base = calcTax(2000000, 'Трудовой')
+    const custom = calcTax(2000000, 'Трудовой', { vosmsCap: 17000, workFee: 20000 })
+    expect(custom.vosms).toBe(17000)
+    expect(custom.work).toBe(20000)
+    expect(base.vosms).toBe(34000)
   })
 })
 

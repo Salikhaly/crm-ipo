@@ -37,13 +37,17 @@ async function loadCfg(sb) {
     const programs = {}
     const nauryzKeys = []
     pgs.forEach(p => {
+      // Варианты с coeff<=0 дают деление на ноль (Infinity/NaN в расчётах),
+      // программа совсем без вариантов роняет variants[0] — отсеиваем на входе
+      const variants = (Array.isArray(p.variants) ? p.variants : []).filter(v => +(v && v.coeff) > 0)
+      if (!variants.length) return
       programs[p.key] = {
         key:       p.key,
         name:      p.name,
         icon:      p.icon || '🏠',
         downRatio: parseFloat(p.down_ratio) || 0.20,
         desc:      p.desc_text || '',
-        variants:  Array.isArray(p.variants) ? p.variants : [],
+        variants,
       }
       // Собираем nauryzKeys из БД (колонка is_nauryz), а не из хардкода.
       // Иначе галочка «Наурыз ПМ» в админке игнорировалась и ПМ считался неверно.
@@ -51,7 +55,7 @@ async function loadCfg(sb) {
     })
 
     _cfgCache = {
-      mrp:        s?.mrp        || DEFAULT_CFG.mrp,
+      mrp:        +s?.mrp > 0 ? +s.mrp : DEFAULT_CFG.mrp,
       pmNauryz:   s?.pm_nauryz  || DEFAULT_CFG.pmNauryz,
       pmOther:    s?.pm_other   || DEFAULT_CFG.pmOther,
       kd:         s?.kd         || DEFAULT_CFG.kd,
@@ -59,6 +63,8 @@ async function loadCfg(sb) {
       docTemplates: Array.isArray(s?.doc_templates) && s.doc_templates.length ? s.doc_templates : null,
       // Доп. поля карточки (миграция 014) — конфигурация полей, доступна всем ролям
       customFields: Array.isArray(s?.custom_fields) ? s.custom_fields : [],
+      // Налоговые константы (миграция 016) — правки из админки, дефолт в движке
+      taxConfig: (s?.tax_config && typeof s.tax_config === 'object') ? s.tax_config : null,
       // Маршруты сопровождения по группам программ (миграция 015) — правки из админки
       accompTemplates: (s?.accomp_templates && typeof s.accomp_templates === 'object') ? s.accomp_templates : null,
       programs:   Object.keys(programs).length > 0 ? programs : DEFAULT_PROGRAMS,
@@ -93,10 +99,10 @@ export default withAuth(async function handler(req, res) {
     mortgage_by_price:  p => calcMortgageByPrice(p, cfg),
     mortgage_by_salary: p => calcMortgageBySalary(p, cfg),
     bank_approval:      p => calcBankApproval(p, cfg),
-    opv_var:            p => calcOpvVar(p),
-    opv_eq:             p => calcOpvEq(p),
-    buh:                p => calcBuh(p),
-    scenario:           p => calcScenario(p),
+    opv_var:            p => calcOpvVar(p, cfg.taxConfig),
+    opv_eq:             p => calcOpvEq(p, cfg.taxConfig),
+    buh:                p => calcBuh(p, cfg.taxConfig),
+    scenario:           p => calcScenario(p, cfg.taxConfig),
     programs:           () => ({ ok: true, programs: Object.values(cfg.programs) }),
     settings:           () => ({ ok: true, mrp: cfg.mrp, pmNauryz: cfg.pmNauryz, pmOther: cfg.pmOther, kd: cfg.kd }),
     // Шаблоны документов — доступны любой роли (менеджер формирует договор из карточки)

@@ -144,7 +144,7 @@ function SideTimeline({ c, setCd, user, canEdit }) {
   )
 }
 
-export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing, onOpenWa }) {
+export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing, onOpenWa, saveRef }) {
   const [c,      setC]      = useState(JSON.parse(JSON.stringify(client)))
   const [tab,    setTab]    = useState('profile')
   const [accIdx, setAccIdx] = useState(c.accompStageIndex||0)
@@ -190,7 +190,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     setAutoSt('saving')
     const ok = await onSave({...c})
     if (ok) { setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
+    return ok
   }
+  // Диалог «Сохранить и выйти» в pages/index зовёт save() открытой карточки
+  useEffect(() => { if (saveRef) saveRef.current = save })
 
   useEffect(() => {
     if (firstC.current) { firstC.current = false; return }
@@ -292,8 +295,8 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     w.document.close()
   }
 
-  const totalPaid    = (c.payments||[]).filter(p=>p.status==='paid').reduce((s,p)=>s+p.paidAmount,0)
-  const totalPartial = (c.payments||[]).filter(p=>p.status==='partial').reduce((s,p)=>s+p.paidAmount,0)
+  const totalPaid    = (c.payments||[]).filter(p=>p.status==='paid').reduce((s,p)=>s+(+p.paidAmount||0),0)
+  const totalPartial = (c.payments||[]).filter(p=>p.status==='partial').reduce((s,p)=>s+(+p.paidAmount||0),0)
   const payPct       = c.contractAmount > 0 ? Math.round((totalPaid+totalPartial)/c.contractAmount*100) : 0
 
   const aStages = c.accompStages || {}
@@ -459,7 +462,8 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                 ? <span style={{fontSize:10,color:'#f59e0b',marginLeft:6,fontWeight:600}}>●</span>
                 : null}
             </div>
-            {canEdit && <Btn variant="danger" size="sm" onClick={()=>{if(window.confirm('Удалить клиента?'))onDelete(c.id)}} disabled={syncing}><i className="ti ti-trash"/></Btn>}
+            {/* Удаление — только admin/head (у менеджера API вернёт 403, кнопку прячем) */}
+            {['admin','head'].includes(user.role) && <Btn variant="danger" size="sm" onClick={()=>{if(window.confirm('Удалить клиента? Он попадёт в корзину.'))onDelete(c.id)}} disabled={syncing}><i className="ti ti-trash"/></Btn>}
             {canEdit && <Btn variant="primary" size="sm" onClick={save} disabled={syncing}>
               {syncing ? <><i className="ti ti-loader spin"/></> : <><i className="ti ti-device-floppy"/><span className="btn-text-desktop">Сохранить</span></>}
             </Btn>}
@@ -675,10 +679,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   </div>
                 </>}
                 {tab==='finance'  && <>
-                  <Collaps title={`🏦 Кредиты из ПКБ (${(c.credits||[]).length})`} defaultOpen={(c.credits||[]).length>0}>
+                  <Collaps title={`📋 Кредиты клиента — из отчёта ПКБ (${(c.credits||[]).length})`} defaultOpen={(c.credits||[]).length>0}>
                     <CreditsBlock c={c} set={set} canEdit={canEdit} toast$={toast$}/>
                   </Collaps>
-                  <Collaps title="💳 Кредитная история" defaultOpen>
+                  <Collaps title="⭐ Оценка кредитной истории (вывод по кредитам выше)" defaultOpen>
                     <CreditTab c={c} set={set} canEdit={canEdit}/>
                   </Collaps>
                   <Collaps title="🏦 Отбасы банк" defaultOpen={!!(c.otbasyDeposit || c.otbasyQueue || c.depositAmount)}>
@@ -1033,8 +1037,8 @@ function PaymentsTab({ c, setC, pipeline, canEdit }) {
   const [nPay, setNPay] = useState({ name:'', amount:'', type:'stage', stageTrigger:'contract', dateTrigger:'', status:'pending', paidAmount:0, paidDate:'', note:'' })
   const pl       = pipeline || PIPELINE_DEFAULT
   const payments = c.payments || []
-  const totalPaid    = payments.filter(p=>p.status==='paid').reduce((s,p)=>s+p.paidAmount,0)
-  const totalPartial = payments.filter(p=>p.status==='partial').reduce((s,p)=>s+p.paidAmount,0)
+  const totalPaid    = payments.filter(p=>p.status==='paid').reduce((s,p)=>s+(+p.paidAmount||0),0)
+  const totalPartial = payments.filter(p=>p.status==='partial').reduce((s,p)=>s+(+p.paidAmount||0),0)
   const totalPending = payments.filter(p=>p.status==='pending').reduce((s,p)=>s+p.amount,0)
   const payPct       = c.contractAmount > 0 ? Math.round((totalPaid+totalPartial)/c.contractAmount*100) : 0
 
@@ -1094,7 +1098,7 @@ function PaymentsTab({ c, setC, pipeline, canEdit }) {
             {p.status==='partial' && (
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:11,color:'#64748b',marginBottom:3}}>Получено: <b>{fmtN(p.paidAmount)}₸</b></div>
-                <Prog pct={Math.round(p.paidAmount/p.amount*100)} c='#0ea5e9' sz='sm'/>
+                <Prog pct={+p.amount > 0 ? Math.round((+p.paidAmount||0)/+p.amount*100) : 0} c='#0ea5e9' sz='sm'/>
               </div>
             )}
             {p.status==='paid'&&p.paidDate&&<div style={{fontSize:12,color:'#10b981',fontWeight:600}}>✅ {p.paidDate}</div>}
@@ -2155,6 +2159,9 @@ ${user?.name || 'Менеджер'}`
   function makePdf() {
     const s = calcSummary()
     if (!s) { toast$('⚠️ Сначала выполните расчёт', 'err'); return }
+    // ФИО/имена приходят извне (WhatsApp pushname, Excel, ПКБ) — без экранирования
+    // это stored XSS в document.write (окно same-origin видит localStorage)
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))
     const prog = API_PROGRAMS_FALLBACK.find(p => p.key === program)
     const rows = []
     if (s.price)    rows.push(['Стоимость квартиры', fmtMoney(s.price)])
@@ -2164,7 +2171,7 @@ ${user?.name || 'Менеджер'}`
     rows.push(['Ежемесячный платёж', fmtMoney(s.monthly)])
     if (s.requiredSalary) rows.push(['Необходимый доход', fmtMoney(s.requiredSalary)])
     const html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
-<title>Расчёт ипотеки — ${c.fio || ''}</title>
+<title>Расчёт ипотеки — ${esc(c.fio || '')}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;padding:48px;max-width:640px;margin:0 auto}
@@ -2182,11 +2189,11 @@ ${user?.name || 'Менеджер'}`
   @media print { body{padding:24px} }
 </style></head><body>
 <div class="head"><div class="logo">🏠 Ипотечный расчёт</div><div class="date">${nowStr()}</div></div>
-<h1>${c.fio || 'Клиент'}</h1>
-<div class="sub">Программа: <b>${prog?.name || program}</b>${s.label ? ' · ' + s.label : ''}${s.rate ? ' · ставка ' + s.rate + '%' : ''}</div>
+<h1>${esc(c.fio || 'Клиент')}</h1>
+<div class="sub">Программа: <b>${esc(prog?.name || program)}</b>${s.label ? ' · ' + esc(s.label) : ''}${s.rate ? ' · ставка ' + esc(s.rate) + '%' : ''}</div>
 <table>${rows.map(([k,v],i)=>`<tr${k.includes('платёж')?' class="hl"':''}><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
 <div class="note">Расчёт является предварительным и не является публичной офертой. Итоговые условия определяются банком при рассмотрении заявки. Расчёт действителен на дату составления.</div>
-<div class="foot">Ваш консультант: <b>${user?.name || 'Менеджер'}</b>${user?.phone ? ' · ' + user.phone : ''}<br>Мы поможем на каждом шаге сделки 🤝</div>
+<div class="foot">Ваш консультант: <b>${esc(user?.name || 'Менеджер')}</b>${user?.phone ? ' · ' + esc(user.phone) : ''}<br>Мы поможем на каждом шаге сделки 🤝</div>
 <script>window.onload=()=>setTimeout(()=>window.print(),300)</script>
 </body></html>`
     const w = window.open('', '_blank')

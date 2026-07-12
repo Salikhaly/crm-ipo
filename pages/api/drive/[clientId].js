@@ -77,7 +77,8 @@ async function resolveFolders(drive, rootId, clientId, folderName) {
   return { managerFolder, folder }
 }
 async function getOrCreateManagerFolder(drive, rootId, managerName) {
-  const safeName = (managerName || 'Без менеджера').trim()
+  // Кавычки/бэкслеши ломают q-синтаксис Drive API (O'Brian → 500)
+  const safeName = (managerName || 'Без менеджера').trim().replace(/['\\]/g, '') || 'Без менеджера'
   const marker   = `crm_manager_${safeName}`
 
   const search = await drive.files.list({
