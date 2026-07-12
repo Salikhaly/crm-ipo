@@ -99,3 +99,19 @@ describe('anketaFileName', () => {
     expect(anketaFileName({})).toBe('Анкета_клиент.xlsx')
   })
 })
+
+
+describe('baseRows — колонка «Сопровождение»', () => {
+  const { baseRows, BASE_HEADERS } = require('../../lib/exportAnketa')
+  test('заголовок присутствует перед «Тег»', () => {
+    expect(BASE_HEADERS[BASE_HEADERS.length - 2]).toBe('Сопровождение')
+  })
+  test('значение из ctx.accompLabel попадает в строку', () => {
+    const rows = baseRows(
+      [{ fio: 'Тест', phone: '+77070000000', stage: 'in_work', contractType: 'extra', accompStageIndex: 2 }],
+      { stageLabel: () => 'Взят в работу', accompLabel: () => '3/7 · Стратегия аудирования' },
+    )
+    const i = rows[0].indexOf('Сопровождение')
+    expect(rows[1][i]).toBe('3/7 · Стратегия аудирования')
+  })
+})

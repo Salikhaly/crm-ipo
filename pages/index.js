@@ -155,9 +155,16 @@ export default function CRM() {
       const rows = baseRows(list, {
         mgrName:    id => mgrById[id]?.name || '',
         stageLabel: id => pipeline.find(p => p.id === id)?.l || id || '',
+        // «Сопровождение»: 3/7 · Название текущего этапа маршрута
+        accompLabel: c => {
+          if (!c.contractType) return ''
+          const t = getAccompTemplate(c.contractType)
+          const i = Math.min(c.accompStageIndex || 0, t.stages.length - 1)
+          return `${i + 1}/${t.stages.length} · ${t.stages[i]}`
+        },
       })
       const ws = XLSX.utils.aoa_to_sheet(rows)
-      ws['!cols'] = [16,12,16,26,14,6,12,12,20,14,12,14,16].map(wch => ({ wch }))
+      ws['!cols'] = [16,12,16,26,14,6,12,12,20,14,12,14,22,16].map(wch => ({ wch }))
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'База')
       XLSX.writeFile(wb, 'база_клиентов_' + today() + '.xlsx')
@@ -1028,7 +1035,7 @@ export default function CRM() {
           <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} clients={myCl} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
-            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:clients} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge}/>}
+            {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:clients} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge} onImport={()=>setModal({type:'import'})} onExportAll={()=>exportCsv()}/>}
             {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
@@ -1067,7 +1074,7 @@ export default function CRM() {
       {showTour && <TourModal onDone={closeTour}/>}
 
       {/* Импорт клиентов из Excel */}
-      {modal?.type==='import' && <ImportModal onImport={importClients} onClose={()=>setModal(null)} syncing={syncing}/>}
+      {modal?.type==='import' && <ImportModal onImport={importClients} onClose={()=>setModal(null)} syncing={syncing} pipeline={pipeline}/>}
 
       {/* Modals */}
       {modal?.type==='quick_client'  && <QuickClientModal  base={modal.c} onSave={saveClient} onOpen={c=>setSelClient(c)} onClose={()=>setModal(null)}
@@ -1246,7 +1253,7 @@ function NotifBell({ clients, waUnread, onOpen, goWa, goTasks }) {
 // ─── ИМПОРТ КЛИЕНТОВ ИЗ EXCEL ────────────────────────────────────
 // Читает файлы через SheetJS (грузится лениво при первом открытии).
 // Формат «Анкета ПКБ» (лист «Анкета») → 1 клиент/файл; иначе список по заголовкам.
-function ImportModal({ onImport, onClose, syncing }) {
+function ImportModal({ onImport, onClose, syncing, pipeline }) {
   const [parsed, setParsed] = useState(null)   // null=ещё не выбирали, []=пусто
   const [busy,   setBusy]   = useState(false)
   const [err,    setErr]    = useState('')
@@ -1272,7 +1279,7 @@ function ImportModal({ onImport, onClose, syncing }) {
         } else {
           const ws   = wb.Sheets[wb.SheetNames[0]]
           const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' })
-          all.push(...clientsFromList(rows))
+          all.push(...clientsFromList(rows, pipeline))
         }
       }
       setParsed(all)
@@ -2027,7 +2034,7 @@ className='search-card'
 }
 
 // ─── SEARCH PAGE ─────────────────────────────────────────────────
-function SearchPage({ clients, managers, pipeline, checklists, search, setSearch, fStage, setFStage, fMgr, setFMgr, onOpen, waNew, canMass, onMass, onExportSel, onMerge }) {
+function SearchPage({ clients, managers, pipeline, checklists, search, setSearch, fStage, setFStage, fMgr, setFMgr, onOpen, waNew, canMass, onMass, onExportSel, onMerge, onImport, onExportAll }) {
   const [mergeDlg, setMergeDlg] = useState(null)   // { a, b, primary } — диалог слияния дублей
   const pl = pipeline || PIPELINE_DEFAULT
   // Вид: карточки / таблица (запоминается)
@@ -2137,6 +2144,15 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
           <i className="ti ti-bookmark-plus" style={{fontSize:12}}/>Сохранить вид
         </button>
       </div>
+
+      {/* Импорт / Экспорт — дублируют кнопки шапки, но с подписями (их искали и не находили) */}
+      {canMass && (
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:12}}>
+          <Btn size="sm" onClick={onImport}><i className="ti ti-upload"/>Импорт из Excel</Btn>
+          <Btn size="sm" onClick={onExportAll}><i className="ti ti-download"/>Экспорт в Excel</Btn>
+          <span style={{fontSize:11,color:'#94a3b8'}}>база_анкет.xlsx: с этапом и сопровождением, читается обратно импортом</span>
+        </div>
+      )}
 
       {waNew?.length > 0 && !search && !fStage && !fMgr && (
         <div style={{background:'#f0fdf4',border:'2px solid #86efac',borderRadius:13,padding:'13px',marginBottom:14,display:'flex',gap:11,alignItems:'center'}}>
