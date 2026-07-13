@@ -903,7 +903,7 @@ function AnalysisTab({ c, set, canEdit }) {
     </div>
     <div style={{fontWeight:700,fontSize:12,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:10,marginTop:4,display:'flex',alignItems:'center'}}>
       Финансы
-      <span className="help-tip" data-tip="Доход банк проверяет по пенсионным отчислениям (ОПВ). Официальный доход = белая зарплата.">?</span>
+      <span className="help-tip" tabIndex={0} data-tip="Доход банк проверяет по пенсионным отчислениям (ОПВ). Официальный доход = белая зарплата.">?</span>
     </div>
     <div className="r3">
       <Fl l="Офиц. доход (₸)"  ch={<MoneyInp value={c.officialIncome}      onChange={v=>set('officialIncome',v)}/>}/>
