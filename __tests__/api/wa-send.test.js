@@ -24,6 +24,7 @@ chatChain.select      = jest.fn().mockReturnValue(chatChain)
 chatChain.eq          = jest.fn().mockReturnValue(chatChain)
 chatChain.update      = jest.fn().mockReturnValue(chatChain)
 chatChain.insert      = jest.fn().mockResolvedValue({ data: {}, error: null })
+chatChain.upsert      = jest.fn().mockResolvedValue({ data: {}, error: null })
 chatChain.maybeSingle = mockMaybe
 
 const msgChain = { insert: mockInsert }
@@ -144,8 +145,8 @@ describe('POST /api/wa/send', () => {
     }, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
-    expect(chatChain.insert).toHaveBeenCalled()
-    const insertArg = chatChain.insert.mock.calls[0][0]
+    expect(chatChain.upsert).toHaveBeenCalled()
+    const insertArg = chatChain.upsert.mock.calls[0][0]
     expect(insertArg.id).toBe('msg-999')
     expect(insertArg.direction).toBe('out')
     expect(insertArg.status).toBe('sent')
@@ -184,7 +185,8 @@ describe('POST /api/wa/send', () => {
     }, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
-    // insert called for wa_messages
+    // сообщение сохраняется через upsert, сам чат — insert
+    expect(chatChain.upsert).toHaveBeenCalled()
     expect(chatChain.insert).toHaveBeenCalled()
   })
 })

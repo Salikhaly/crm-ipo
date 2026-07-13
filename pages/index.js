@@ -813,6 +813,21 @@ export default function CRM() {
   }, []) // useCallback
 
   async function importWaLead(c, linkWaChatId) {
+    // Клиент с этим номером/ИИН уже есть? Тогда не плодим дубль (сервер вернёт 409),
+    // а привязываем чат к существующему клиенту — частый случай: писал текущий клиент.
+    const tail = String(c.phone||'').replace(/\D/g,'').replace(/^8/,'7').slice(-10)
+    const dup = clients.find(x =>
+      (tail.length===10 && (x.phone||'').replace(/\D/g,'').endsWith(tail)) ||
+      (c.iin && x.iin === c.iin)
+    )
+    if (dup) {
+      if (linkWaChatId) {
+        await api.linkWaChat(linkWaChatId, dup.id).catch(() => {})
+        setWaChats(cs => cs.map(ch => ch.id === linkWaChatId ? { ...ch, client_id: dup.id } : ch))
+      }
+      toast$(`🔗 Чат привязан к клиенту: ${dup.fio || dup.phone}`)
+      return
+    }
     try {
       const res = await api.createClient(c)
       const saved = res.client || c
