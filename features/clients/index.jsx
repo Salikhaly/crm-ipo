@@ -31,7 +31,7 @@ import { fillXlsxTemplate } from '../../lib/xlsxTemplate'
 // Запись в ленту о выполнении/переоткрытии задачи — история действий по задачам
 function taskLogEntry(t, done, userName) {
   const label = ((t?.type || '') + (t?.text ? ' — ' + t.text : '')).trim() || 'Задача'
-  return { id: uid(), text: (done ? '✅ Выполнена задача: ' : '↩️ Задача снова открыта: ') + label, author: userName || '', date: nowStr(), sys: true }
+  return { id: uid(), text: (done ? '✅ Выполнена задача: ' : '↩️ Задача снова открыта: ') + label, author: userName || '', date: nowStr(), createdAt: new Date().toISOString(), sys: true }
 }
 
 // ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
@@ -222,10 +222,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     // Смена этапа пишется в ленту — в карточке видна вся история движения
     const fromL = pl.find(p => p.id === c.stage)?.l || c.stage
     const toL   = pl.find(p => p.id === nid)?.l || nid
-    patch.comments = [...(c.comments||[]), { id:uid(), text:`📍 Этап: ${fromL} → ${toL}`, author:user.name, date:nowStr(), sys:true }]
+    patch.comments = [...(c.comments||[]), { id:uid(), text:`📍 Этап: ${fromL} → ${toL}`, author:user.name, date:nowStr(), createdAt:new Date().toISOString(), sys:true }]
     if (reason) {
       patch.closeReason = reason
-      patch.comments = [...patch.comments, { id:uid(), text:'❌ Закрыто: '+reason, author:user.name, date:nowStr(), sys:true }]
+      patch.comments = [...patch.comments, { id:uid(), text:'❌ Закрыто: '+reason, author:user.name, date:nowStr(), createdAt:new Date().toISOString(), sys:true }]
     }
     // Авто-задача: настройка этапа из воронки (админка) → дефолт из кода
     const stgObj = pl.find(p => p.id === nid)

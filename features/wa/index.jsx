@@ -624,7 +624,12 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
               ref={inputRef}
               className="wa-textarea"
               value={msgText}
-              onChange={e=>handleMsgChange(e.target.value)}
+              onChange={e=>{
+                handleMsgChange(e.target.value)
+                // Авто-рост до ~5 строк: длинное сообщение видно целиком перед отправкой
+                e.target.style.height = 'auto'
+                e.target.style.height = Math.min(e.target.scrollHeight, 110) + 'px'
+              }}
               placeholder="Написать сообщение... (/ для быстрых ответов)"
               rows={1}
               onKeyDown={e=>{
