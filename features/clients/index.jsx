@@ -1899,8 +1899,25 @@ function DriveTab({ c, setC, user }) {
 
   const canDelete = user?.role === 'admin' || user?.role === 'head'
 
+  // Общая папка команды в Google Drive: все заходят сами и хранят вручную
+  // (решение владельца — без API-интеграции; переопределяется env-переменной)
+  const SHARED_DRIVE = process.env.NEXT_PUBLIC_SHARED_DRIVE_URL
+    || 'https://drive.google.com/drive/folders/1aoZipnnfFcihv7KrOqlybYnQqX-OPDky'
+
   return (
     <div style={{padding:'4px 0'}}>
+      {/* Общий Google Drive команды — ручное хранение */}
+      <a href={SHARED_DRIVE} target="_blank" rel="noreferrer"
+        style={{display:'flex',alignItems:'center',gap:10,background:'#f0fdf4',border:'2px solid #86efac',
+          borderRadius:13,padding:'13px 15px',marginBottom:12,textDecoration:'none',color:'#065f46'}}>
+        <i className="ti ti-brand-google-drive" style={{fontSize:26,color:'#16a34a',flexShrink:0}}/>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,fontSize:13.5}}>Открыть общий Google Drive команды</div>
+          <div style={{fontSize:11.5,color:'#047857'}}>Папка «CRM — Клиенты»: заходите и храните документы там. Совет: создайте внутри папку с именем клиента.</div>
+        </div>
+        <i className="ti ti-external-link" style={{fontSize:16,flexShrink:0}}/>
+      </a>
+
       {/* Понятность: где лежат файлы */}
       <div className="hint">
         <span className="hint-icon">📁</span>

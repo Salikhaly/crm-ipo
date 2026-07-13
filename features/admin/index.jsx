@@ -11,6 +11,17 @@ import { DOC_TEMPLATES_FALLBACK, DOC_PLACEHOLDERS } from '../../lib/docTemplates
 export function AdminPage({ managers, pipeline, checklists, users, user, onSaveMgr, onDelMgr, onSaveUser, onDelUser, onSavePL, onSaveCL, onModal, reload, syncing }) {
   const [tab, setTab] = useState('managers')
   const pl = pipeline || PIPELINE_DEFAULT
+  // Свои маршруты из админки: их этапы тоже должны получать чек-листы (H4)
+  const [accompOv, setAccompOv] = useState(null)
+  useEffect(() => {
+    api.calc('accomp_templates', {})
+      .then(r => { if (r?.templates && typeof r.templates === 'object') setAccompOv(r.templates) })
+      .catch(() => {})
+  }, [])
+  const customStages = accompOv
+    ? Object.values(accompOv).flatMap(t => (t?.stages || []).map(s => (typeof s === 'string' ? s : s?.name)).filter(Boolean))
+    : []
+  const clStages = [...new Set([...ALL_ACCOMP_STAGES, ...customStages])]
 
   return (
     <div>
@@ -113,7 +124,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
           <i className="ti ti-info-circle" style={{marginTop:2}}/>
           <div>Нажмите на этап для редактирования пунктов. Чек-лист привязан к <b>названию этапа</b> и общий для всех маршрутов (Полное сопровождение, Отбасы, Госпрограмма, Аудирование по кредитованию, Поиск дома, Онлайн, Коммерческая). Этапы с пометкой «дефолт» используют встроенный чек-лист, пока вы не сохраните свой.</div>
         </div>
-        {ALL_ACCOMP_STAGES.map(stage => {
+        {clStages.map(stage => {
           const own     = (checklists||{})[stage]||[]
           const isDef   = !own.length && !!DEFAULT_CHECKLISTS[stage]
           const items   = own.length ? own : (DEFAULT_CHECKLISTS[stage]||[])

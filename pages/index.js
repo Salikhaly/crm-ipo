@@ -184,21 +184,25 @@ export default function CRM() {
     if (!list.length) { toast$('⚠️ В файле не найдено клиентов', 'err'); return { created:0, skipped:0 } }
     setSyncing(true)
     let created = 0, skipped = 0
+    const skippedList = []
     const seenP = new Set(clients.map(x => (x.phone||'').replace(/\D/g,'')).filter(Boolean))
     const seenI = new Set(clients.map(x => x.iin).filter(Boolean))
     for (const partial of list) {
       const pd = (partial.phone||'').replace(/\D/g,'')
-      if ((pd && seenP.has(pd)) || (partial.iin && seenI.has(partial.iin))) { skipped++; continue }
+      const who = partial.fio || partial.phone || partial.iin || 'без имени'
+      if ((pd && seenP.has(pd)) || (partial.iin && seenI.has(partial.iin))) {
+        skipped++; skippedList.push({ who, why: 'дубль по телефону/ИИН' }); continue
+      }
       const full = { ...emptyClient(user.manager_id||''), ...partial, id: uid() }
       if (partial.__note) full.comments = [{ id:uid(), text:'📥 Импорт · '+partial.__note, author:user.name||'', date:nowStr(), sys:true }]
       delete full.__note
       const saved = await saveClient(full, { quiet:true })
       if (saved) { created++; if (pd) seenP.add(pd); if (partial.iin) seenI.add(partial.iin) }
-      else skipped++
+      else { skipped++; skippedList.push({ who, why: 'не сохранился (телефон/ИИН уже в базе или ошибка сети)' }) }
     }
     setSyncing(false)
     toast$(`📥 Импортировано: ${created}${skipped ? ` · пропущено (дубли): ${skipped}` : ''}`)
-    return { created, skipped }
+    return { created, skipped, skippedList }
   }
 
   // ─── СЛИЯНИЕ ДУБЛЕЙ (head/admin) ──────────────────────────
@@ -1045,7 +1049,7 @@ export default function CRM() {
             {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
-            {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod}/>}
+            {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod} pipeline={pipeline}/>}
             {page==='admin'     && isAdmin && <AdminPage managers={managers} pipeline={pipeline} checklists={checklists} users={users} user={user} onSaveMgr={saveMgr} onDelMgr={delMgr} onSaveUser={saveUser} onDelUser={delUser} onSavePL={savePL} onSaveCL={saveCL} onModal={setModal} reload={loadAll} syncing={syncing}/>}
             {page==='calcadmin' && isHead && !isAdmin && (
               <div style={{maxWidth:900,margin:'0 auto',padding:'0 4px'}}>
@@ -1321,6 +1325,15 @@ function ImportModal({ onImport, onClose, syncing, pipeline }) {
           <div style={{background:done.created?'#f0fdf4':'#fffbeb',border:`1.5px solid ${done.created?'#86efac':'#fcd34d'}`,borderRadius:12,padding:'16px 18px',textAlign:'center'}}>
             <div style={{fontSize:15,fontWeight:800,color:done.created?'#166534':'#92400e',marginBottom:4}}>{done.created ? '✓ Готово' : '⚠ Ничего не импортировано'}</div>
             <div style={{fontSize:13,color:done.created?'#15803d':'#b45309'}}>{done.created ? <>Создано: <b>{done.created}</b></> : 'Все записи оказались дублями или пустыми'}{done.skipped ? ` · пропущено (дубли): ${done.skipped}` : ''}</div>
+            {done.skippedList?.length > 0 && (
+              <div style={{textAlign:'left',maxHeight:150,overflowY:'auto',marginTop:10,background:'#fff',border:'1px solid #e2e8f0',borderRadius:9,padding:'8px 11px'}}>
+                {done.skippedList.slice(0, 50).map((r, i) => (
+                  <div key={i} style={{fontSize:11.5,color:'#64748b',padding:'2px 0'}}>
+                    <b style={{color:'#334155'}}>{r.who}</b> — {r.why}
+                  </div>
+                ))}
+              </div>
+            )}
             <Btn variant="primary" style={{marginTop:14,justifyContent:'center'}} onClick={onClose}>Закрыть</Btn>
           </div>
         ) : (<>
@@ -1396,7 +1409,8 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
     return clients.filter(c =>
       (c.fio || '').toLowerCase().includes(s) ||
       (digits.length >= 3 && (c.phone || '').replace(/\D/g, '').includes(digits)) ||
-      (c.iin || '').includes(s)
+      (c.iin || '').includes(s) ||
+      (c.tags || []).some(t => String(t).toLowerCase().includes(s))
     ).slice(0, 8)
   }, [q, clients])
 
@@ -1419,7 +1433,7 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
               <i className="ti ti-search" style={{color:'#94a3b8',fontSize:17,flexShrink:0}}/>
               <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && results[0]) pick(results[0]) }}
-                placeholder="Имя, телефон или ИИН..."
+                placeholder="Имя, телефон, ИИН или тег..."
                 style={{flex:1,border:'none',outline:'none',fontSize:15,color:'#0f172a',fontFamily:'inherit',background:'transparent'}}/>
               <span style={{fontSize:10,color:'#94a3b8',background:'#f1f5f9',borderRadius:5,padding:'2px 6px',flexShrink:0}}>Esc</span>
             </div>
@@ -1444,7 +1458,7 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
             })}
             {q.trim().length < 2 && (
               <div style={{padding:'16px',fontSize:12,color:'#94a3b8',textAlign:'center'}}>
-                Начните вводить имя, телефон или ИИН — минимум 2 символа. Enter — открыть первого.
+                Начните вводить имя, телефон, ИИН или тег — минимум 2 символа. Enter — открыть первого.
               </div>
             )}
           </div>
@@ -2005,6 +2019,18 @@ className='search-card'
           </div>
         )}
 
+        {(() => {
+          const prg = c.program ? PROGRAMS_FALLBACK.find(p => p.id === c.program) : null
+          const ct  = c.contractType ? CT[c.contractType] : null
+          if (!prg && !ct) return null
+          const chip = { display:'inline-flex',alignItems:'center',gap:4,background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:20,padding:'2px 9px',fontSize:10.5,fontWeight:700,color:'#334155' }
+          return (
+            <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
+              {prg && <span style={chip}>{prg.icon} {prg.n}</span>}
+              {ct  && <span style={{...chip,color:'#7c3aed',borderColor:'#ddd6fe',background:'#f5f3ff'}}>📄 {ct.l}</span>}
+            </div>
+          )
+        })()}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:7,marginBottom:openTasks.length||lastCmt?10:0}}>
           {[
             { l:'✅ Задачи', v:<div style={{fontWeight:800,fontSize:17,color:overdue.length>0?'#ef4444':openTasks.length>0?'#3b82f6':'#10b981',letterSpacing:'-1px'}}>{openTasks.length}</div>, warn:overdue.length>0 },
@@ -2406,6 +2432,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
   const todayStr  = today()
   const [showNew, setShowNew] = useState(false)
   const [tView,   setTView]   = useState('list')  // list | calendar
+  const [fTMgr,   setFTMgr]   = useState('')      // фильтр по менеджеру клиента
   const [newTask, setNewTask] = useState({ text:'', due:'', clientId:'', note:'' })
 
   function createTask() {
@@ -2433,7 +2460,8 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
   // Memoize: 5 array passes on clients — only recompute when clients change
   const { all, open, overdue, todayT, rest, done } = useMemo(() => {
     const td  = todayStr
-    const all = clients.flatMap(c => (c.tasks||[]).map(t => ({ ...t, cFio:c.fio, cl:c })))
+    const src = fTMgr ? clients.filter(c => c.manager === fTMgr) : clients
+    const all = src.flatMap(c => (c.tasks||[]).map(t => ({ ...t, cFio:c.fio, cl:c })))
     // Single pass to bucket tasks instead of 4 separate filter passes
     const open = [], overdue = [], todayT = [], rest = [], done = []
     for (const t of all) {
@@ -2444,7 +2472,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
       else                          rest.push(t)
     }
     return { all, open, overdue, todayT, rest, done }
-  }, [clients])
+  }, [clients, fTMgr])
 
   const S = { background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,boxShadow:'0 1px 4px rgba(0,0,0,.07)' }
 
@@ -2472,6 +2500,10 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
           ))}
         </div>
         <Btn size="sm" variant="primary" onClick={()=>setShowNew(v=>!v)}><i className="ti ti-plus"/>Задача</Btn>
+        <Sel value={fTMgr} onChange={e=>setFTMgr(e.target.value)} style={{width:'auto',minWidth:150,padding:'6px 10px',fontSize:12}}>
+          <option value="">Все менеджеры</option>
+          {managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+        </Sel>
       </div>
 
       {showNew && (
@@ -2591,7 +2623,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
 TasksPage = React.memo(TasksPage)
 
 // ─── KPI PAGE ────────────────────────────────────────────────────
-function KPIPage({ data, period, setPeriod }) {
+function KPIPage({ data, period, setPeriod, pipeline }) {
   if (!data) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300,color:'#64748b',gap:10}}>
       <i className="ti ti-loader spin" style={{fontSize:24}}/>Загрузка KPI...
@@ -2602,7 +2634,9 @@ function KPIPage({ data, period, setPeriod }) {
   const maxReason = Math.max(...(closeReasons||[]).map(r=>r.count), 1)
   const totalClosed = (closeReasons||[]).reduce((s,r)=>s+r.count, 0)
   const maxRev = Math.max(...(stats||[]).map(s => s.rev), 1)
-  const STAGE_L = {new_lead:'Новый лид',in_work:'В работе',analysis:'Анализ',consultation:'Консультация',contract:'Договор',accompaniment:'Сопровождение',approval:'Одобрение',deal:'Сделка',issuance:'Выдача',closed:'Закрыто'}
+  // Названия этапов — из настроенной воронки (админка), хардкод только как запас
+  const STAGE_FALLBACK = {new_lead:'Новый лид',in_work:'В работе',analysis:'Анализ',consultation:'Консультация',contract:'Договор',accompaniment:'Сопровождение',approval:'Одобрение',deal:'Сделка',issuance:'Выдача',closed:'Закрыто'}
+  const STAGE_L = { ...STAGE_FALLBACK, ...Object.fromEntries((pipeline||[]).map(p=>[p.id,p.l])) }
   const SRC_L = {instagram:'Instagram',tiktok:'TikTok',whatsapp:'WhatsApp',recommendation:'Рекомендация',site:'Сайт',kaspi:'Kaspi',telegram:'Telegram',other:'Другое'}
   const maxReached = Math.max(...(funnel||[]).map(f=>f.reached), 1)
 

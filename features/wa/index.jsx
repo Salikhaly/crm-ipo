@@ -697,26 +697,33 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
     const price  = lc.contractAmount > 0 ? lc.contractAmount : 0
     if (!income && !price) { notify('⚠️ У клиента не заполнен доход или сумма договора'); return }
     setCalcBusy(true)
+    // Программа клиента (13 новых) -> ключ расчётного движка (6 API-программ);
+    // нет соответствия — считаем по Наурыз 20%, как раньше
+    const ENGINE_BY_PROGRAM = {
+      n20:['nauryz20','Наурыз 20%'], n10:['nauryz10','Наурыз 10%'], jsyl:['jasyl','Жасыл'],
+      ask:['askeri','Аскери'], '5050p':['5050','Ипотека 50/50'], '5050zh':['5050','Ипотека 50/50'],
+    }
+    const [progKey, progName] = ENGINE_BY_PROGRAM[lc.program] || ['nauryz20', 'Наурыз 20%']
     try {
       const name = lc.fio?.split(' ')[0] || 'Уважаемый клиент'
       let msg = ''
       if (price > 0) {
         const res = await api.calc('mortgage_by_price', {
-          program: 'nauryz20', price,
+          program: progKey, price,
           members: 1,
           orgs: [{ income, oldCredit: +(lc.monthlyLoad)||0 }],
         })
         const v = res?.variantsByPrice?.[0]
         if (v) {
-          msg = `Здравствуйте, ${name}! 🏠\n\nРасчёт по квартире ${fmtN(price)} ₸\nПрограмма: Наурыз 20%\n\n💵 Первоначальный взнос: ${fmtN(v.downPayment)} ₸\n🏦 Сумма займа: ${fmtN(v.loanAmount)} ₸\n📅 Платёж: ${fmtN(v.monthly)} ₸/мес`
+          msg = `Здравствуйте, ${name}! 🏠\n\nРасчёт по квартире ${fmtN(price)} ₸\nПрограмма: ${progName}\n\n💵 Первоначальный взнос: ${fmtN(v.downPayment)} ₸\n🏦 Сумма займа: ${fmtN(v.loanAmount)} ₸\n📅 Платёж: ${fmtN(v.monthly)} ₸/мес`
           if (!res.calc?.approved && v.requiredSalary) msg += `\n📊 Нужный доход: ${fmtN(v.requiredSalary)} ₸`
         }
       } else {
         const res = await api.calc('mortgage_by_salary', {
-          program: 'nauryz20', salary: income, members: 1, oldCredit: +(lc.monthlyLoad)||0,
+          program: progKey, salary: income, members: 1, oldCredit: +(lc.monthlyLoad)||0,
         })
         if (res?.approved) {
-          msg = `Здравствуйте, ${name}! 🏠\n\nПо доходу ${fmtN(income)} ₸ (Наурыз 20%):\n\n🏠 Макс. цена квартиры: ${fmtN(res.maxPrice)} ₸\n🏦 Сумма займа: ${fmtN(res.maxLoan)} ₸\n💰 Первый взнос: ${fmtN(res.down)} ₸\n📅 Платёж: ${fmtN(res.payment)} ₸/мес`
+          msg = `Здравствуйте, ${name}! 🏠\n\nПо доходу ${fmtN(income)} ₸ (${progName}):\n\n🏠 Макс. цена квартиры: ${fmtN(res.maxPrice)} ₸\n🏦 Сумма займа: ${fmtN(res.maxLoan)} ₸\n💰 Первый взнос: ${fmtN(res.down)} ₸\n📅 Платёж: ${fmtN(res.payment)} ₸/мес`
         } else {
           msg = `${name}, по текущему доходу ${fmtN(income)} ₸ одобрение маловероятно. Давайте обсудим варианты 🙏`
         }
@@ -759,7 +766,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
             : <><i className="ti ti-calculator"/>Рассчитать → в сообщение</>}
         </button>
         <div style={{fontSize:11,color:'#94a3b8',textAlign:'center',marginTop:6}}>
-          Наурыз 20% по доходу и договору клиента
+          Считает по программе клиента из карточки (без неё — Наурыз 20%)
         </div>
       </div>
     </div>
