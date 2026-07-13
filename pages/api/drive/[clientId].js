@@ -212,7 +212,20 @@ async function storagePost(sb, clientId, req, res) {
 function rootFolderId() {
   const raw  = String(process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '')
   const tail = raw.includes('/folders/') ? raw.split('/folders/')[1] : raw
-  return tail.split(/[?&#/\s]/)[0].trim()
+  // ID папки Drive состоит только из [A-Za-z0-9_-]. Вытаскиваем первый длинный
+  // токен — переживает кавычки, пробелы, невидимые символы и любые хвосты URL.
+  const m = tail.match(/[A-Za-z0-9_-]{20,}/)
+  return m ? m[0] : tail.split(/[?&#/\s]/)[0].trim()
+}
+
+// Полная диагностика ошибки Google API: message + location (какой параметр)
+function driveErrDetail(err) {
+  const e = err?.response?.data?.error
+  const parts = []
+  if (e?.errors?.length) parts.push(JSON.stringify(e.errors))
+  else if (e) parts.push(JSON.stringify(e).slice(0, 300))
+  parts.push('root=' + JSON.stringify(rootFolderId()))
+  return parts.join(' | ')
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
@@ -292,7 +305,7 @@ export default withAuth(async function handler(req, res) {
         files:         list.data.files || [],
       })
     } catch (err) {
-      console.error('[drive] GET error:', err.message)
+      console.error('[drive] GET error:', err.message, '|', driveErrDetail(err))
       return apiError(res, err)
     }
   }
@@ -356,7 +369,7 @@ export default withAuth(async function handler(req, res) {
         managerFolder: managerFolder.name,
       })
     } catch (err) {
-      console.error('[drive] POST error:', err.message)
+      console.error('[drive] POST error:', err.message, '|', driveErrDetail(err))
       return apiError(res, err)
     }
   }
@@ -376,7 +389,7 @@ export default withAuth(async function handler(req, res) {
       await drive.files.delete({ fileId })
       return res.status(200).json({ ok: true })
     } catch (err) {
-      console.error('[drive] DELETE error:', err.message)
+      console.error('[drive] DELETE error:', err.message, '|', driveErrDetail(err))
       return apiError(res, err)
     }
   }
