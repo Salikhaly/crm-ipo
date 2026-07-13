@@ -167,7 +167,7 @@ describe('GET /api/drive/:clientId — двухуровневая структу
     const folderCalls = driveFilesCreate.mock.calls.filter(
       c => c[0].requestBody.mimeType === 'application/vnd.google-apps.folder'
     )
-    const managerCall = folderCalls.find(c => c[0].requestBody.description?.startsWith('crm_manager_'))
+    const managerCall = folderCalls.find(c => c[0].requestBody.appProperties?.crmManager)
     expect(managerCall).toBeDefined()
     expect(managerCall[0].requestBody.name).toBe('Айгерим Байсейтова')
     expect(managerCall[0].requestBody.parents).toEqual(['root-folder-id'])
@@ -182,7 +182,7 @@ describe('GET /api/drive/:clientId — двухуровневая структу
     const folderCalls = driveFilesCreate.mock.calls.filter(
       c => c[0].requestBody.mimeType === 'application/vnd.google-apps.folder'
     )
-    const clientCall = folderCalls.find(c => c[0].requestBody.description?.startsWith('crm_client_'))
+    const clientCall = folderCalls.find(c => c[0].requestBody.appProperties?.crmClientId)
     expect(clientCall).toBeDefined()
     expect(clientCall[0].requestBody.name).toMatch(/Иванов Петр/)
     expect(clientCall[0].requestBody.parents[0]).not.toBe('root-folder-id')
@@ -204,7 +204,7 @@ describe('GET /api/drive/:clientId — двухуровневая структу
 
   test('существующая папка менеджера — не создаётся повторно', async () => {
     driveFilesList.mockImplementation(({ q }) => {
-      if (q.includes('crm_manager_')) {
+      if (q.includes('crmManager')) {
         return Promise.resolve({ data: { files: [{ id: 'existing_mgr_folder', name: 'Айгерим Байсейтова', webViewLink: 'https://drive.google.com/folder/existing' }] } })
       }
       return Promise.resolve({ data: { files: [] } })
@@ -215,7 +215,7 @@ describe('GET /api/drive/:clientId — двухуровневая структу
       query: { clientId: 'c1' },
     }, makeRes())
     const managerFolderCreations = driveFilesCreate.mock.calls.filter(
-      c => c[0].requestBody.description?.startsWith('crm_manager_')
+      c => c[0].requestBody.appProperties?.crmManager
     )
     expect(managerFolderCreations.length).toBe(0)
   })

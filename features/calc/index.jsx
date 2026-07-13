@@ -106,11 +106,11 @@ export function CalcPage({ user, clients, toast$ }) {
       </div>
 
       {/* Новый калькулятор — вкладки */}
-      <div style={{fontSize:10,fontWeight:600,color:'#94a3b8',marginBottom:4,letterSpacing:'.06em'}}>НОВЫЙ КАЛЬКУЛЯТОР</div>
+      <div style={{fontSize:10,fontWeight:600,color:'#94a3b8',marginBottom:4,letterSpacing:'.06em'}}>РАСЧЁТЫ ДЛЯ КЛИЕНТА</div>
       <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:6,background:'#f8fafc',padding:4,borderRadius:12,border:'1px solid #e2e8f0'}}>
         {newTabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            style={{flex:'1',minWidth:64,padding:'6px 3px',border:'none',borderRadius:8,cursor:'pointer',fontSize:10,fontWeight:500,
+            style={{flex:'1',minWidth:72,padding:'9px 4px',minHeight:38,border:'none',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,
               background: tab===t.id ? '#fff' : 'transparent',
               color: tab===t.id ? '#0f172a' : '#64748b',
               boxShadow: tab===t.id ? '0 1px 3px rgba(0,0,0,.06)' : 'none',
@@ -121,11 +121,11 @@ export function CalcPage({ user, clients, toast$ }) {
       </div>
 
       {/* Старый калькулятор — вкладки */}
-      <div style={{fontSize:10,fontWeight:600,color:'#94a3b8',marginBottom:4,letterSpacing:'.06em'}}>РАСЧЁТЫ ЧЕРЕЗ API</div>
+      <div style={{fontSize:10,fontWeight:600,color:'#94a3b8',marginBottom:4,letterSpacing:'.06em'}}>СЛУЖЕБНЫЕ (БАНК, ОПВ, НАЛОГИ)</div>
       <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:16,background:'#f8fafc',padding:4,borderRadius:12,border:'1px solid #e2e8f0'}}>
         {oldTabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            style={{flex:'1',minWidth:80,padding:'6px 4px',border:'none',borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:500,
+            style={{flex:'1',minWidth:88,padding:'9px 4px',minHeight:38,border:'none',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,
               background: tab===t.id ? '#fff' : 'transparent',
               color: tab===t.id ? '#0f172a' : '#64748b',
               boxShadow: tab===t.id ? '0 1px 3px rgba(0,0,0,.06)' : 'none',

@@ -77,10 +77,20 @@ export default async function handler(req, res) {
 
     const rawPhone  = chatId.replace('@c.us', '').replace('@g.us', '')
     const phone     = '+' + rawPhone
-    const name      = (senderData?.senderName ?? senderData?.pushname ?? '').substring(0, 100)
     const direction = typeWebhook === 'incomingMessageReceived' ? 'in' : 'out'
-    const msgId     = messageData?.idMessage ?? ''
-    const ts        = messageData?.timestamp
+    // Имя клиента: входящее — pushname отправителя (senderName); исходящее с
+    // телефона — senderName это имя ВЛАДЕЛЬЦА номера, поэтому берём только
+    // chatName (имя собеседника). Одинокие суррогаты (обрезанные эмодзи) чистим.
+    const rawName = direction === 'in'
+      ? (senderData?.senderName || senderData?.chatName || '')
+      : (senderData?.chatName || '')
+    const name = String(rawName).substring(0, 100)
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+      .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1')
+    // idMessage/timestamp приходят в КОРНЕ тела вебхука (не в messageData!) —
+    // раньше msgId был пуст и входящие сообщения не сохранялись вовсе
+    const msgId     = body.idMessage ?? messageData?.idMessage ?? ''
+    const ts        = body.timestamp ?? messageData?.timestamp
     const sentAt    = ts && Number.isInteger(ts)
       ? new Date(ts * 1000).toISOString()
       : new Date().toISOString()
@@ -132,6 +142,21 @@ export default async function handler(req, res) {
         mediaUrl  = messageData?.stickerMessageData?.downloadUrl ?? ''
         mediaMime = 'image/webp'
         text      = '[Стикер]'
+        break
+      case 'quotedMessage':
+        // Ответ-цитата: собственный текст лежит в extendedTextMessageData
+        type = 'text'
+        text = (messageData?.extendedTextMessageData?.text ?? '').substring(0, 4096) || '[Цитата]'
+        break
+      case 'locationMessage': {
+        const loc = messageData?.locationMessageData || {}
+        type = 'text'
+        text = ('📍 Локация: ' + (loc.nameLocation || '') + ' ' + (loc.latitude ?? '') + ',' + (loc.longitude ?? '')).trim()
+        break
+      }
+      case 'contactMessage':
+        type = 'text'
+        text = '👤 Контакт: ' + (messageData?.contactMessageData?.displayName ?? '')
         break
       default:
         type = 'text'

@@ -16,7 +16,7 @@ import {
   CLOSE_REASONS, STAGE_AUTO_TASK, canMoveToStage,
 } from '../../lib/constants'
 import {
-  Btn, Inp, Sel, Fl, Tag, Tgl, Prog, StTag,
+  Btn, Inp, Sel, Fl, Tag, Tgl, Prog, StTag, MoneyInp,
 } from '../../components/ui'
 import { Logo } from '../../components/logo'
 import {
@@ -31,7 +31,7 @@ import { fillXlsxTemplate } from '../../lib/xlsxTemplate'
 // Запись в ленту о выполнении/переоткрытии задачи — история действий по задачам
 function taskLogEntry(t, done, userName) {
   const label = ((t?.type || '') + (t?.text ? ' — ' + t.text : '')).trim() || 'Задача'
-  return { id: uid(), text: (done ? '✅ Выполнена задача: ' : '↩️ Задача снова открыта: ') + label, author: userName || '', date: nowStr(), sys: true }
+  return { id: uid(), text: (done ? '✅ Выполнена задача: ' : '↩️ Задача снова открыта: ') + label, author: userName || '', date: nowStr(), createdAt: new Date().toISOString(), sys: true }
 }
 
 // ─── Сворачиваемая секция внутри вкладки (группировка 12 вкладок → 6) ───────
@@ -216,14 +216,16 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     applyStage(nid)
   }
   function applyStage(nid, reason) {
+    // Для «Отменить» в тосте: возвращаем этап, ленту и задачи как были
+    const before = { stage: c.stage, comments: c.comments || [], tasks: c.tasks || [] }
     const patch = { stage: nid }
     // Смена этапа пишется в ленту — в карточке видна вся история движения
     const fromL = pl.find(p => p.id === c.stage)?.l || c.stage
     const toL   = pl.find(p => p.id === nid)?.l || nid
-    patch.comments = [...(c.comments||[]), { id:uid(), text:`📍 Этап: ${fromL} → ${toL}`, author:user.name, date:nowStr(), sys:true }]
+    patch.comments = [...(c.comments||[]), { id:uid(), text:`📍 Этап: ${fromL} → ${toL}`, author:user.name, date:nowStr(), createdAt:new Date().toISOString(), sys:true }]
     if (reason) {
       patch.closeReason = reason
-      patch.comments = [...patch.comments, { id:uid(), text:'❌ Закрыто: '+reason, author:user.name, date:nowStr(), sys:true }]
+      patch.comments = [...patch.comments, { id:uid(), text:'❌ Закрыто: '+reason, author:user.name, date:nowStr(), createdAt:new Date().toISOString(), sys:true }]
     }
     // Авто-задача: настройка этапа из воронки (админка) → дефолт из кода
     const stgObj = pl.find(p => p.id === nid)
@@ -233,6 +235,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
       toast$('✅ Задача: ' + at.text)
     }
     setC(x => ({ ...x, ...patch })); setIsDirty(true); setHasChanges(true)
+    const toL2 = pl.find(p => p.id === nid)?.l || nid
+    toast$('📍 Этап: ' + toL2, 'ok', { label: 'Отменить', fn: () => {
+      setC(x => ({ ...x, ...before })); setIsDirty(true); setHasChanges(true)
+    }})
   }
 
   const stageObj = pl.find(p => p.id === c.stage)
@@ -651,7 +657,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                   {customFields.length > 0 && (
                     <div style={{marginTop:14}}>
                       <Collaps title="🧩 Дополнительные поля" defaultOpen>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                        <div className="r2">
                           {customFields.map(f => {
                             const key = f.key || f.id
                             const val = (c.custom || {})[key] ?? ''
@@ -855,17 +861,17 @@ function ProfileTab({ c, set, managers, canEdit }) {
       <span className="hint-icon">👤</span>
       <div>Основные данные клиента. <b>ФИО и телефон — обязательны</b>, ИИН нужен ближе к сделке. Источник помогает понять, откуда пришёл клиент — это видно в отчётах по эффективности рекламы.</div>
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+    <div className="r3">
       <Fl l="ФИО *" req ch={<Inp value={c.fio} onChange={e=>set('fio',e.target.value)} placeholder="Фамилия Имя Отчество" disabled={!canEdit}/>}/>
       <Fl l="ИИН"      ch={<Inp value={c.iin} onChange={e=>set('iin',e.target.value)} placeholder="123456789012" maxLength={12} disabled={!canEdit}/>}/>
       <Fl l="Телефон *" req ch={<Inp value={c.phone} onChange={e=>set('phone',e.target.value)} placeholder="+7 701 000-00-00" disabled={!canEdit}/>}/>
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+    <div className="r3">
       <Fl l="Город"   ch={<Sel value={c.city}    onChange={e=>set('city',e.target.value)}    disabled={!canEdit}>{CITIES.map(x=><option key={x}>{x}</option>)}</Sel>}/>
       <Fl l="Менеджер" ch={<Sel value={c.manager||''} onChange={e=>set('manager',e.target.value)} disabled={!canEdit}><option value="">—</option>{managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Sel>}/>
       <Fl l="Источник" ch={<Sel value={c.source}  onChange={e=>set('source',e.target.value)}  disabled={!canEdit}>{SRCS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}</Sel>}/>
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+    <div className="r3">
       <Fl l="Дата поступления" ch={<Inp type="date" value={c.dateIn} onChange={e=>set('dateIn',e.target.value)}/>}/>
       <Fl l="КИ" ch={<Sel value={c.creditStatus} onChange={e=>set('creditStatus',e.target.value)} disabled={!canEdit}>{CR_ST.map(x=><option key={x.id} value={x.id}>{x.l}</option>)}</Sel>}/>
       <Fl l="Ипотечная программа" ch={
@@ -891,7 +897,7 @@ function AnalysisTab({ c, set, canEdit }) {
       <div>Здесь собираем данные для банка. <b>Чем точнее доход и стаж — тем вернее расчёт одобрения.</b> Доп. доход учитывается только если стоит галочка «подтверждается» (справка, договор аренды и т.п.).</div>
     </div>
     <div style={{fontWeight:700,fontSize:12,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:10}}>Личные данные</div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+    <div className="r2">
       <Fl l="Семейное положение" ch={<Sel value={c.maritalStatus} onChange={e=>set('maritalStatus',e.target.value)} disabled={!canEdit}><option value="">—</option>{MARITAL.map(s=><option key={s}>{s}</option>)}</Sel>}/>
       <Fl l="Кол-во детей" ch={<Inp type="number" min="0" value={c.children} onChange={e=>set('children',e.target.value)}/>}/>
     </div>
@@ -899,12 +905,12 @@ function AnalysisTab({ c, set, canEdit }) {
       Финансы
       <span className="help-tip" data-tip="Доход банк проверяет по пенсионным отчислениям (ОПВ). Официальный доход = белая зарплата.">?</span>
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
-      <Fl l="Офиц. доход (₸)"  ch={<Inp type="number" value={c.officialIncome}      onChange={e=>set('officialIncome',e.target.value)}/>}/>
-      <Fl l="Доп. доход (₸)"   ch={<Inp type="number" value={c.extraIncome}          onChange={e=>set('extraIncome',e.target.value)}/>}/>
-      <Fl l="Пенсионные (₸)"   ch={<Inp type="number" value={c.pensionContributions} onChange={e=>set('pensionContributions',e.target.value)}/>}/>
+    <div className="r3">
+      <Fl l="Офиц. доход (₸)"  ch={<MoneyInp value={c.officialIncome}      onChange={v=>set('officialIncome',v)}/>}/>
+      <Fl l="Доп. доход (₸)"   ch={<MoneyInp value={c.extraIncome}          onChange={v=>set('extraIncome',v)}/>}/>
+      <Fl l="Пенсионные (₸)"   ch={<MoneyInp value={c.pensionContributions} onChange={v=>set('pensionContributions',v)}/>}/>
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+    <div className="r2">
       <Fl l="Стаж (лет)"       ch={<Inp type="number" value={c.workExperience} onChange={e=>set('workExperience',e.target.value)}/>}/>
       <Fl l="Тип занятости"    ch={<Sel value={c.workType} onChange={e=>set('workType',e.target.value)} disabled={!canEdit}>{WORK_T.map(w=><option key={w.id} value={w.id}>{w.l}</option>)}</Sel>}/>
     </div>
@@ -913,13 +919,13 @@ function AnalysisTab({ c, set, canEdit }) {
       <Tgl on={c.extraIncomeConfirmed} onClick={()=>canEdit&&set('extraIncomeConfirmed',!c.extraIncomeConfirmed)}/>
     </div>
     <div style={{fontWeight:700,fontSize:12,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:10}}>Первоначальный взнос</div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+    <div className="r3">
       <Fl l="Сумма ПВ (₸)"   ch={<Inp type="number" value={c.downPayment}  onChange={e=>set('downPayment',e.target.value)}/>}/>
       <Fl l="Тип ПВ"          ch={<Sel value={c.downPaymentType} onChange={e=>set('downPaymentType',e.target.value)} disabled={!canEdit}>{DOWN_T.map(d=><option key={d.id} value={d.id}>{d.l}</option>)}</Sel>}/>
       <Fl l="Банк депозита"   ch={<Inp value={c.depositBank} onChange={e=>set('depositBank',e.target.value)}/>}/>
     </div>
     {(c.downPaymentType==='deposit'||c.downPaymentType==='mixed') && (
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="r2">
         <Fl l="Сумма депозита" ch={<Inp type="number" value={c.depositAmount} onChange={e=>set('depositAmount',e.target.value)}/>}/>
         <Fl l="Срок (мес)"    ch={<Inp value={c.depositTerm} onChange={e=>set('depositTerm',e.target.value)} placeholder="36"/>}/>
       </div>
@@ -944,7 +950,7 @@ function CreditTab({ c, set, canEdit }) {
         ))}
       </div>
     }/>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+    <div className="r2">
       <Fl l="Кол-во кредитов"    ch={<Inp type="number" value={c.creditsCount} onChange={e=>set('creditsCount',e.target.value)}/>}/>
       <Fl l="Ежемес. нагрузка (₸)" ch={<Inp type="number" value={c.monthlyLoad}  onChange={e=>set('monthlyLoad',e.target.value)}/>}/>
     </div>
@@ -973,7 +979,7 @@ function OtbasyTab({ c, set }) {
       <Tgl on={c.otbasyDeposit} onClick={()=>set('otbasyDeposit',!c.otbasyDeposit)}/>
     </div>
     {c.otbasyDeposit && (
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="r2">
         <Fl l="Вознаграждение (%)" ch={<Inp type="number" step="0.1" value={c.otbasyReward}    onChange={e=>set('otbasyReward',e.target.value)}/>}/>
         <Fl l="Категория очереди"  ch={<Inp value={c.otbasyQueue}    onChange={e=>set('otbasyQueue',e.target.value)} placeholder="Стандарт..."/>}/>
         <Fl l="Год постановки"     ch={<Inp type="number" value={c.otbasyQueueYear} onChange={e=>set('otbasyQueueYear',e.target.value)} placeholder="2020"/>}/>
@@ -1011,11 +1017,11 @@ function ContractTab({ c, set, setC, pipeline }) {
     </div>
     {c.contractType && (
       <div style={{background:'linear-gradient(135deg,#eff6ff,#f5f3ff)',border:'2px solid #c7d2fe',borderRadius:13,padding:14,marginBottom:14}}>
-        <Fl l="Сумма договора (₸) — изменить вручную" ch={<Inp type="number" value={c.contractAmount} onChange={e=>set('contractAmount',+e.target.value)}/>}/>
+        <Fl l="Сумма договора (₸) — изменить вручную" ch={<MoneyInp value={c.contractAmount} onChange={v=>set('contractAmount',+v||0)}/>}/>
         <div style={{fontWeight:900,fontSize:26,color:'#3b82f6',letterSpacing:'-1px'}}>{fmtN(c.contractAmount)}₸</div>
       </div>
     )}
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+    <div className="r3">
       <Fl l="Miro"         ch={<Inp value={c.miroLink||''}    onChange={e=>set('miroLink',e.target.value)}    placeholder="https://miro.com/..."/>}/>
       <Fl l="Google Drive" ch={<Inp value={c.driveLink||''}   onChange={e=>set('driveLink',e.target.value)}   placeholder="https://drive.google.com/..."/>}/>
       <Fl l="Roadmap"      ch={<Inp value={c.roadmapLink||''} onChange={e=>set('roadmapLink',e.target.value)} placeholder="https://..."/>}/>
@@ -1123,7 +1129,7 @@ function PaymentsTab({ c, setC, pipeline, canEdit }) {
           {showAdd && (
             <div style={{background:'#f8fafc',borderRadius:13,padding:13,border:'1.5px solid #e2e8f0',marginTop:10}}>
               <Fl l="Название" ch={<Inp value={nPay.name} onChange={e=>setNPay(x=>({...x,name:e.target.value}))} placeholder="Предоплата 30%"/>}/>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              <div className="r2">
                 <Fl l="Сумма (₸)" ch={<Inp type="number" value={nPay.amount} onChange={e=>setNPay(x=>({...x,amount:e.target.value}))}/>}/>
                 <Fl l="Тип" ch={<Sel value={nPay.type} onChange={e=>setNPay(x=>({...x,type:e.target.value}))}><option value="stage">По этапу</option><option value="date">По дате</option><option value="manual">Вручную</option></Sel>}/>
               </div>
@@ -1147,11 +1153,11 @@ function ReassTab({ c, set, canEdit }) {
       <Tgl on={c.isReassignment} onClick={()=>canEdit&&set('isReassignment',!c.isReassignment)}/>
     </div>
     {c.isReassignment && <>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="r2">
         <Fl l="Жилой комплекс" ch={<Inp value={c.reassignmentComplex}    onChange={e=>set('reassignmentComplex',e.target.value)}/>}/>
         <Fl l="Застройщик"     ch={<Inp value={c.reassignmentDeveloper}   onChange={e=>set('reassignmentDeveloper',e.target.value)}/>}/>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <div className="r3">
         <Fl l="Сумма (₸)"         ch={<Inp type="number" value={c.reassignmentAmount} onChange={e=>set('reassignmentAmount',e.target.value)}/>}/>
         <Fl l="Остаток ипотеки (₸)" ch={<Inp type="number" value={c.mortgageBalance}   onChange={e=>set('mortgageBalance',e.target.value)}/>}/>
         <Fl l="Банк"              ch={<Inp value={c.reassignmentBank}    onChange={e=>set('reassignmentBank',e.target.value)}/>}/>
@@ -1426,7 +1432,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
         <span className="hint-icon">🤝</span>
         <div>Этап сопровождения — ведём клиента по шагам от заявки до выдачи. <b>Отмечайте выполненные пункты галочкой</b>, добавляйте комментарии и задачи. Прогресс считается автоматически.</div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:13}}>
+      <div className="r2" style={{marginBottom:13}}>
         <Fl l="Ответственный менеджер" ch={<Sel value={c.responsibleManager||''} onChange={e=>setC({...c,responsibleManager:e.target.value})} disabled={!canEdit}><option value="">Не назначен</option>{managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Sel>}/>
         <Fl l="Ипотечный специалист"   ch={<Inp value={c.mortgageSpecialist||''} onChange={e=>setC({...c,mortgageSpecialist:e.target.value})} placeholder="ФИО специалиста"/>}/>
       </div>
@@ -1514,7 +1520,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
                   <div style={{fontSize:12,color:isComplete?'#047857':'#3b82f6',marginTop:1}}>{isComplete?'Все выполнены ✓':`${doneCnt}/${items.length}`}</div>
                 </div>
                 <div style={{fontWeight:900,fontSize:22,color:isComplete?'#10b981':'#3b82f6'}}>{pct}%</div>
-                <Btn size="sm" variant="primary" onClick={()=>canEdit&&setC({...c,accompStageIndex:si})}>📍 Текущий</Btn>
+                {si !== (c.accompStageIndex||0) && <Btn size="sm" variant="primary" onClick={()=>{ if (!canEdit) return; setC({...c,accompStageIndex:si}); toast$('📍 Этап «' + STG[si] + '» теперь текущий') }}>📍 Сделать текущим</Btn>}
               </div>
 
               {!isComplete && (
@@ -1742,7 +1748,7 @@ function TasksTabC({ c, setC, user, canEdit }) {
     <div>
       {canEdit && (
         <div style={{background:'#f8fafc',borderRadius:12,padding:13,border:'1.5px solid #e2e8f0',marginBottom:13}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div className="r2">
             <Fl l="Тип" ch={<Sel value={nTask.type} onChange={e=>setNTask(x=>({...x,type:e.target.value}))}>{TASK_T.map(t=><option key={t}>{t}</option>)}</Sel>}/>
             <Fl l="Срок" ch={<Inp type="date" value={nTask.due} onChange={e=>setNTask(x=>({...x,due:e.target.value}))}/>}/>
           </div>
@@ -1856,6 +1862,12 @@ function DriveTab({ c, setC, user }) {
   async function handleUpload(e) {
     const file = e.target.files?.[0]
     if (!file) return
+    // Сервер режет 20 МБ — говорим об этом ДО загрузки, а не серверной ошибкой после
+    if (file.size > 20 * 1024 * 1024) {
+      setError('Файл больше 20 МБ — сожмите или разбейте на части')
+      e.target.value = ''
+      return
+    }
     setUploading(true)
     setUploadName(file.name)
     setError('')
@@ -2029,7 +2041,7 @@ function DriveTab({ c, setC, user }) {
       {/* Подсказка */}
       <div style={{marginTop:16,fontSize:11,color:'#94a3b8',background:'#f8fafc',borderRadius:9,padding:'9px 12px',border:'1px solid #e2e8f0'}}>
         <i className="ti ti-info-circle" style={{marginRight:5}}/>
-        Файлы сохраняются в Google Drive в папке клиента. Форматы: PDF, Word, Excel, изображения, ZIP (до 50 МБ)
+        Файлы сохраняются в папке клиента. Форматы: PDF, Word, Excel, изображения, ZIP (до 20 МБ)
       </div>
 
       <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
