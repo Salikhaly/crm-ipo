@@ -18,9 +18,26 @@ import { getSupabase } from '../../../lib/supabase'
 export const config = { api: { bodyParser: false } }
 
 // ── Google Auth singleton ────────────────────────────────────────────────────
+// Два режима:
+//  А) OAuth владельца (GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN) — для личного
+//     Gmail: файлы принадлежат владельцу и занимают его квоту. ПРИОРИТЕТНЫЙ режим:
+//     сервис-аккаунтам Google запретил загрузку файлов в личный Drive
+//     («Service Accounts do not have storage quota», политика 2025).
+//  Б) Сервис-аккаунт (GOOGLE_SERVICE_ACCOUNT_JSON) — работает только с Shared
+//     Drive (платный Google Workspace).
 let _auth = null
 function getDriveAuth() {
   if (_auth) return _auth
+  const cid  = process.env.GOOGLE_OAUTH_CLIENT_ID
+  const csec = process.env.GOOGLE_OAUTH_CLIENT_SECRET
+  const rtok = process.env.GOOGLE_OAUTH_REFRESH_TOKEN
+  if (cid && csec && rtok) {
+    const o = new google.auth.OAuth2(cid, csec)
+    o.setCredentials({ refresh_token: rtok })
+    _auth = o
+    return _auth
+  }
+
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
   if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON не задан')
 
@@ -237,8 +254,12 @@ export default withAuth(async function handler(req, res) {
 
   // Google Drive настроен? Если нет — работаем через Supabase Storage (fallback),
   // файлы больше не теряются с 503.
+  const oauthConfigured =
+    process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.GOOGLE_OAUTH_REFRESH_TOKEN
+  const saConfigured =
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_SERVICE_ACCOUNT_JSON !== 'placeholder'
   const driveConfigured =
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_SERVICE_ACCOUNT_JSON !== 'placeholder' &&
+    (oauthConfigured || saConfigured) &&
     process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID !== 'placeholder'
 
   // qa — только просмотр (симметрично PUT/DELETE клиентов)
