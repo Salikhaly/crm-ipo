@@ -1520,7 +1520,7 @@ function AccompTab({ c, setC, managers, canEdit, checklists, user, accIdx, setAc
                   <div style={{fontSize:12,color:isComplete?'#047857':'#3b82f6',marginTop:1}}>{isComplete?'Все выполнены ✓':`${doneCnt}/${items.length}`}</div>
                 </div>
                 <div style={{fontWeight:900,fontSize:22,color:isComplete?'#10b981':'#3b82f6'}}>{pct}%</div>
-                <Btn size="sm" variant="primary" onClick={()=>canEdit&&setC({...c,accompStageIndex:si})}>📍 Текущий</Btn>
+                {si !== (c.accompStageIndex||0) && <Btn size="sm" variant="primary" onClick={()=>{ if (!canEdit) return; setC({...c,accompStageIndex:si}); toast$('📍 Этап «' + STG[si] + '» теперь текущий') }}>📍 Сделать текущим</Btn>}
               </div>
 
               {!isComplete && (

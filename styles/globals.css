@@ -176,7 +176,7 @@ tbody tr:active td{background:#f8fafc}
 .search-card:active{transform:scale(.99)}
 
 /* ── TOAST ── */
-.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:11px 18px;border-radius:13px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.18);display:flex;align-items:center;gap:8px;white-space:nowrap;animation:toastIn .2s ease;max-width:calc(100vw - 32px)}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:11px 18px;border-radius:13px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.18);display:flex;align-items:center;gap:8px;white-space:normal;line-height:1.45;text-align:left;animation:toastIn .2s ease;max-width:calc(100vw - 32px)}
 @keyframes toastIn{from{transform:translateX(-50%) translateY(8px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
 .toast.err{background:#dc2626}
 

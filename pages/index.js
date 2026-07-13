@@ -1042,7 +1042,7 @@ export default function CRM() {
             <Btn variant="primary" size="sm" onClick={() => setModal({ type:'quick_client', c: emptyClient(user.manager_id||'') })}>
               <i className="ti ti-plus"/><span className="btn-text-desktop">Новый клиент</span>
             </Btn>
-            <Btn size="sm" onClick={loadAll} disabled={syncing}>
+            <Btn size="sm" onClick={loadAll} disabled={syncing} title="Обновить данные с сервера">
               <i className={`ti ti-refresh${syncing?' spin':''}`}/>
             </Btn>
           </div>
@@ -1050,6 +1050,16 @@ export default function CRM() {
           {/* Page content */}
           <div className="main-content" onTouchStart={onSwipeTouchStart} onTouchEnd={onSwipeTouchEnd}>
             {page==='dashboard' && <DashPage data={dashData} pipeline={pipeline} managers={managers} clients={myCl} onOpen={c => setSelClient(c)} onLoadDash={() => api.getDashboard().then(d => setDashData(d))}/>}
+            {page==='clients' && (fStage || fMgr || search) && (
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:11,padding:'8px 13px',fontSize:12.5,fontWeight:700,color:'#1d4ed8',flexWrap:'wrap'}}>
+                <i className="ti ti-filter" style={{fontSize:14}}/>
+                Показаны не все клиенты — действует фильтр{fStage ? `: ${pipeline.find(p=>p.id===fStage)?.l || fStage}` : ''}{fMgr ? ` · менеджер: ${mgrById[fMgr]?.name || ''}` : ''}{search ? ` · поиск: «${search}»` : ''}
+                <button onClick={()=>{setFStage('');setFMgr('');setSearch('')}}
+                  style={{marginLeft:'auto',border:'none',background:'#1d4ed8',color:'#fff',borderRadius:7,padding:'4px 11px',fontSize:11.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+                  Показать всех
+                </button>
+              </div>
+            )}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
             {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:clients} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge} onImport={()=>setModal({type:'import'})} onExportAll={()=>exportCsv()}/>}
             {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
@@ -2151,7 +2161,8 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
         <div style={{fontSize:12,color:'#94a3b8',marginBottom:12}}>Вся команда: поиск, фильтры, виды, импорт/экспорт, слияние дублей</div>
         <div style={{display:'flex',alignItems:'center',gap:10,background:'rgba(255,255,255,.1)',borderRadius:11,padding:'10px 13px',border:'1px solid rgba(255,255,255,.15)',marginBottom:9}}>
           <i className="ti ti-search" style={{color:'rgba(255,255,255,.6)',fontSize:18,flexShrink:0}}/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Начните вводить..." autoFocus
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Начните вводить..."
+            autoFocus={typeof window !== 'undefined' && window.matchMedia('(pointer:fine)').matches}
             style={{border:'none',background:'transparent',fontSize:15,color:'#fff',flex:1,outline:'none'}}/>
           {search && <button onClick={()=>setSearch('')} style={{border:'none',background:'rgba(255,255,255,.2)',color:'#fff',borderRadius:7,width:26,height:26,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}>
             <i className="ti ti-x" style={{fontSize:13}}/>
