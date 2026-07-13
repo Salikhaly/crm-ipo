@@ -864,15 +864,19 @@ export default function CRM() {
   }, [myCl, clients, isMgr, user, search, fMgr, fStage])
 
   // Единый проход по задачам вместо двух flatMap
-  const { openTasks, overdueTasks } = useMemo(() => {
+  const { openTasks, overdueTasks, hotTasks } = useMemo(() => {
     const td = today()
-    let open = 0, overdue = 0
+    let open = 0, overdue = 0, hot = 0
     for (const c of myCl) {
       for (const t of c.tasks || []) {
-        if (!t.done) { open++; if (t.due && t.due < td) overdue++ }
+        if (!t.done) {
+          open++
+          if (t.due && t.due < td) { overdue++; hot++ }
+          else if (t.due === td) hot++
+        }
       }
     }
-    return { openTasks: open, overdueTasks: overdue }
+    return { openTasks: open, overdueTasks: overdue, hotTasks: hot }
   }, [myCl])
 
   // Memoized stage counts — O(n) one pass instead of O(stages×n) every render
@@ -898,7 +902,8 @@ export default function CRM() {
     { id:'search',    l:'Список клиентов', i:'ti-list-details' },
     { id:'wa',        l:'WhatsApp',           i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
     { id:'calc',      l:'Калькулятор',        i:'ti-calculator' },
-    { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
+    // Бейдж — только горящее (просрочено+сегодня): все открытые были постоянным шумом
+    { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:hotTasks, warn:overdueTasks>0 },
     { id:'kpi',       l:'KPI',               i:'ti-chart-bar' },
     ...(isAdmin ? [{ id:'admin', l:'Панель техника', i:'ti-settings-2' }] : []),
     // head видит только настройки калькулятора, без управления пользователями

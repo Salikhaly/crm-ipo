@@ -216,6 +216,8 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     applyStage(nid)
   }
   function applyStage(nid, reason) {
+    // Для «Отменить» в тосте: возвращаем этап, ленту и задачи как были
+    const before = { stage: c.stage, comments: c.comments || [], tasks: c.tasks || [] }
     const patch = { stage: nid }
     // Смена этапа пишется в ленту — в карточке видна вся история движения
     const fromL = pl.find(p => p.id === c.stage)?.l || c.stage
@@ -233,6 +235,10 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
       toast$('✅ Задача: ' + at.text)
     }
     setC(x => ({ ...x, ...patch })); setIsDirty(true); setHasChanges(true)
+    const toL2 = pl.find(p => p.id === nid)?.l || nid
+    toast$('📍 Этап: ' + toL2, 'ok', { label: 'Отменить', fn: () => {
+      setC(x => ({ ...x, ...before })); setIsDirty(true); setHasChanges(true)
+    }})
   }
 
   const stageObj = pl.find(p => p.id === c.stage)
@@ -1856,6 +1862,12 @@ function DriveTab({ c, setC, user }) {
   async function handleUpload(e) {
     const file = e.target.files?.[0]
     if (!file) return
+    // Сервер режет 20 МБ — говорим об этом ДО загрузки, а не серверной ошибкой после
+    if (file.size > 20 * 1024 * 1024) {
+      setError('Файл больше 20 МБ — сожмите или разбейте на части')
+      e.target.value = ''
+      return
+    }
     setUploading(true)
     setUploadName(file.name)
     setError('')
@@ -2029,7 +2041,7 @@ function DriveTab({ c, setC, user }) {
       {/* Подсказка */}
       <div style={{marginTop:16,fontSize:11,color:'#94a3b8',background:'#f8fafc',borderRadius:9,padding:'9px 12px',border:'1px solid #e2e8f0'}}>
         <i className="ti ti-info-circle" style={{marginRight:5}}/>
-        Файлы сохраняются в Google Drive в папке клиента. Форматы: PDF, Word, Excel, изображения, ZIP (до 50 МБ)
+        Файлы сохраняются в папке клиента. Форматы: PDF, Word, Excel, изображения, ZIP (до 20 МБ)
       </div>
 
       <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
