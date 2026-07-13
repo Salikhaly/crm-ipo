@@ -79,10 +79,11 @@ async function resolveFolders(drive, rootId, clientId, folderName) {
 async function getOrCreateManagerFolder(drive, rootId, managerName) {
   // Кавычки/бэкслеши ломают q-синтаксис Drive API (O'Brian → 500)
   const safeName = (managerName || 'Без менеджера').trim().replace(/['\\]/g, '') || 'Без менеджера'
-  const marker   = `crm_manager_${safeName}`
 
+  // Маркер — в appProperties: поле description в поиске Drive API v3 не
+  // поддерживается (files.list отвечал 400 «Invalid Value, location: q»)
   const search = await drive.files.list({
-    q: `'${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and description='${marker}' and trashed=false`,
+    q: `'${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and appProperties has { key='crmManager' and value='${safeName}' } and trashed=false`,
     fields: 'files(id, name, webViewLink)',
     spaces: 'drive',
   })
@@ -91,10 +92,10 @@ async function getOrCreateManagerFolder(drive, rootId, managerName) {
 
   const created = await drive.files.create({
     requestBody: {
-      name:        safeName,
-      mimeType:    'application/vnd.google-apps.folder',
-      parents:     [rootId],
-      description: marker,
+      name:          safeName,
+      mimeType:      'application/vnd.google-apps.folder',
+      parents:       [rootId],
+      appProperties: { crmManager: safeName },
     },
     fields: 'id, name, webViewLink',
   })
@@ -104,9 +105,10 @@ async function getOrCreateManagerFolder(drive, rootId, managerName) {
 
 // ── Получить или создать папку клиента внутри папки менеджера ────────────────
 async function getOrCreateClientFolder(drive, clientId, folderName, managerFolderId) {
-  // Ищем папку по clientId в описании (надёжнее чем по имени)
+  // Ищем папку по clientId в appProperties (description в поиске v3 не работает)
+  const safeCid = String(clientId).replace(/['\\]/g, '')
   const search = await drive.files.list({
-    q: `'${managerFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and description='crm_client_${clientId}' and trashed=false`,
+    q: `'${managerFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and appProperties has { key='crmClientId' and value='${safeCid}' } and trashed=false`,
     fields: 'files(id, name, webViewLink)',
     spaces: 'drive',
   })
@@ -120,9 +122,9 @@ async function getOrCreateClientFolder(drive, clientId, folderName, managerFolde
   const created = await drive.files.create({
     requestBody: {
       name,
-      mimeType:    'application/vnd.google-apps.folder',
-      parents:     [managerFolderId],
-      description: `crm_client_${clientId}`,   // маркер для поиска
+      mimeType:      'application/vnd.google-apps.folder',
+      parents:       [managerFolderId],
+      appProperties: { crmClientId: safeCid },   // маркер для поиска
     },
     fields: 'id, name, webViewLink',
   })
