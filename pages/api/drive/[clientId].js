@@ -207,6 +207,14 @@ async function storagePost(sb, clientId, req, res) {
   })
 }
 
+// ID корневой папки: принимает и чистый ID, и вставленную ссылку или ID
+// с хвостом параметров («1abc…?dmr=1&ec=…» из адресной строки Drive)
+function rootFolderId() {
+  const raw  = String(process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '')
+  const tail = raw.includes('/folders/') ? raw.split('/folders/')[1] : raw
+  return tail.split(/[?&#/\s]/)[0].trim()
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 export default withAuth(async function handler(req, res) {
   const { clientId } = req.query
@@ -218,8 +226,14 @@ export default withAuth(async function handler(req, res) {
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_SERVICE_ACCOUNT_JSON !== 'placeholder' &&
     process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID !== 'placeholder'
 
-  // Проверяем доступ к клиенту для ролей с ограничениями
-  if (role === 'manager' || role === 'specialist') {
+  // qa — только просмотр (симметрично PUT/DELETE клиентов)
+  if (role === 'qa' && req.method !== 'GET') {
+    return res.status(403).json({ error: 'Роль qa — только просмотр' })
+  }
+
+  // Менеджеры — командный доступ (файлы всех клиентов, как и карточки, решение v13).
+  // Специалист — только клиенты, где он ответственный.
+  if (role === 'specialist') {
     const sb = getSupabase()
     const { data: client } = await sb
       .from('clients')
@@ -229,11 +243,9 @@ export default withAuth(async function handler(req, res) {
 
     if (!client) return res.status(404).json({ error: 'Клиент не найден' })
 
-    const allowed = role === 'manager'
-      ? client.manager === mid
-      : client.responsible_manager === mid
-
-    if (!allowed) return res.status(403).json({ error: 'Нет доступа к файлам этого клиента' })
+    if (client.responsible_manager !== mid) {
+      return res.status(403).json({ error: 'Нет доступа к файлам этого клиента' })
+    }
   }
 
   // ── Drive не настроен → Supabase Storage (файлы не теряются) ────────────────
@@ -263,7 +275,7 @@ export default withAuth(async function handler(req, res) {
   if (req.method === 'GET') {
     try {
       const drive  = getDrive()
-      const rootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+      const rootId = rootFolderId()
 
       const { managerFolder, folder } = await resolveFolders(drive, rootId, clientId, req.query.folderName)
 
@@ -298,7 +310,7 @@ export default withAuth(async function handler(req, res) {
       if (!file) return res.status(400).json({ error: 'Файл не передан' })
 
       const drive  = getDrive()
-      const rootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+      const rootId = rootFolderId()
 
       const { managerFolder, folder } = await resolveFolders(drive, rootId, clientId, folderName)
 
