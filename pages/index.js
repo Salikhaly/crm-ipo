@@ -2161,6 +2161,7 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
   const [sortD, setSortD] = useState(-1)
   const [sel,   setSel]   = useState(() => new Set())
   const [fTag,  setFTag]  = useState('')
+  const [seg,   setSeg]   = useState('all')  // all | accomp | lead — сегмент базы
   const [massStage, setMassStage] = useState('')
   const [massMgr,   setMassMgr]   = useState('')
 
@@ -2188,10 +2189,18 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
     return pairs.slice(0, 10)
   }, [clients])
 
-  const shown = useMemo(
-    () => fTag ? clients.filter(c => (c.tags||[]).includes(fTag)) : clients,
-    [clients, fTag]
-  )
+  const shown = useMemo(() => {
+    let r = fTag ? clients.filter(c => (c.tags||[]).includes(fTag)) : clients
+    // «На сопровождении» = подписан пакет услуг (есть тип договора); «Лиды» — без него
+    if (seg === 'accomp') r = r.filter(c => c.contractType)
+    else if (seg === 'lead') r = r.filter(c => !c.contractType)
+    return r
+  }, [clients, fTag, seg])
+  const segCounts = useMemo(() => ({
+    all:    clients.length,
+    accomp: clients.filter(c => c.contractType).length,
+    lead:   clients.filter(c => !c.contractType).length,
+  }), [clients])
 
   const stageIdx = useMemo(() => Object.fromEntries(pl.map((p,i)=>[p.id,i])), [pl])
   const mgrName  = id => managers.find(m=>m.id===id)?.name || ''
@@ -2321,6 +2330,16 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
         </div>
       )}
 
+      {clients.length > 0 && (
+        <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+          {[['all','Все','#334155'],['accomp','На сопровождении','#0d9488'],['lead','Лиды (без договора)','#d97706']].map(([id,l,col])=>(
+            <button key={id} onClick={()=>setSeg(id)}
+              style={{display:'inline-flex',alignItems:'center',gap:6,padding:'7px 13px',borderRadius:10,border:`1.5px solid ${seg===id?col:'#e2e8f0'}`,background:seg===id?col+'14':'#fff',color:seg===id?col:'#64748b',fontSize:12.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit',transition:'all .13s'}}>
+              {l}<span style={{background:seg===id?col:'#e2e8f0',color:seg===id?'#fff':'#64748b',borderRadius:20,padding:'0 7px',fontSize:11,fontWeight:800}}>{segCounts[id]}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {clients.length > 0 && (
         <div style={{fontSize:13,color:'#64748b',fontWeight:600,marginBottom:10,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
           <i className="ti ti-list" style={{fontSize:14}}/>

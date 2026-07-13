@@ -425,7 +425,9 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
                 <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
                   <span style={{fontSize:10,fontWeight:700,color:stColor,background:stColor+'18',borderRadius:6,padding:'1px 6px'}}>{WA_STATUSES.find(s=>s.id===chat.status)?.l||chat.status}</span>
                   {mgr && <span style={{fontSize:10,color:'#64748b',display:'flex',alignItems:'center',gap:2}}><i className="ti ti-user" style={{fontSize:9}}/>{mgr.name}</span>}
-                  {lc && <span style={{fontSize:10,color:'#25d366',display:'flex',alignItems:'center',gap:2}}><i className="ti ti-link" style={{fontSize:9}}/>{lc.fio}</span>}
+                  {lc
+                    ? <span style={{fontSize:10,color:'#25d366',display:'flex',alignItems:'center',gap:2}}><i className="ti ti-link" style={{fontSize:9}}/>{lc.fio}</span>
+                    : <span style={{fontSize:10,color:'#d97706',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:6,padding:'0 5px',fontWeight:700}}>не в базе</span>}
                 </div>
               </div>
             </div>
@@ -488,8 +490,9 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
                     }))
                     setShowNewLead(true)
                   }}
-                  style={{border:'none',background:'#25d366',color:'#fff',borderRadius:8,padding:'6px 10px',cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'inherit',display:'flex',alignItems:'center',gap:5,flexShrink:0}}>
-                  <i className="ti ti-user-plus" style={{fontSize:14}}/><span className="btn-text-desktop">Клиент</span>
+                  title="Завести клиента в базе CRM"
+                  style={{border:'none',background:'#25d366',color:'#fff',borderRadius:9,padding:'7px 12px',cursor:'pointer',fontSize:12.5,fontWeight:800,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6,flexShrink:0,boxShadow:'0 2px 8px rgba(37,211,102,.35)'}}>
+                  <i className="ti ti-database-plus" style={{fontSize:15}}/>В CRM базу
                 </button>}
 
             <a href={`https://wa.me/${(selChat.phone||'').replace(/\D/g,'')}`} target="_blank" rel="noreferrer"
@@ -524,11 +527,20 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
             </div>
           )}
 
+          {/* Чат не в базе — предложение перевести */}
+          {!linkedClient && (
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'9px 13px',background:'#fffbeb',borderBottom:'1px solid #fde68a',flexShrink:0}}>
+              <i className="ti ti-info-circle" style={{fontSize:16,color:'#d97706',flexShrink:0}}/>
+              <div style={{flex:1,fontSize:12,color:'#92400e',lineHeight:1.4}}>Чат ещё не в базе CRM. Если это реальный клиент — переведите его кнопкой «В CRM базу» вверху.</div>
+            </div>
+          )}
+
           {/* Messages */}
           <div className="wa-msgs">
             {messages.length === 0 && (
-              <div style={{textAlign:'center',color:'#64748b',fontSize:13,padding:'30px',background:'rgba(255,255,255,.6)',borderRadius:12,margin:'20px auto',maxWidth:240}}>
-                Нет сообщений.<br/>Клиент ещё не писал.
+              <div style={{textAlign:'center',color:'#64748b',fontSize:13,padding:'26px 22px',background:'rgba(255,255,255,.85)',borderRadius:14,margin:'20px auto',maxWidth:260,boxShadow:'0 2px 12px rgba(0,0,0,.06)'}}>
+                <i className="ti ti-message-2 " style={{fontSize:30,color:'#25d366',opacity:.4,display:'block',marginBottom:8}}/>
+                Здесь появится переписка.<br/>Напишите первым или дождитесь сообщения клиента.
               </div>
             )}
             {messages.map(msg => renderMessage(msg))}

@@ -89,7 +89,10 @@ export default async function handler(req, res) {
       .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1')
     // idMessage/timestamp приходят в КОРНЕ тела вебхука (не в messageData!) —
     // раньше msgId был пуст и входящие сообщения не сохранялись вовсе
-    const msgId     = body.idMessage ?? messageData?.idMessage ?? ''
+    // Стабильный id: если Green не прислал idMessage — строим из chatId+времени,
+    // чтобы сообщение ВСЕГДА сохранилось (иначе входящие молча пропадали)
+    const msgIdRaw  = body.idMessage ?? messageData?.idMessage ?? ''
+    const msgId     = msgIdRaw || ('wa_' + chatId.replace('@c.us','') + '_' + (body.timestamp || Date.now()))
     const ts        = body.timestamp ?? messageData?.timestamp
     const sentAt    = ts && Number.isInteger(ts)
       ? new Date(ts * 1000).toISOString()
@@ -181,6 +184,10 @@ export default async function handler(req, res) {
       // Ранее здесь был upsert по phone: без unique constraint он падал (42P10),
       // а с constraint — затирал бы карточку существующего клиента (fio, stage,
       // comments → пустые). Существующего клиента не трогаем — только линкуем чат.
+      // Решение владельца: не всякий, кто написал — реальный лид. Клиента в базе
+      // НЕ создаём автоматически (иначе база засоряется). Если номер уже есть в
+      // базе — привязываем чат к нему. Нет — чат живёт в мессенджере (client_id
+      // null), менеджер переводит его в базу кнопкой «В CRM базу».
       const tail = String(phone || '').replace(/\D/g, '').slice(-10)
       let clientId = null
       if (tail.length === 10) {
@@ -188,29 +195,6 @@ export default async function handler(req, res) {
           .from('clients').select('id').ilike('phone', '%' + tail).limit(1)
         clientId = found?.[0]?.id || null
       }
-      if (!clientId) {
-        const { data: newClient, error: clientErr } = await sb
-          .from('clients')
-          .insert({
-            phone,
-            fio:            name || phone,
-            source:         'whatsapp',
-            stage:          'new_lead',
-            is_whatsapp:    true,
-            wa_msg_preview: preview,
-            date_in:        now.split('T')[0],
-            created_at:     now,
-            comments:       [],
-            tasks:          [],
-            payments:       [],
-            accomp_stages:  {},
-          })
-          .select('id')
-          .single()
-        if (clientErr) console.error('Client insert error:', clientErr.message)
-        clientId = newClient?.id || null
-      }
-      // client_id: null оставляет чат в очереди для ручного назначения
       await sb.from('wa_chats').upsert({
         id:              chatId,
         phone,
@@ -236,8 +220,8 @@ export default async function handler(req, res) {
       }).eq('id', chatId)
     }
 
-    // ── Сохраняем сообщение (защита от дублей через id) ──────
-    if (msgId) {
+    // ── Сохраняем сообщение ВСЕГДА (msgId теперь всегда есть; дубли — по id) ──
+    {
       const { error: insertErr } = await sb.from('wa_messages').upsert({
         id:         msgId,
         chat_id:    chatId,
@@ -283,6 +267,8 @@ export default async function handler(req, res) {
               if (n < bestN) { bestN = n; best = m.id }
             }
             await sb.from('wa_chats').update({ assigned_to: best }).eq('id', chatId)
+            // Клиента в базе может ещё не быть (создаётся при переводе) — тогда
+            // update просто ничего не затронет, это не ошибка
             await sb.from('clients').update({ manager: best }).eq('phone', phone).is('manager', null)
           }
         }
