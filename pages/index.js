@@ -27,6 +27,7 @@ import { CalcPage } from '../features/calc'
 import { WAPage } from '../features/wa'
 import { AdminPage, CalcSettingsPanel } from '../features/admin'
 import { ClientDetail } from '../features/clients'
+import { HelpPage } from '../features/help'
 
 // ═══ MAIN APP ═════════════════════════════════════════════════════
 export default function CRM() {
@@ -921,6 +922,7 @@ export default function CRM() {
     // Бейдж — только горящее (просрочено+сегодня): все открытые были постоянным шумом
     { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:hotTasks, warn:overdueTasks>0 },
     { id:'kpi',       l:'KPI',               i:'ti-chart-bar' },
+    { id:'help',      l:'Помощь',            i:'ti-help' },
     ...(isAdmin ? [{ id:'admin', l:'Панель техника', i:'ti-settings-2' }] : []),
     // head видит только настройки калькулятора, без управления пользователями
     ...(isHead && !isAdmin ? [{ id:'calcadmin', l:'Настройки калькулятора', i:'ti-adjustments' }] : []),
@@ -1047,16 +1049,6 @@ export default function CRM() {
                 </Sel>
               </div>
             </>}
-            {page === 'search' && isSuperUser && (
-              <Btn size="sm" onClick={() => setModal({ type:'import' })} title="Импорт клиентов из Excel">
-                <i className="ti ti-upload"/><span className="btn-text-desktop">Импорт</span>
-              </Btn>
-            )}
-            {page === 'search' && isSuperUser && (
-              <Btn size="sm" onClick={() => exportCsv()} title="Выгрузить список в Excel">
-                <i className="ti ti-download"/><span className="btn-text-desktop">Экспорт</span>
-              </Btn>
-            )}
             <NotifBell clients={myCl} waUnread={waUnread} onOpen={c => setSelClient(c)} goWa={() => navTo('wa')} goTasks={() => navTo('tasks')}/>
             <GlobalSearch clients={clients} pipeline={pipeline} onOpen={c => setSelClient(c)}/>
             <Btn variant="primary" size="sm" onClick={() => setModal({ type:'quick_client', c: emptyClient(user.manager_id||'') })}>
@@ -1086,6 +1078,7 @@ export default function CRM() {
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod} pipeline={pipeline}/>}
+            {page==='help'      && <HelpPage onStartTour={()=>setShowTour(true)}/>}
             {page==='admin'     && isAdmin && <AdminPage managers={managers} pipeline={pipeline} checklists={checklists} users={users} user={user} onSaveMgr={saveMgr} onDelMgr={delMgr} onSaveUser={saveUser} onDelUser={delUser} onSavePL={savePL} onSaveCL={saveCL} onModal={setModal} reload={loadAll} syncing={syncing}/>}
             {page==='calcadmin' && isHead && !isAdmin && (
               <div style={{maxWidth:900,margin:'0 auto',padding:'0 4px'}}>
@@ -1426,6 +1419,7 @@ function ImportModal({ onImport, onClose, syncing, pipeline }) {
 function GlobalSearch({ clients, pipeline, onOpen }) {
   const [open, setOpen] = useState(false)
   const [q, setQ]       = useState('')
+  const [active, setActive] = useState(0)
   const inputRef = useRef(null)
   const pl = pipeline || PIPELINE_DEFAULT
 
@@ -1439,7 +1433,7 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
   }, [])
 
   useEffect(() => {
-    if (open) { setQ(''); setTimeout(() => inputRef.current?.focus(), 60) }
+    if (open) { setQ(''); setActive(0); setTimeout(() => inputRef.current?.focus(), 60) }
   }, [open])
 
   const results = useMemo(() => {
@@ -1455,6 +1449,7 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
   }, [q, clients])
 
   function pick(c) { setOpen(false); onOpen(c) }
+  useEffect(() => { setActive(0) }, [q])
 
   return (
     <>
@@ -1472,7 +1467,7 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
             <div style={{display:'flex',alignItems:'center',gap:10,padding:'13px 16px',borderBottom:'1.5px solid #e2e8f0'}}>
               <i className="ti ti-search" style={{color:'#94a3b8',fontSize:17,flexShrink:0}}/>
               <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && results[0]) pick(results[0]) }}
+                onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a+1, results.length-1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a-1, 0)) } else if (e.key === 'Enter' && results[active]) pick(results[active]) }}
                 placeholder="Имя, телефон, ИИН или тег..."
                 style={{flex:1,border:'none',outline:'none',fontSize:15,color:'#0f172a',fontFamily:'inherit',background:'transparent'}}/>
               <span style={{fontSize:10,color:'#94a3b8',background:'#f1f5f9',borderRadius:5,padding:'2px 6px',flexShrink:0}}>Esc</span>
@@ -1480,13 +1475,11 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
             {q.trim().length >= 2 && results.length === 0 && (
               <div style={{padding:'18px 16px',fontSize:13,color:'#94a3b8',textAlign:'center'}}>Ничего не найдено по «{q}»</div>
             )}
-            {results.map(c => {
+            {results.map((c, i) => {
               const p = pl.find(x => x.id === c.stage)
               return (
-                <div key={c.id} onClick={() => pick(c)}
-                  style={{display:'flex',alignItems:'center',gap:10,padding:'11px 16px',borderBottom:'1px solid #f1f5f9',cursor:'pointer',transition:'background .1s'}}
-                  onMouseEnter={e => e.currentTarget.style.background='#f8fafc'}
-                  onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                <div key={c.id} onClick={() => pick(c)} onMouseEnter={()=>setActive(i)}
+                  style={{display:'flex',alignItems:'center',gap:10,padding:'11px 16px',borderBottom:'1px solid #f1f5f9',cursor:'pointer',transition:'background .1s',background:i===active?'#eff6ff':'transparent'}}>
                   <div style={{width:32,height:32,borderRadius:9,background:(p?.c||'#3b82f6')+'22',color:p?.c||'#3b82f6',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:13,flexShrink:0}}>{c.fio?c.fio[0]:'?'}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontWeight:700,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.fio||'Без имени'}</div>
@@ -1636,12 +1629,13 @@ function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
     { id:'clients',   l:'Клиенты',    i:'ti-layout-kanban' },
     { id:'wa',        l:'WhatsApp',   i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
     { id:'tasks',     l:'Задачи',     i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
-    { id:'more',      l:'Ещё',        i:'ti-dots', more:true, active:['search','kpi','calc'].includes(page) },
+    { id:'more',      l:'Ещё',        i:'ti-dots', more:true, active:['search','kpi','calc','help'].includes(page) },
   ]
   const MORE = [
     { id:'calc',   l:'Калькулятор',     i:'ti-calculator',   d:'Расчёты ипотеки и налогов' },
     { id:'search', l:'Список клиентов', i:'ti-list-details', d:'Поиск, фильтры, импорт/экспорт' },
     { id:'kpi',    l:'KPI',             i:'ti-chart-bar',    d:'Отчёт по воронке и менеджерам' },
+    { id:'help',   l:'Помощь',          i:'ti-help',         d:'Как работать в CRM — все подсказки' },
   ]
   return (
     <nav className="bot-nav" style={{background:'#fff',borderTop:'1.5px solid #e2e8f0',position:'fixed',bottom:0,left:0,right:0,zIndex:200}}>
@@ -2167,6 +2161,7 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
   const [sortD, setSortD] = useState(-1)
   const [sel,   setSel]   = useState(() => new Set())
   const [fTag,  setFTag]  = useState('')
+  const [seg,   setSeg]   = useState('all')  // all | accomp | lead — сегмент базы
   const [massStage, setMassStage] = useState('')
   const [massMgr,   setMassMgr]   = useState('')
 
@@ -2194,10 +2189,18 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
     return pairs.slice(0, 10)
   }, [clients])
 
-  const shown = useMemo(
-    () => fTag ? clients.filter(c => (c.tags||[]).includes(fTag)) : clients,
-    [clients, fTag]
-  )
+  const shown = useMemo(() => {
+    let r = fTag ? clients.filter(c => (c.tags||[]).includes(fTag)) : clients
+    // «На сопровождении» = подписан пакет услуг (есть тип договора); «Лиды» — без него
+    if (seg === 'accomp') r = r.filter(c => c.contractType)
+    else if (seg === 'lead') r = r.filter(c => !c.contractType)
+    return r
+  }, [clients, fTag, seg])
+  const segCounts = useMemo(() => ({
+    all:    clients.length,
+    accomp: clients.filter(c => c.contractType).length,
+    lead:   clients.filter(c => !c.contractType).length,
+  }), [clients])
 
   const stageIdx = useMemo(() => Object.fromEntries(pl.map((p,i)=>[p.id,i])), [pl])
   const mgrName  = id => managers.find(m=>m.id===id)?.name || ''
@@ -2234,10 +2237,12 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
     try { return JSON.parse(localStorage.getItem('crm_views') || '[]') } catch(e) { return [] }
   })
   function persistViews(v) { setViews(v); try { localStorage.setItem('crm_views', JSON.stringify(v)) } catch(e) {} }
+  const [newViewName, setNewViewName] = useState(null)
   function addView() {
-    const name = window.prompt('Название вида (например «Горячие Instagram»):')
-    if (!name || !name.trim()) return
-    persistViews([...views.filter(v => v.name !== name.trim()), { name: name.trim(), search, fStage, fMgr, fTag, view }])
+    const name = (newViewName || '').trim()
+    if (!name) return
+    persistViews([...views.filter(v => v.name !== name), { name, search, fStage, fMgr, fTag, view }])
+    setNewViewName(null)
   }
   function applyView(v) {
     setSearch(v.search || ''); setFStage(v.fStage || ''); setFMgr(v.fMgr || '')
@@ -2279,10 +2284,20 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
             <i className="ti ti-x" style={{fontSize:10,color:'#94a3b8',cursor:'pointer'}} onClick={()=>delView(v.name)}/>
           </span>
         ))}
-        <button onClick={addView}
-          style={{display:'inline-flex',alignItems:'center',gap:5,background:'transparent',border:'1.5px dashed #cbd5e1',borderRadius:20,padding:'4px 11px',fontSize:11.5,fontWeight:700,color:'#64748b',cursor:'pointer',fontFamily:'inherit'}}>
-          <i className="ti ti-bookmark-plus" style={{fontSize:12}}/>Сохранить вид
-        </button>
+        {newViewName === null ? (
+          <button onClick={()=>setNewViewName('')}
+            style={{display:'inline-flex',alignItems:'center',gap:5,background:'transparent',border:'1.5px dashed #cbd5e1',borderRadius:20,padding:'4px 11px',fontSize:11.5,fontWeight:700,color:'#64748b',cursor:'pointer',fontFamily:'inherit'}}>
+            <i className="ti ti-bookmark-plus" style={{fontSize:12}}/>Сохранить вид
+          </button>
+        ) : (
+          <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
+            <input autoFocus value={newViewName} onChange={e=>setNewViewName(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter')addView();if(e.key==='Escape')setNewViewName(null)}}
+              placeholder="Название вида" style={{border:'1.5px solid #cbd5e1',borderRadius:20,padding:'4px 11px',fontSize:11.5,fontFamily:'inherit',outline:'none',width:150}}/>
+            <button onClick={addView} style={{border:'none',background:'#3b82f6',color:'#fff',borderRadius:20,padding:'5px 10px',fontSize:11.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>OK</button>
+            <button onClick={()=>setNewViewName(null)} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:16}}>×</button>
+          </span>
+        )}
       </div>
 
       {/* Импорт / Экспорт — дублируют кнопки шапки, но с подписями (их искали и не находили) */}
@@ -2315,6 +2330,16 @@ function SearchPage({ clients, managers, pipeline, checklists, search, setSearch
         </div>
       )}
 
+      {clients.length > 0 && (
+        <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+          {[['all','Все','#334155'],['accomp','На сопровождении','#0d9488'],['lead','Лиды (без договора)','#d97706']].map(([id,l,col])=>(
+            <button key={id} onClick={()=>setSeg(id)}
+              style={{display:'inline-flex',alignItems:'center',gap:6,padding:'7px 13px',borderRadius:10,border:`1.5px solid ${seg===id?col:'#e2e8f0'}`,background:seg===id?col+'14':'#fff',color:seg===id?col:'#64748b',fontSize:12.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit',transition:'all .13s'}}>
+              {l}<span style={{background:seg===id?col:'#e2e8f0',color:seg===id?'#fff':'#64748b',borderRadius:20,padding:'0 7px',fontSize:11,fontWeight:800}}>{segCounts[id]}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {clients.length > 0 && (
         <div style={{fontSize:13,color:'#64748b',fontWeight:600,marginBottom:10,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
           <i className="ti ti-list" style={{fontSize:14}}/>
@@ -2637,7 +2662,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
           <div className="mg2" style={{marginBottom:10}}>
             <Sel value={newTask.clientId} onChange={e=>setNewTask(t=>({...t,clientId:e.target.value}))}>
               <option value="">— выберите клиента —</option>
-              {clients.map(c=><option key={c.id} value={c.id}>{c.fio||c.phone||'Без имени'}</option>)}
+              {[...clients].sort((a,b)=>String(a.fio||a.phone||'').localeCompare(String(b.fio||b.phone||''),'ru')).map(c=><option key={c.id} value={c.id}>{c.fio||c.phone||'Без имени'}</option>)}
             </Sel>
             <Inp placeholder="Комментарий (необязательно)" value={newTask.note} onChange={e=>setNewTask(t=>({...t,note:e.target.value}))}/>
           </div>

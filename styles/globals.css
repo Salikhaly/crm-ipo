@@ -372,7 +372,7 @@ body{font-feature-settings:'cv02','cv03','cv04','cv11';letter-spacing:-.01em}
   content:'';position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);
   border:6px solid transparent;border-top-color:#0f172a;opacity:0;transition:opacity .16s;z-index:1000;
 }
-.help-tip:hover::after,.help-tip:hover::before{opacity:1}
+.help-tip:hover::after,.help-tip:hover::before,.help-tip:focus::after,.help-tip:focus::before,.help-tip:active::after,.help-tip:active::before{opacity:1}
 
 /* Пустые состояния — крупная понятная заглушка */
 .empty-state{
