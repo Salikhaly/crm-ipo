@@ -402,10 +402,11 @@ export default function CRM() {
       const cur = selWaChatRef.current
       if (!cur?.id) return
       const requestedChatId = cur.id  // фиксируем на момент запроса
-      // Используем id последнего сообщения как курсор (надёжнее чем sent_at при clock skew)
+      // Курсор — sent_at последнего сообщения: id у Green API не упорядочены,
+      // и фильтр .gt(id) пропускал новые сообщения. Дубли отсеивает merge по id.
       setWaMessages(prev => {
         const lastMsg = prev.length ? prev[prev.length - 1] : null
-        const qs      = lastMsg ? `&after_id=${encodeURIComponent(lastMsg.id)}` : ''
+        const qs      = lastMsg && lastMsg.sent_at ? `&after=${encodeURIComponent(lastMsg.sent_at)}` : ''
         api.getWaMessages(requestedChatId, qs).then(d => {
           // Пользователь успел переключиться на другой чат, пока ответ был в пути —
           // не вливаем сообщения старого чата в список нового
