@@ -27,6 +27,7 @@ import { CalcPage } from '../features/calc'
 import { WAPage } from '../features/wa'
 import { AdminPage, CalcSettingsPanel } from '../features/admin'
 import { ClientDetail } from '../features/clients'
+import { HelpPage } from '../features/help'
 
 // ═══ MAIN APP ═════════════════════════════════════════════════════
 export default function CRM() {
@@ -921,6 +922,7 @@ export default function CRM() {
     // Бейдж — только горящее (просрочено+сегодня): все открытые были постоянным шумом
     { id:'tasks',     l:'Задачи',             i:'ti-checkbox', cnt:hotTasks, warn:overdueTasks>0 },
     { id:'kpi',       l:'KPI',               i:'ti-chart-bar' },
+    { id:'help',      l:'Помощь',            i:'ti-help' },
     ...(isAdmin ? [{ id:'admin', l:'Панель техника', i:'ti-settings-2' }] : []),
     // head видит только настройки калькулятора, без управления пользователями
     ...(isHead && !isAdmin ? [{ id:'calcadmin', l:'Настройки калькулятора', i:'ti-adjustments' }] : []),
@@ -1076,6 +1078,7 @@ export default function CRM() {
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod} pipeline={pipeline}/>}
+            {page==='help'      && <HelpPage onStartTour={()=>setShowTour(true)}/>}
             {page==='admin'     && isAdmin && <AdminPage managers={managers} pipeline={pipeline} checklists={checklists} users={users} user={user} onSaveMgr={saveMgr} onDelMgr={delMgr} onSaveUser={saveUser} onDelUser={delUser} onSavePL={savePL} onSaveCL={saveCL} onModal={setModal} reload={loadAll} syncing={syncing}/>}
             {page==='calcadmin' && isHead && !isAdmin && (
               <div style={{maxWidth:900,margin:'0 auto',padding:'0 4px'}}>
@@ -1626,12 +1629,13 @@ function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
     { id:'clients',   l:'Клиенты',    i:'ti-layout-kanban' },
     { id:'wa',        l:'WhatsApp',   i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
     { id:'tasks',     l:'Задачи',     i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
-    { id:'more',      l:'Ещё',        i:'ti-dots', more:true, active:['search','kpi','calc'].includes(page) },
+    { id:'more',      l:'Ещё',        i:'ti-dots', more:true, active:['search','kpi','calc','help'].includes(page) },
   ]
   const MORE = [
     { id:'calc',   l:'Калькулятор',     i:'ti-calculator',   d:'Расчёты ипотеки и налогов' },
     { id:'search', l:'Список клиентов', i:'ti-list-details', d:'Поиск, фильтры, импорт/экспорт' },
     { id:'kpi',    l:'KPI',             i:'ti-chart-bar',    d:'Отчёт по воронке и менеджерам' },
+    { id:'help',   l:'Помощь',          i:'ti-help',         d:'Как работать в CRM — все подсказки' },
   ]
   return (
     <nav className="bot-nav" style={{background:'#fff',borderTop:'1.5px solid #e2e8f0',position:'fixed',bottom:0,left:0,right:0,zIndex:200}}>
