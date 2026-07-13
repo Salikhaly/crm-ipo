@@ -66,35 +66,47 @@ export default withAuth(async function handler(req, res) {
     const sb  = getSupabase()
     const now = new Date().toISOString()
 
+    // Зеркалим отправленный файл в Supabase Storage — иначе Green API не отдаёт URL
+    // и менеджер вечно видит заглушку вместо своего фото/документа. Публичный
+    // bucket → постоянная ссылка прямо в <img src>. Любая ошибка не ломает отправку.
+    let storedUrl = ''
+    try {
+      const BUCKET = 'wa-media'
+      try { await sb.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 32 * 1024 * 1024 }) } catch (e) { /* уже есть */ }
+      const safe = String(fileName).replace(/[^\w.\-]/g, '_').slice(0, 80)
+      const path = `${waId.replace('@c.us','')}/${greenData.idMessage}_${safe}`
+      const { error: upErr } = await sb.storage.from(BUCKET).upload(path, fileData, { contentType: mimeType, upsert: true })
+      if (!upErr) storedUrl = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+    } catch (e) { console.error('[wa media store]', e.message) }
+
     // Сохраняем сообщение
-    await sb.from('wa_messages').insert({
+    await sb.from('wa_messages').upsert({
       id:         greenData.idMessage,
       chat_id:    waId,
       direction:  'out',
       type:       msgType,
       body:       caption,
-      media_url:  '',          // Green API не возвращает URL сразу
+      media_url:  storedUrl,
       media_name: fileName,
       media_mime: mimeType,
       media_size: file.size || 0,
       author,
       status:     'sent',
       sent_at:    now,
-    })
+    }, { onConflict: 'id', ignoreDuplicates: true })
 
     // Обновляем чат: используем update() для существующих (сохраняет unread_count и другие поля)
     // или insert() для новых — upsert с ignoreDuplicates:false обнуляет unread_count по умолчанию
     const { data: existingChat } = await sb
       .from('wa_chats')
-      .select('id')
+      .select('id, status')
       .eq('id', waId)
       .maybeSingle()
 
     if (existingChat) {
-      await sb.from('wa_chats').update({
-        last_message:    caption || `[${msgType}]`,
-        last_message_at: now,
-      }).eq('id', waId)
+      const upd = { last_message: caption || `[${msgType}]`, last_message_at: now }
+      if (existingChat.status === 'new') upd.status = 'in_work'
+      await sb.from('wa_chats').update(upd).eq('id', waId)
     } else {
       await sb.from('wa_chats').insert({
         id:              waId,
@@ -103,7 +115,7 @@ export default withAuth(async function handler(req, res) {
         last_message:    caption || `[${msgType}]`,
         last_message_at: now,
         unread_count:    0,
-        status:          'new',
+        status:          'in_work',
       })
     }
 

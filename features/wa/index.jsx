@@ -161,9 +161,18 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
     }
   }, [])
 
+  // Автопрокрутка вниз — только если менеджер уже внизу (иначе не мешаем читать
+  // историю: раньше каждый поллинг рывком тянул вниз). Смена чата — сразу вниз.
+  const prevChatId = useRef(null)
   useEffect(() => {
-    msgsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const box = msgsEndRef.current?.parentElement
+    const chatChanged = prevChatId.current !== selChat?.id
+    prevChatId.current = selChat?.id
+    if (!box) return
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 140
+    if (chatChanged) msgsEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    else if (nearBottom) msgsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, selChat])
 
   // ── Фильтрация чатов ───────────────────────────────────────────
   // newChatsCount мемоизируем отдельно чтобы не пересчитывать при каждом вводе поиска

@@ -122,7 +122,8 @@ export default withAuth(async function handler(req, res) {
     // Сохраняем исходящее сообщение в БД
     const sb = getSupabase()
 
-    await sb.from('wa_messages').insert({
+    // upsert (не insert): повторный вебхук/ретрай с тем же idMessage не роняет 500
+    await sb.from('wa_messages').upsert({
       id:        greenData.idMessage,
       chat_id:   waId,
       direction: 'out',
@@ -131,15 +132,15 @@ export default withAuth(async function handler(req, res) {
       author:    author || req.user.name || 'CRM',
       status:    'sent',
       sent_at:   new Date().toISOString(),
-    })
+    }, { onConflict: 'id', ignoreDuplicates: true })
 
     // Обновляем чат — upsert создаёт запись если её ещё нет
-    const { data: existChat } = await sb.from('wa_chats').select('id').eq('id', waId).maybeSingle()
+    const { data: existChat } = await sb.from('wa_chats').select('id, status').eq('id', waId).maybeSingle()
     if (existChat) {
-      await sb.from('wa_chats').update({
-        last_message:    text,
-        last_message_at: new Date().toISOString(),
-      }).eq('id', waId)
+      const upd = { last_message: text, last_message_at: new Date().toISOString() }
+      // Ответил менеджер → чат больше не «Новый», уходит в «В работе»
+      if (existChat.status === 'new') upd.status = 'in_work'
+      await sb.from('wa_chats').update(upd).eq('id', waId)
     } else {
       await sb.from('wa_chats').insert({
         id:              waId,
@@ -148,7 +149,7 @@ export default withAuth(async function handler(req, res) {
         last_message:    text,
         last_message_at: new Date().toISOString(),
         unread_count:    0,
-        status:          'new',
+        status:          'in_work',
       })
     }
 
