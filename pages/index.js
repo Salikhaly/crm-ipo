@@ -1605,20 +1605,44 @@ LoginPage = React.memo(LoginPage)
 
 // ─── BOTTOM NAV (mobile) ─────────────────────────────────────────
 function BottomNav({ page, navTo, openTasks, overdueTasks, waUnread }) {
+  // «Ещё»: Список клиентов и KPI раньше были недостижимы с телефона
+  const [moreOpen, setMoreOpen] = useState(false)
   const items = [
     { id:'dashboard', l:'Главная',    i:'ti-home' },
     { id:'clients',   l:'Клиенты',    i:'ti-layout-kanban' },
     { id:'wa',        l:'WhatsApp',   i:'ti-brand-whatsapp', cnt:waUnread, wa:true },
-    { id:'calc',      l:'Калькулятор',i:'ti-calculator' },
     { id:'tasks',     l:'Задачи',     i:'ti-checkbox', cnt:openTasks, warn:overdueTasks>0 },
+    { id:'more',      l:'Ещё',        i:'ti-dots', more:true, active:['search','kpi','calc'].includes(page) },
+  ]
+  const MORE = [
+    { id:'calc',   l:'Калькулятор',     i:'ti-calculator',   d:'Расчёты ипотеки и налогов' },
+    { id:'search', l:'Список клиентов', i:'ti-list-details', d:'Поиск, фильтры, импорт/экспорт' },
+    { id:'kpi',    l:'KPI',             i:'ti-chart-bar',    d:'Отчёт по воронке и менеджерам' },
   ]
   return (
     <nav className="bot-nav" style={{background:'#fff',borderTop:'1.5px solid #e2e8f0',position:'fixed',bottom:0,left:0,right:0,zIndex:200}}>
+      {moreOpen && (
+        <div onClick={()=>setMoreOpen(false)} style={{position:'fixed',inset:0,background:'rgba(15,23,42,.35)',zIndex:-1}}/>
+      )}
+      {moreOpen && (
+        <div style={{position:'absolute',bottom:'100%',left:8,right:8,marginBottom:8,background:'#fff',borderRadius:16,boxShadow:'0 -6px 40px rgba(0,0,0,.25)',border:'1.5px solid #e2e8f0',overflow:'hidden'}}>
+          {MORE.map(mi => (
+            <button key={mi.id} onClick={()=>{setMoreOpen(false); navTo(mi.id)}}
+              style={{display:'flex',alignItems:'center',gap:12,width:'100%',padding:'14px 16px',border:'none',background:page===mi.id?'#eff6ff':'transparent',cursor:'pointer',fontFamily:'inherit',textAlign:'left',borderBottom:'1px solid #f1f5f9'}}>
+              <i className={`ti ${mi.i}`} style={{fontSize:20,color:page===mi.id?'#3b82f6':'#64748b',flexShrink:0}}/>
+              <span>
+                <span style={{display:'block',fontSize:13.5,fontWeight:700,color:'#0f172a'}}>{mi.l}</span>
+                <span style={{display:'block',fontSize:11,color:'#94a3b8'}}>{mi.d}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       <div style={{display:'flex',paddingBottom:'env(safe-area-inset-bottom)'}}>
         {items.map(n => (
-          <button key={n.id} onClick={() => navTo(n.id)}
+          <button key={n.id} onClick={() => n.more ? setMoreOpen(v=>!v) : (setMoreOpen(false), navTo(n.id))}
             style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2,padding:'8px 4px 6px',cursor:'pointer',border:'none',background:'transparent',
-              color:n.wa?'#25d366':page===n.id?'#3b82f6':'#94a3b8',
+              color:n.wa?'#25d366':(page===n.id||n.active)?'#3b82f6':'#94a3b8',
               fontFamily:'inherit',transition:'color .14s',position:'relative',minWidth:0}}>
             <div style={{position:'relative',display:'inline-flex',width:26,height:26,alignItems:'center',justifyContent:'center'}}>
               <i className={`ti ${n.i}`} style={{fontSize:23}}/>
@@ -1832,6 +1856,8 @@ DashPage = React.memo(DashPage)
 
 // ─── CLIENTS KANBAN ──────────────────────────────────────────────
 function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragOv, setDragOv, onMove, onQuick }) {
+  // Перенос с телефона: drag-and-drop не работает на таче — кнопка «на этап…»
+  const [movePick, setMovePick] = useState(null)
   const pl = pipeline || PIPELINE_DEFAULT
   // №10: пустое состояние — новичок не теряется
   if (!clients.length) return (
@@ -1894,23 +1920,25 @@ function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragO
                       <span style={{fontSize:10,color:'#94a3b8'}}>{c.dateIn}</span>
                       {m && <span style={{fontSize:10,color:'#64748b',fontWeight:600,display:'flex',alignItems:'center',gap:3}}><span style={{width:5,height:5,borderRadius:'50%',background:m.color,display:'inline-block'}}/>{m.name?.split(' ')[0]}</span>}
                     </div>
-                    {/* №3+№6: быстрые действия — звонок и статус одним тапом */}
-                    {c.phone && (
-                      <div style={{display:'flex',gap:4,marginTop:7,paddingTop:7,borderTop:'1px solid #f1f5f9'}} onClick={e=>e.stopPropagation()}>
-                        <a href={`tel:${c.phone}`} title="Позвонить"
-                          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'5px 0',borderRadius:7,background:'#f0fdf4',color:'#16a34a',textDecoration:'none',fontSize:13}}>
-                          <i className="ti ti-phone"/>
-                        </a>
-                        <button title="Не дозвонился" onClick={()=>onQuick && onQuick(c,'noanswer')}
-                          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'5px 0',borderRadius:7,background:'#fef2f2',color:'#dc2626',border:'none',cursor:'pointer',fontSize:13}}>
-                          <i className="ti ti-phone-off"/>
-                        </button>
-                        <button title="Перезвонить завтра" onClick={()=>onQuick && onQuick(c,'callback')}
-                          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'5px 0',borderRadius:7,background:'#fffbeb',color:'#d97706',border:'none',cursor:'pointer',fontSize:13}}>
-                          <i className="ti ti-clock"/>
-                        </button>
-                      </div>
-                    )}
+                    {/* №3+№6: быстрые действия — звонок, статус, перенос этапа одним тапом */}
+                    <div style={{display:'flex',gap:4,marginTop:7,paddingTop:7,borderTop:'1px solid #f1f5f9'}} onClick={e=>e.stopPropagation()}>
+                      {c.phone && <a href={`tel:${c.phone}`} title="Позвонить"
+                        style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 0',minHeight:36,borderRadius:7,background:'#f0fdf4',color:'#16a34a',textDecoration:'none',fontSize:14}}>
+                        <i className="ti ti-phone"/>
+                      </a>}
+                      {c.phone && <button title="Не дозвонился" onClick={()=>onQuick && onQuick(c,'noanswer')}
+                        style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 0',minHeight:36,borderRadius:7,background:'#fef2f2',color:'#dc2626',border:'none',cursor:'pointer',fontSize:14}}>
+                        <i className="ti ti-phone-off"/>
+                      </button>}
+                      {c.phone && <button title="Перезвонить завтра" onClick={()=>onQuick && onQuick(c,'callback')}
+                        style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 0',minHeight:36,borderRadius:7,background:'#fffbeb',color:'#d97706',border:'none',cursor:'pointer',fontSize:14}}>
+                        <i className="ti ti-clock"/>
+                      </button>}
+                      <button title="Переместить на этап…" onClick={()=>setMovePick(c)}
+                        style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 0',minHeight:36,borderRadius:7,background:'#eff6ff',color:'#1d4ed8',border:'none',cursor:'pointer',fontSize:14}}>
+                        <i className="ti ti-arrows-exchange"/>
+                      </button>
+                    </div>
                   </div>
                 )
               })}
@@ -1919,6 +1947,25 @@ function ClientsPage({ clients, managers, pipeline, onOpen, drag, setDrag, dragO
           </div>
         )
       })}
+
+      {/* Шторка «Переместить на этап» — перенос без drag-and-drop (тач) */}
+      {movePick && (
+        <div onClick={()=>setMovePick(null)}
+          style={{position:'fixed',inset:0,background:'rgba(15,23,42,.5)',zIndex:700,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+          <div onClick={e=>e.stopPropagation()}
+            style={{background:'#fff',borderRadius:'18px 18px 0 0',width:'100%',maxWidth:480,maxHeight:'70vh',overflowY:'auto',padding:'16px 14px calc(14px + env(safe-area-inset-bottom))',boxShadow:'0 -12px 48px rgba(0,0,0,.3)'}}>
+            <div style={{fontWeight:800,fontSize:14,marginBottom:10,padding:'0 4px'}}>
+              «{movePick.fio||movePick.phone||'Клиент'}» — переместить на этап:
+            </div>
+            {(pipeline||PIPELINE_DEFAULT).map(p => p.id !== movePick.stage && (
+              <button key={p.id} onClick={()=>{onMove(movePick.id, p.id); setMovePick(null)}}
+                style={{display:'flex',alignItems:'center',gap:10,width:'100%',padding:'13px 12px',border:'none',background:'transparent',borderRadius:10,cursor:'pointer',fontFamily:'inherit',fontSize:13.5,fontWeight:600,color:'#0f172a',textAlign:'left'}}>
+                <span style={{width:10,height:10,borderRadius:'50%',background:p.c,flexShrink:0}}/>{p.l}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2877,17 +2924,17 @@ function NewClientModal({ client, managers, pipeline, onSave, onClose, syncing }
           <div>Заполните хотя бы <b>ФИО и телефон</b> — остальное можно добавить позже в карточке. Телефон в любом формате: система сама приведёт к нужному виду и проверит нет ли дубля.</div>
         </div>
       )}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <div className="r3">
         <Fl l="ФИО *" req ch={<Inp value={f.fio} onChange={e=>set('fio',e.target.value)} placeholder="Фамилия Имя"/>}/>
         <Fl l="ИИН"      ch={<Inp value={f.iin} onChange={e=>set('iin',e.target.value)} placeholder="123456789012" maxLength={12}/>}/>
         <Fl l="Телефон *" req ch={<Inp value={f.phone} onChange={e=>set('phone',e.target.value)} placeholder="+7 701 ..."/>}/>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <div className="r3">
         <Fl l="Город"    ch={<Sel value={f.city}    onChange={e=>set('city',e.target.value)}>{CITIES.map(c=><option key={c}>{c}</option>)}</Sel>}/>
         <Fl l="Менеджер" ch={<Sel value={f.manager||''} onChange={e=>set('manager',e.target.value)}><option value="">—</option>{managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Sel>}/>
         <Fl l="Источник" ch={<Sel value={f.source}  onChange={e=>set('source',e.target.value)}>{SRCS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}</Sel>}/>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="r2">
         <Fl l="Этап" ch={<Sel value={f.stage} onChange={e=>set('stage',e.target.value)}>{pl.map(p=><option key={p.id} value={p.id}>{p.l}</option>)}</Sel>}/>
         <Fl l="КИ"   ch={<Sel value={f.creditStatus} onChange={e=>set('creditStatus',e.target.value)}>{CR_ST.map(c=><option key={c.id} value={c.id}>{c.l}</option>)}</Sel>}/>
       </div>
@@ -2923,7 +2970,7 @@ function UserModal({ item, managers, onSave, onClose, syncing }) {
     <ModalWrap title={`Пользователь: ${f.name||'Новый'}`} onClose={onClose} size="sm"
       footer={<><Btn onClick={onClose}>Отмена</Btn><Btn variant="primary" onClick={()=>onSave(f)} disabled={syncing}>{syncing?<><i className="ti ti-loader spin"/>...</>:<><i className="ti ti-device-floppy"/>Сохранить</>}</Btn></>}>
       <Fl l="Имя" ch={<Inp value={f.name} onChange={e=>set('name',e.target.value)}/>}/>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="r2">
         <Fl l="Логин"  ch={<Inp value={f.login} onChange={e=>set('login',e.target.value)} placeholder="Логин"/>}/>
         <Fl l="Пароль" ch={<Inp value={f.pwd}   onChange={e=>set('pwd',e.target.value)}   placeholder="Пароль"/>}/>
       </div>

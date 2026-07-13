@@ -245,7 +245,9 @@ tbody tr:active td{background:#f8fafc}
   .wa-sidebar.slide-out{transform:translateX(-100%)}
   .wa-main{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column}
   .wa-main.slide-out{transform:translateX(100%)}
-  .wa-client-panel{display:none}
+  /* Панель клиента — выезжающая шторка снизу: кнопки «Открыть карточку» и
+     «Рассчитать» должны быть доступны и с телефона */
+  .wa-client-panel{position:fixed;left:0;right:0;bottom:0;top:auto;width:auto;max-height:78vh;z-index:900;border-left:none;border-top:1.5px solid #e2e8f0;border-radius:20px 20px 0 0;box-shadow:0 -12px 48px rgba(0,0,0,.28);animation:sheetUp .22s ease}
 
   /* Client detail: hide sidebar on mobile */
   /* Client detail: sidebar становится выезжающим drawer'ом */
@@ -413,3 +415,5 @@ body{font-feature-settings:'cv02','cv03','cv04','cv11';letter-spacing:-.01em}
 
 /* Плавное появление контента раздела */
 .main-content>*{animation:fadeIn .25s ease}
+
+@keyframes sheetUp{from{transform:translateY(48px);opacity:.5}to{transform:translateY(0);opacity:1}}
