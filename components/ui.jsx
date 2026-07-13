@@ -57,6 +57,19 @@ export const Inp = React.forwardRef(function Inp({ value, onChange, placeholder,
   />
 })
 
+// Денежное поле: показывает «1 500 000», наружу отдаёт чистое число (строкой).
+// Меньше ошибок в нулях на суммах договора/дохода, чем голый type=number.
+export const MoneyInp = React.forwardRef(function MoneyInp({ value, onChange, placeholder, disabled, style={}, ...rest }, ref) {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  const shown  = digits ? Number(digits).toLocaleString('ru-RU') : ''
+  return <input ref={ref} type="text" inputMode="numeric" value={shown} disabled={disabled} placeholder={placeholder}
+    onChange={e => onChange(e.target.value.replace(/\D/g, ''))} {...rest}
+    style={{background:'#f8fafc',border:'2px solid #cbd5e1',borderRadius:10,padding:'10px 12px',color:'#0f172a',fontSize:14,width:'100%',outline:'none',transition:'border .15s',...style}}
+    onFocus={e=>e.target.style.borderColor='#3b82f6'}
+    onBlur={e=>e.target.style.borderColor='#cbd5e1'}
+  />
+})
+
 export function Sel({ value, onChange, children, disabled, style={} }) {
   return <select value={value||''} onChange={onChange} disabled={disabled}
     style={{background:'#f8fafc',border:'2px solid #cbd5e1',borderRadius:10,padding:'10px 12px',color:'#0f172a',fontSize:14,width:'100%',outline:'none',cursor:'pointer',...style}}>

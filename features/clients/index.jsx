@@ -16,7 +16,7 @@ import {
   CLOSE_REASONS, STAGE_AUTO_TASK, canMoveToStage,
 } from '../../lib/constants'
 import {
-  Btn, Inp, Sel, Fl, Tag, Tgl, Prog, StTag,
+  Btn, Inp, Sel, Fl, Tag, Tgl, Prog, StTag, MoneyInp,
 } from '../../components/ui'
 import { Logo } from '../../components/logo'
 import {
@@ -906,9 +906,9 @@ function AnalysisTab({ c, set, canEdit }) {
       <span className="help-tip" data-tip="Доход банк проверяет по пенсионным отчислениям (ОПВ). Официальный доход = белая зарплата.">?</span>
     </div>
     <div className="r3">
-      <Fl l="Офиц. доход (₸)"  ch={<Inp type="number" value={c.officialIncome}      onChange={e=>set('officialIncome',e.target.value)}/>}/>
-      <Fl l="Доп. доход (₸)"   ch={<Inp type="number" value={c.extraIncome}          onChange={e=>set('extraIncome',e.target.value)}/>}/>
-      <Fl l="Пенсионные (₸)"   ch={<Inp type="number" value={c.pensionContributions} onChange={e=>set('pensionContributions',e.target.value)}/>}/>
+      <Fl l="Офиц. доход (₸)"  ch={<MoneyInp value={c.officialIncome}      onChange={v=>set('officialIncome',v)}/>}/>
+      <Fl l="Доп. доход (₸)"   ch={<MoneyInp value={c.extraIncome}          onChange={v=>set('extraIncome',v)}/>}/>
+      <Fl l="Пенсионные (₸)"   ch={<MoneyInp value={c.pensionContributions} onChange={v=>set('pensionContributions',v)}/>}/>
     </div>
     <div className="r2">
       <Fl l="Стаж (лет)"       ch={<Inp type="number" value={c.workExperience} onChange={e=>set('workExperience',e.target.value)}/>}/>
@@ -1017,7 +1017,7 @@ function ContractTab({ c, set, setC, pipeline }) {
     </div>
     {c.contractType && (
       <div style={{background:'linear-gradient(135deg,#eff6ff,#f5f3ff)',border:'2px solid #c7d2fe',borderRadius:13,padding:14,marginBottom:14}}>
-        <Fl l="Сумма договора (₸) — изменить вручную" ch={<Inp type="number" value={c.contractAmount} onChange={e=>set('contractAmount',+e.target.value)}/>}/>
+        <Fl l="Сумма договора (₸) — изменить вручную" ch={<MoneyInp value={c.contractAmount} onChange={v=>set('contractAmount',+v||0)}/>}/>
         <div style={{fontWeight:900,fontSize:26,color:'#3b82f6',letterSpacing:'-1px'}}>{fmtN(c.contractAmount)}₸</div>
       </div>
     )}

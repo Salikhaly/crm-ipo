@@ -76,7 +76,6 @@ const MSG_TEMPLATES = [
 ]
 
 // Быстрые ответы (короткий список для быстрого доступа)
-const QUICK_REPLIES = MSG_TEMPLATES.find(c => c.cat.includes('Быстрые'))?.items.map(i => i.text) || []
 
 const WA_STATUSES = [
   { id: 'all',        l: 'Все',       color: '#64748b' },
@@ -90,7 +89,6 @@ const WA_STATUSES = [
 export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, user, onOpenClient, mgrById, toast$ }) {
   const [msgText,         setMsgText]         = useState('')
   const [showChatView,    setShowChatView]     = useState(false)
-  const [showQR,          setShowQR]           = useState(false)
   const [showTemplates,   setShowTemplates]    = useState(false)
   const [tmplCat,         setTmplCat]          = useState(0)
   const [tmplSearch,      setTmplSearch]       = useState('')
@@ -189,7 +187,6 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
     if (!msgText.trim() || !selChat) return
     onSend(selChat.id, selChat.phone, msgText)
     setMsgText('')
-    setShowQR(false)
     setShowTemplates(false)
     inputRef.current?.focus()
   }
@@ -218,13 +215,6 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
     const applied = applyTemplate(tmpl.text)
     setMsgText(applied)
     setShowTemplates(false)
-    setShowQR(false)
-    inputRef.current?.focus()
-  }
-
-  function useQR(text) {
-    setMsgText(text)
-    setShowQR(false)
     inputRef.current?.focus()
   }
 
@@ -591,26 +581,12 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
             </div>
           )}
 
-          {/* Quick replies */}
-          {showQR && (
-            <div className="qr-list">
-              {QUICK_REPLIES.map(t => (
-                <button key={t} className="qr-chip" onClick={()=>useQR(t)}>{t}</button>
-              ))}
-            </div>
-          )}
-
           {/* Input bar */}
           <div className="wa-input">
-            {/* Шаблоны сообщений */}
-            <button onClick={()=>{setShowTemplates(!showTemplates);setShowQR(false)}} title="Шаблоны сообщений"
+            {/* Шаблоны сообщений (та же кнопка и «/» в поле — единый список) */}
+            <button onClick={()=>{setShowTemplates(!showTemplates)}} title="Шаблоны сообщений (или введите / в поле)"
               style={{width:38,height:38,borderRadius:'50%',border:'none',background:showTemplates?'#3b82f6':'#e9e9e9',color:showTemplates?'#fff':'#555',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
               <i className="ti ti-template" style={{fontSize:18}}/>
-            </button>
-            {/* Быстрые ответы */}
-            <button onClick={()=>{setShowQR(!showQR);setShowTemplates(false)}} title="Быстрые ответы"
-              style={{width:38,height:38,borderRadius:'50%',border:'none',background:showQR?'#25d366':'#e9e9e9',color:showQR?'#fff':'#555',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
-              <i className="ti ti-bolt" style={{fontSize:18}}/>
             </button>
 
             {/* Прикрепить файл */}
@@ -689,7 +665,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
         </>
       )}
     </div>
-  ), [selChat, messages, showChatView, showAssignDlg, showQR, msgText, sendingFile, managers, linkedClient, showClientPanel, mgrById, showQuickMenu, filteredQuickReplies, quickFilter])
+  ), [selChat, messages, showChatView, showAssignDlg, msgText, sendingFile, managers, linkedClient, showClientPanel, mgrById, showQuickMenu, filteredQuickReplies, quickFilter])
 
   // ── Client panel ──────────────────────────────────────────────
   // Быстрый расчёт ипотеки по данным связанного клиента → в поле ввода
