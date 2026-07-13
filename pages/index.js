@@ -1045,7 +1045,7 @@ export default function CRM() {
             {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
-            {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod}/>}
+            {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod} pipeline={pipeline}/>}
             {page==='admin'     && isAdmin && <AdminPage managers={managers} pipeline={pipeline} checklists={checklists} users={users} user={user} onSaveMgr={saveMgr} onDelMgr={delMgr} onSaveUser={saveUser} onDelUser={delUser} onSavePL={savePL} onSaveCL={saveCL} onModal={setModal} reload={loadAll} syncing={syncing}/>}
             {page==='calcadmin' && isHead && !isAdmin && (
               <div style={{maxWidth:900,margin:'0 auto',padding:'0 4px'}}>
@@ -1396,7 +1396,8 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
     return clients.filter(c =>
       (c.fio || '').toLowerCase().includes(s) ||
       (digits.length >= 3 && (c.phone || '').replace(/\D/g, '').includes(digits)) ||
-      (c.iin || '').includes(s)
+      (c.iin || '').includes(s) ||
+      (c.tags || []).some(t => String(t).toLowerCase().includes(s))
     ).slice(0, 8)
   }, [q, clients])
 
@@ -1419,7 +1420,7 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
               <i className="ti ti-search" style={{color:'#94a3b8',fontSize:17,flexShrink:0}}/>
               <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && results[0]) pick(results[0]) }}
-                placeholder="Имя, телефон или ИИН..."
+                placeholder="Имя, телефон, ИИН или тег..."
                 style={{flex:1,border:'none',outline:'none',fontSize:15,color:'#0f172a',fontFamily:'inherit',background:'transparent'}}/>
               <span style={{fontSize:10,color:'#94a3b8',background:'#f1f5f9',borderRadius:5,padding:'2px 6px',flexShrink:0}}>Esc</span>
             </div>
@@ -1444,7 +1445,7 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
             })}
             {q.trim().length < 2 && (
               <div style={{padding:'16px',fontSize:12,color:'#94a3b8',textAlign:'center'}}>
-                Начните вводить имя, телефон или ИИН — минимум 2 символа. Enter — открыть первого.
+                Начните вводить имя, телефон, ИИН или тег — минимум 2 символа. Enter — открыть первого.
               </div>
             )}
           </div>
@@ -2406,6 +2407,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
   const todayStr  = today()
   const [showNew, setShowNew] = useState(false)
   const [tView,   setTView]   = useState('list')  // list | calendar
+  const [fTMgr,   setFTMgr]   = useState('')      // фильтр по менеджеру клиента
   const [newTask, setNewTask] = useState({ text:'', due:'', clientId:'', note:'' })
 
   function createTask() {
@@ -2433,7 +2435,8 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
   // Memoize: 5 array passes on clients — only recompute when clients change
   const { all, open, overdue, todayT, rest, done } = useMemo(() => {
     const td  = todayStr
-    const all = clients.flatMap(c => (c.tasks||[]).map(t => ({ ...t, cFio:c.fio, cl:c })))
+    const src = fTMgr ? clients.filter(c => c.manager === fTMgr) : clients
+    const all = src.flatMap(c => (c.tasks||[]).map(t => ({ ...t, cFio:c.fio, cl:c })))
     // Single pass to bucket tasks instead of 4 separate filter passes
     const open = [], overdue = [], todayT = [], rest = [], done = []
     for (const t of all) {
@@ -2444,7 +2447,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
       else                          rest.push(t)
     }
     return { all, open, overdue, todayT, rest, done }
-  }, [clients])
+  }, [clients, fTMgr])
 
   const S = { background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,boxShadow:'0 1px 4px rgba(0,0,0,.07)' }
 
@@ -2472,6 +2475,10 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
           ))}
         </div>
         <Btn size="sm" variant="primary" onClick={()=>setShowNew(v=>!v)}><i className="ti ti-plus"/>Задача</Btn>
+        <Sel value={fTMgr} onChange={e=>setFTMgr(e.target.value)} style={{width:'auto',minWidth:150,padding:'6px 10px',fontSize:12}}>
+          <option value="">Все менеджеры</option>
+          {managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+        </Sel>
       </div>
 
       {showNew && (
@@ -2591,7 +2598,7 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
 TasksPage = React.memo(TasksPage)
 
 // ─── KPI PAGE ────────────────────────────────────────────────────
-function KPIPage({ data, period, setPeriod }) {
+function KPIPage({ data, period, setPeriod, pipeline }) {
   if (!data) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300,color:'#64748b',gap:10}}>
       <i className="ti ti-loader spin" style={{fontSize:24}}/>Загрузка KPI...
@@ -2602,7 +2609,9 @@ function KPIPage({ data, period, setPeriod }) {
   const maxReason = Math.max(...(closeReasons||[]).map(r=>r.count), 1)
   const totalClosed = (closeReasons||[]).reduce((s,r)=>s+r.count, 0)
   const maxRev = Math.max(...(stats||[]).map(s => s.rev), 1)
-  const STAGE_L = {new_lead:'Новый лид',in_work:'В работе',analysis:'Анализ',consultation:'Консультация',contract:'Договор',accompaniment:'Сопровождение',approval:'Одобрение',deal:'Сделка',issuance:'Выдача',closed:'Закрыто'}
+  // Названия этапов — из настроенной воронки (админка), хардкод только как запас
+  const STAGE_FALLBACK = {new_lead:'Новый лид',in_work:'В работе',analysis:'Анализ',consultation:'Консультация',contract:'Договор',accompaniment:'Сопровождение',approval:'Одобрение',deal:'Сделка',issuance:'Выдача',closed:'Закрыто'}
+  const STAGE_L = { ...STAGE_FALLBACK, ...Object.fromEntries((pipeline||[]).map(p=>[p.id,p.l])) }
   const SRC_L = {instagram:'Instagram',tiktok:'TikTok',whatsapp:'WhatsApp',recommendation:'Рекомендация',site:'Сайт',kaspi:'Kaspi',telegram:'Telegram',other:'Другое'}
   const maxReached = Math.max(...(funnel||[]).map(f=>f.reached), 1)
 
