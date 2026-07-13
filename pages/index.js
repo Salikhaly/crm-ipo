@@ -184,21 +184,25 @@ export default function CRM() {
     if (!list.length) { toast$('⚠️ В файле не найдено клиентов', 'err'); return { created:0, skipped:0 } }
     setSyncing(true)
     let created = 0, skipped = 0
+    const skippedList = []
     const seenP = new Set(clients.map(x => (x.phone||'').replace(/\D/g,'')).filter(Boolean))
     const seenI = new Set(clients.map(x => x.iin).filter(Boolean))
     for (const partial of list) {
       const pd = (partial.phone||'').replace(/\D/g,'')
-      if ((pd && seenP.has(pd)) || (partial.iin && seenI.has(partial.iin))) { skipped++; continue }
+      const who = partial.fio || partial.phone || partial.iin || 'без имени'
+      if ((pd && seenP.has(pd)) || (partial.iin && seenI.has(partial.iin))) {
+        skipped++; skippedList.push({ who, why: 'дубль по телефону/ИИН' }); continue
+      }
       const full = { ...emptyClient(user.manager_id||''), ...partial, id: uid() }
       if (partial.__note) full.comments = [{ id:uid(), text:'📥 Импорт · '+partial.__note, author:user.name||'', date:nowStr(), sys:true }]
       delete full.__note
       const saved = await saveClient(full, { quiet:true })
       if (saved) { created++; if (pd) seenP.add(pd); if (partial.iin) seenI.add(partial.iin) }
-      else skipped++
+      else { skipped++; skippedList.push({ who, why: 'не сохранился (телефон/ИИН уже в базе или ошибка сети)' }) }
     }
     setSyncing(false)
     toast$(`📥 Импортировано: ${created}${skipped ? ` · пропущено (дубли): ${skipped}` : ''}`)
-    return { created, skipped }
+    return { created, skipped, skippedList }
   }
 
   // ─── СЛИЯНИЕ ДУБЛЕЙ (head/admin) ──────────────────────────
@@ -1321,6 +1325,15 @@ function ImportModal({ onImport, onClose, syncing, pipeline }) {
           <div style={{background:done.created?'#f0fdf4':'#fffbeb',border:`1.5px solid ${done.created?'#86efac':'#fcd34d'}`,borderRadius:12,padding:'16px 18px',textAlign:'center'}}>
             <div style={{fontSize:15,fontWeight:800,color:done.created?'#166534':'#92400e',marginBottom:4}}>{done.created ? '✓ Готово' : '⚠ Ничего не импортировано'}</div>
             <div style={{fontSize:13,color:done.created?'#15803d':'#b45309'}}>{done.created ? <>Создано: <b>{done.created}</b></> : 'Все записи оказались дублями или пустыми'}{done.skipped ? ` · пропущено (дубли): ${done.skipped}` : ''}</div>
+            {done.skippedList?.length > 0 && (
+              <div style={{textAlign:'left',maxHeight:150,overflowY:'auto',marginTop:10,background:'#fff',border:'1px solid #e2e8f0',borderRadius:9,padding:'8px 11px'}}>
+                {done.skippedList.slice(0, 50).map((r, i) => (
+                  <div key={i} style={{fontSize:11.5,color:'#64748b',padding:'2px 0'}}>
+                    <b style={{color:'#334155'}}>{r.who}</b> — {r.why}
+                  </div>
+                ))}
+              </div>
+            )}
             <Btn variant="primary" style={{marginTop:14,justifyContent:'center'}} onClick={onClose}>Закрыть</Btn>
           </div>
         ) : (<>
@@ -2006,6 +2019,18 @@ className='search-card'
           </div>
         )}
 
+        {(() => {
+          const prg = c.program ? PROGRAMS_FALLBACK.find(p => p.id === c.program) : null
+          const ct  = c.contractType ? CT[c.contractType] : null
+          if (!prg && !ct) return null
+          const chip = { display:'inline-flex',alignItems:'center',gap:4,background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:20,padding:'2px 9px',fontSize:10.5,fontWeight:700,color:'#334155' }
+          return (
+            <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
+              {prg && <span style={chip}>{prg.icon} {prg.n}</span>}
+              {ct  && <span style={{...chip,color:'#7c3aed',borderColor:'#ddd6fe',background:'#f5f3ff'}}>📄 {ct.l}</span>}
+            </div>
+          )
+        })()}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:7,marginBottom:openTasks.length||lastCmt?10:0}}>
           {[
             { l:'✅ Задачи', v:<div style={{fontWeight:800,fontSize:17,color:overdue.length>0?'#ef4444':openTasks.length>0?'#3b82f6':'#10b981',letterSpacing:'-1px'}}>{openTasks.length}</div>, warn:overdue.length>0 },
