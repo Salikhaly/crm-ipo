@@ -403,7 +403,7 @@ function CalcExpTab({ toast$, calcCfg }) {
         <div style={C.sec}>Параметры сделки</div>
         <div style={{...C.row,borderBottom:'1px solid #f8fafc'}}>
           <span style={C.rk}>Стоимость квартиры (₸)</span>
-          <input type="number" value={price} onChange={e=>setPrice(+e.target.value)}
+          <input type="text" inputMode="numeric" value={price} onChange={e=>setPrice(+String(e.target.value).replace(/\D/g,'')||0)}
             style={{width:140,padding:'4px 8px',border:'1px solid #e2e8f0',borderRadius:8,textAlign:'right',fontSize:12,background:'#fff',color:'#0f172a'}}/>
         </div>
         <div style={{...C.row,borderBottom:'1px solid #f8fafc',paddingTop:8}}>
@@ -492,8 +492,8 @@ function Calc50Tab({ calcCfg }) {
       </div>
       <div style={C.card}>
         <div style={C.sec}>Поиск по сумме</div>
-        <input type="number" placeholder="Введите договорную сумму, напр. 24000000"
-          value={search} onChange={e=>setSearch(e.target.value)}
+        <input type="text" inputMode="numeric" placeholder="Введите договорную сумму, напр. 24000000"
+          value={search} onChange={e=>setSearch(e.target.value.replace(/[^\d]/g,''))}
           style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:8,fontSize:13,background:'#fff',color:'#0f172a'}}/>
       </div>
       <div style={{border:'1px solid #e2e8f0',borderRadius:12,overflow:'hidden'}}>
@@ -1091,7 +1091,7 @@ function CalcMortgageTab({ doCalc, clients }) {
   }
 
   const inp = (placeholder, value, onChange) => (
-    <input className="inp" type="number" placeholder={placeholder} value={value} onChange={e=>onChange(e.target.value)}
+    <input className="inp" type="text" inputMode="numeric" placeholder={placeholder} value={value} onChange={e=>onChange(e.target.value.replace(/[^\d]/g,''))}
       style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:10,padding:'10px 12px',color:'#0f172a',fontSize:14,width:'100%',marginBottom:8}}/>
   )
 
@@ -1136,7 +1136,7 @@ function CalcMortgageTab({ doCalc, clients }) {
           </div>
           <div style={{flex:1}}>
             <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>Кредиты/мес (₸)</div>
-            <input type="number" value={oldCred} onChange={e=>setOldCred(e.target.value)} placeholder="0"
+            <input type="text" inputMode="numeric" value={oldCred} onChange={e=>setOldCred(e.target.value.replace(/[^\d]/g,''))} placeholder="0"
               style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:10,padding:'9px 12px',fontSize:14,width:'100%'}}/>
           </div>
         </div>
@@ -1385,12 +1385,12 @@ function CalcBankTab({ doCalc }) {
             <div className="r2">
               <div style={{flex:1}}>
                 <div style={{fontSize:10,color:'#64748b',marginBottom:3}}>Доход (₸)</div>
-                <input type="number" value={o.income} onChange={e=>setOrg(i,'income',e.target.value)} placeholder="300 000"
+                <input type="text" inputMode="numeric" value={o.income} onChange={e=>setOrg(i,'income',e.target.value.replace(/[^\d]/g,''))} placeholder="300 000"
                   style={{width:'100%',padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:13,background:'#fff',color:'#0f172a'}}/>
               </div>
               <div style={{flex:1}}>
                 <div style={{fontSize:10,color:'#64748b',marginBottom:3}}>Кредиты/мес (₸)</div>
-                <input type="number" value={o.oldCredit} onChange={e=>setOrg(i,'oldCredit',e.target.value)} placeholder="0"
+                <input type="text" inputMode="numeric" value={o.oldCredit} onChange={e=>setOrg(i,'oldCredit',e.target.value.replace(/[^\d]/g,''))} placeholder="0"
                   style={{width:'100%',padding:'8px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:13,background:'#fff',color:'#0f172a'}}/>
               </div>
             </div>
@@ -1576,7 +1576,7 @@ function CalcOpvTab({ doCalc }) {
               Целевая средняя ЗП (необязательно)
             </label>
             <div style={{position:'relative'}}>
-              <input value={target} onChange={e=>setTarget(e.target.value)} type="number"
+              <input value={target} onChange={e=>setTarget(e.target.value.replace(/[^\d]/g,''))} type="text" inputMode="numeric"
                 placeholder="300 000"
                 style={{width:'100%',padding:'10px 50px 10px 12px',border:'1.5px solid #e2e8f0',
                   borderRadius:10,fontSize:14,background:'#fff',color:'#0f172a'}}/>
@@ -1599,7 +1599,7 @@ function CalcOpvTab({ doCalc }) {
             <div>
               <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:6}}>Нужный доход (₸)</label>
               <div style={{position:'relative'}}>
-                <input value={income} onChange={e=>setIncome(e.target.value)} type="number" placeholder="300 000"
+                <input value={income} onChange={e=>setIncome(e.target.value.replace(/[^\d]/g,''))} type="text" inputMode="numeric" placeholder="300 000"
                   style={{width:'100%',padding:'10px 50px 10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:14,background:'#fff',color:'#0f172a'}}/>
                 <span style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontSize:13,color:'#94a3b8',pointerEvents:'none'}}>₸</span>
               </div>
@@ -1637,7 +1637,7 @@ function CalcOpvTab({ doCalc }) {
           <div>
             <label style={{fontSize:11,color:'#64748b',display:'block',marginBottom:4}}>Зарплата (₸)</label>
             <div style={{position:'relative'}}>
-              <input value={salaryBuh} onChange={e=>setSalaryBuh(e.target.value)} type="number" placeholder="300 000"
+              <input value={salaryBuh} onChange={e=>setSalaryBuh(e.target.value.replace(/[^\d]/g,''))} type="text" inputMode="numeric" placeholder="300 000"
                 style={{width:'100%',padding:'8px 40px 8px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:13,background:'#fff',color:'#0f172a'}}/>
               <span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#94a3b8',pointerEvents:'none'}}>₸</span>
             </div>
@@ -1833,8 +1833,8 @@ function CalcTaxTab({ doCalc }) {
           Начисленная зарплата (до вычетов)
         </label>
         <div style={{position:'relative'}}>
-          <input type="number" value={salary}
-            onChange={e=>{setSalary(e.target.value);setResult(null);setErr('')}}
+          <input type="text" inputMode="numeric" value={salary}
+            onChange={e=>{setSalary(e.target.value.replace(/[^\d]/g,''));setResult(null);setErr('')}}
             onKeyDown={e=>e.key==='Enter'&&calc()}
             placeholder="300 000"
             style={{width:'100%',padding:'12px 50px 12px 14px',border:`1.5px solid ${err?'#fca5a5':'#e2e8f0'}`,
@@ -1851,8 +1851,8 @@ function CalcTaxTab({ doCalc }) {
           Комиссия бухгалтеру (₸) <span style={{fontWeight:400,color:'#94a3b8'}}>— необязательно</span>
         </label>
         <div style={{position:'relative'}}>
-          <input type="number" value={buhFee}
-            onChange={e=>setBuhFee(e.target.value)}
+          <input type="text" inputMode="numeric" value={buhFee}
+            onChange={e=>setBuhFee(e.target.value.replace(/[^\d]/g,''))}
             placeholder="0 — если нет комиссии"
             style={{width:'100%',padding:'10px 50px 10px 14px',border:'1.5px solid #e2e8f0',
               borderRadius:10,fontSize:14,background:'#fff',color:'#0f172a',boxSizing:'border-box'}}/>
