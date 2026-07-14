@@ -13,6 +13,53 @@ import { VALID_CHAT_STATUSES } from '../../../lib/waConstants'
 
 // VALID_CHAT_STATUSES импортируется из lib/waConstants — не дублируйте здесь
 
+// Ссылки Green API на входящие медиа временные (живут несколько дней). Для
+// ипотеки документы клиента должны храниться долго → зеркалим файл в постоянный
+// публичный bucket Supabase. Best-effort: любая ошибка/таймаут → оставляем
+// ссылку Green (сообщение всё равно сохранится). Таймаут 6с и лимит 20МБ, чтобы
+// не выйти за 10-секундный бюджет ответа вебхуку.
+// Текущее время в Казахстане (Asia/Almaty, UTC+5) как 'HH:MM' — сервер в UTC
+function nowAlmatyHM() {
+  try {
+    const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
+    const hh = p.find(x => x.type === 'hour').value
+    const mm = p.find(x => x.type === 'minute').value
+    return `${hh}:${mm}`
+  } catch (e) {
+    return new Date().toISOString().slice(11, 16)  // фолбэк: UTC
+  }
+}
+// Нерабочее время: текущий момент вне [from, to). Сравнение строк 'HH:MM' корректно.
+function isOffHours(from, to) {
+  const now = nowAlmatyHM()
+  return !(now >= (from || '09:00') && now < (to || '18:00'))
+}
+
+async function mirrorIncomingMedia(sb, url, chatId, msgId, mime, name) {
+  try {
+    if (!url) return ''
+    const ac = new AbortController()
+    const t  = setTimeout(() => ac.abort(), 6000)
+    let r
+    try { r = await fetch(url, { signal: ac.signal }) } finally { clearTimeout(t) }
+    if (!r || !r.ok) return ''
+    const declared = +r.headers.get('content-length') || 0
+    if (declared > 20 * 1024 * 1024) return ''
+    const buf = Buffer.from(await r.arrayBuffer())
+    if (buf.length > 20 * 1024 * 1024) return ''
+    const BUCKET = 'wa-media'
+    try { await sb.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 20 * 1024 * 1024 }) } catch (e) { /* уже есть */ }
+    const safe = String(name || 'file').replace(/[^\w.\-]/g, '_').slice(0, 80)
+    const path = `${chatId.replace('@c.us', '')}/in_${msgId}_${safe}`
+    const { error } = await sb.storage.from(BUCKET).upload(path, buf, { contentType: mime || 'application/octet-stream', upsert: true })
+    if (error) return ''
+    return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+  } catch (e) {
+    console.error('[wa mirror in]', e.message)
+    return ''
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Только POST' })
@@ -222,13 +269,20 @@ export default async function handler(req, res) {
 
     // ── Сохраняем сообщение ВСЕГДА (msgId теперь всегда есть; дубли — по id) ──
     {
+      // Входящий файл — зеркалим в постоянное хранилище (ссылка Green временная).
+      // На неудаче остаётся ссылка Green — сообщение в любом случае сохранится.
+      let storedMedia = mediaUrl
+      if (mediaUrl && direction === 'in') {
+        const m = await mirrorIncomingMedia(sb, mediaUrl, chatId, msgId, mediaMime, mediaName)
+        if (m) storedMedia = m
+      }
       const { error: insertErr } = await sb.from('wa_messages').upsert({
         id:         msgId,
         chat_id:    chatId,
         direction,
         type,
         body:       text,
-        media_url:  mediaUrl,
+        media_url:  storedMedia,
         media_name: mediaName,
         media_mime: mediaMime,
         media_size: mediaSize,
@@ -316,6 +370,47 @@ export default async function handler(req, res) {
           }
         }
       } catch (e) { console.error('[auto-greeting check]', e.message) }
+    }
+
+    // ── Автоответ в НЕРАБОЧЕЕ время (миграция 017, wa_config) ──────
+    // На любое входящее вне рабочих часов, не чаще 1 раза в 6ч на чат — чтобы
+    // клиент не чувствовал игнора ночью/в выходной, а менеджер спокойно отдыхал.
+    if (direction === 'in') {
+      try {
+        const { data: cfgRow } = await sb
+          .from('calc_settings').select('wa_config').eq('id', 'main').maybeSingle()
+        const wc = cfgRow?.wa_config
+        if (wc?.offhours_on && String(wc.offhours_text || '').trim() &&
+            isOffHours(wc.work_from, wc.work_to)) {
+          // троттлинг: уже отвечали автоответом нерабочего времени за последние 6ч?
+          const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString()
+          const { data: recent } = await sb.from('wa_messages')
+            .select('id').eq('chat_id', chatId).eq('author', 'Автоответ (нерабочее время)')
+            .gte('sent_at', since).limit(1)
+          const GREEN_ID = process.env.GREEN_API_ID, GREEN_TOKEN = process.env.GREEN_API_TOKEN
+          if (!recent?.length && GREEN_ID && GREEN_TOKEN) {
+            const txt = wc.offhours_text.trim()
+            try {
+              const r = await fetch(
+                `https://api.green-api.com/waInstance${GREEN_ID}/sendMessage/${GREEN_TOKEN}`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chatId, message: txt }) }
+              )
+              const d = await r.json()
+              if (d.idMessage) {
+                await sb.from('wa_messages').insert({
+                  id: d.idMessage, chat_id: chatId, direction: 'out', type: 'text',
+                  body: txt, author: 'Автоответ (нерабочее время)', status: 'sent',
+                  sent_at: new Date().toISOString(),
+                })
+                await sb.from('wa_chats').update({
+                  last_message: txt, last_message_at: new Date().toISOString(),
+                }).eq('id', chatId)
+              }
+            } catch (e) { console.error('[offhours send]', e.message) }
+          }
+        }
+      } catch (e) { console.error('[offhours check]', e.message) }
     }
 
     return res.status(200).json({ ok: true, chatId, msgId, type, direction })

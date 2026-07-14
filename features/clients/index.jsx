@@ -146,6 +146,18 @@ function SideTimeline({ c, setCd, user, canEdit }) {
 
 export function ClientDetail({ client, managers, pipeline, checklists, user, onSave, onDelete, onMove, onBack, toast$, setHasChanges, syncing, onOpenWa, saveRef }) {
   const [c,      setC]      = useState(JSON.parse(JSON.stringify(client)))
+  // Свежая версия от родителя (например, после конфликта 409) — подхватываем,
+  // только если у нас нет несохранённых правок, чтобы не затереть ввод
+  const cUpdRef = useRef(client.updatedAt)
+  useEffect(() => {
+    if (client.updatedAt && client.updatedAt !== cUpdRef.current && !isDirty) {
+      cUpdRef.current = client.updatedAt
+      verRef.current  = client.updatedAt   // подхватили свежую версию — сверяемся с ней
+      setC(JSON.parse(JSON.stringify(client)))
+    } else {
+      cUpdRef.current = client.updatedAt
+    }
+  }, [client.updatedAt]) // eslint-disable-line
   const [tab,    setTab]    = useState('profile')
   const [accIdx, setAccIdx] = useState(c.accompStageIndex||0)
   const [autoBanner, setAutoBanner] = useState(null)
@@ -184,12 +196,16 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   const [autoSt, setAutoSt] = useState('')   // '' | 'saving' | 'saved' | 'err'
   const saveTimer = useRef(null)
   const firstC    = useRef(true)
+  // Версия карточки для optimistic locking — в ref, а не в c: иначе смена
+  // updatedAt после сохранения перезапускала бы автосейв (и конфликтовала сама
+  // с собой). Обновляем из ответа сервера после каждого успешного save.
+  const verRef = useRef(client.updatedAt || '')
 
   async function save() {
     clearTimeout(saveTimer.current)
     setAutoSt('saving')
-    const ok = await onSave({...c})
-    if (ok) { setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
+    const ok = await onSave({...c, updatedAt: verRef.current})
+    if (ok) { if (ok.updatedAt) verRef.current = ok.updatedAt; setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
     return ok
   }
   // Диалог «Сохранить и выйти» в pages/index зовёт save() открытой карточки
@@ -201,8 +217,8 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
       setAutoSt('saving')
-      const ok = await onSave({...c}, { quiet: true })
-      if (ok) { setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
+      const ok = await onSave({...c, updatedAt: verRef.current}, { quiet: true })
+      if (ok) { if (ok.updatedAt) verRef.current = ok.updatedAt; setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
     }, 2500)
     return () => clearTimeout(saveTimer.current)
   }, [c]) // реагирует на любое изменение карточки, включая setC из вкладок

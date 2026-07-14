@@ -23,11 +23,26 @@ import {
 import { Logo } from '../components/logo'
 import { clientFromAnketa, clientsFromList } from '../lib/importAnketa'
 import { baseRows } from '../lib/exportAnketa'
-import { CalcPage } from '../features/calc'
-import { WAPage } from '../features/wa'
-import { AdminPage, CalcSettingsPanel } from '../features/admin'
+import dynamic from 'next/dynamic'
 import { ClientDetail } from '../features/clients'
-import { HelpPage } from '../features/help'
+
+// Тяжёлые модули грузим по требованию (next/dynamic) — не тянем их в стартовый
+// бандл. Первый экран (дашборд/канбан) открывается заметно быстрее, особенно
+// с телефона. При заходе в раздел — короткий скелетон вместо белого экрана.
+const PageSkeleton = () => (
+  <div className="page-skeleton">
+    <div className="sk-line" style={{width:'40%',height:22}}/>
+    <div className="sk-line" style={{width:'100%',height:120}}/>
+    <div className="sk-line" style={{width:'85%'}}/>
+    <div className="sk-line" style={{width:'70%'}}/>
+    <div className="sk-line" style={{width:'90%'}}/>
+  </div>
+)
+const CalcPage          = dynamic(() => import('../features/calc').then(m => m.CalcPage), { loading: PageSkeleton, ssr: false })
+const WAPage            = dynamic(() => import('../features/wa').then(m => m.WAPage), { loading: PageSkeleton, ssr: false })
+const AdminPage         = dynamic(() => import('../features/admin').then(m => m.AdminPage), { loading: PageSkeleton, ssr: false })
+const CalcSettingsPanel = dynamic(() => import('../features/admin').then(m => m.CalcSettingsPanel), { loading: PageSkeleton, ssr: false })
+const HelpPage          = dynamic(() => import('../features/help').then(m => m.HelpPage), { loading: PageSkeleton, ssr: false })
 
 // ═══ MAIN APP ═════════════════════════════════════════════════════
 export default function CRM() {
@@ -587,6 +602,18 @@ export default function CRM() {
       }
       return saved || c
     } catch (e) {
+      // Конфликт версий (другой менеджер сохранил раньше) — предупреждаем всегда
+      // (даже в тихом автосейве) и подставляем свежую версию в список
+      if (e.status === 409) {
+        toast$('⚠️ ' + e.message, 'err')
+        if (e.data?.client) {
+          const fresh = e.data.client
+          setClients(cs => cs.map(x => x.id === fresh.id ? fresh : x))
+          if (selClient?.id === fresh.id) setSelClient(fresh)
+        }
+        if (!quiet) setSyncing(false)
+        return false
+      }
       if (!quiet) { toast$('❌ ' + e.message, 'err'); setSyncing(false) }
       else quietErr('⚠️ Не сохраняется: ' + e.message)
       return false
