@@ -805,6 +805,12 @@ function WaRepliesPanel() {
   const [autoSaving, setAutoSaving] = useState(false)
   const [rrOn,       setRrOn]       = useState(false)  // round-robin распределение лидов
   const [rrSaving,   setRrSaving]   = useState(false)
+  // Автоответ в нерабочее время (миграция 017, wa_config)
+  const [ohOn,   setOhOn]   = useState(false)
+  const [ohText, setOhText] = useState('')
+  const [ohFrom, setOhFrom] = useState('09:00')
+  const [ohTo,   setOhTo]   = useState('18:00')
+  const [ohSaving, setOhSaving] = useState(false)
 
   useEffect(() => {
     api.getCalcSettings().then(d => {
@@ -821,10 +827,26 @@ function WaRepliesPanel() {
         setAutoOn(!!d.settings.wa_auto_greeting_on)
         setAutoText(d.settings.wa_auto_greeting || '')
         setRrOn(!!d.settings.wa_round_robin)
+        const wc = d.settings.wa_config || {}
+        setOhOn(!!wc.offhours_on)
+        setOhText(wc.offhours_text || '')
+        setOhFrom(wc.work_from || '09:00')
+        setOhTo(wc.work_to || '18:00')
       }
       setLoading(false)
     }).catch(()=>setLoading(false))
   }, [])
+
+  async function saveOffHours() {
+    setOhSaving(true)
+    try {
+      const res = await api.saveCalcSettings({ settings: { wa_config: {
+        offhours_on: ohOn, offhours_text: ohText, work_from: ohFrom, work_to: ohTo,
+      } } })
+      toast(res?.ok ? '✅ Автоответ нерабочего времени сохранён' : '⚠️ Ошибка — применена ли миграция 017?')
+    } catch(e) { toast('❌ ' + e.message) }
+    setOhSaving(false)
+  }
 
   async function saveAutoGreeting() {
     setAutoSaving(true)
@@ -885,6 +907,34 @@ function WaRepliesPanel() {
         <button onClick={saveAutoGreeting} disabled={autoSaving}
           style={{padding:'9px 18px',border:'none',borderRadius:9,background:autoSaving?'#94a3b8':'#10b981',color:'#fff',fontSize:13,fontWeight:700,cursor:autoSaving?'default':'pointer',fontFamily:'inherit'}}>
           {autoSaving ? '⏳ Сохраняю...' : '💾 Сохранить автоответ'}
+        </button>
+      </div>
+
+      {/* Автоответ в нерабочее время */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:16,marginBottom:14}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>🌙 Автоответ в нерабочее время</div>
+          <div onClick={()=>setOhOn(v=>!v)} style={{width:44,height:24,background:ohOn?'#10b981':'#cbd5e1',borderRadius:20,position:'relative',cursor:'pointer',transition:'background .2s'}}>
+            <div style={{position:'absolute',top:3,left:ohOn?23:3,width:18,height:18,background:'#fff',borderRadius:'50%',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,.2)'}}/>
+          </div>
+        </div>
+        <div style={{fontSize:11.5,color:'#64748b',marginBottom:10,lineHeight:1.5}}>
+          Вне рабочих часов (время Казахстана) CRM сама ответит на входящее — не чаще 1 раза в 6 часов на чат. Клиент не чувствует игнора, менеджер спокойно отдыхает.
+        </div>
+        <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:10,flexWrap:'wrap'}}>
+          <label style={{fontSize:12,color:'#334155',fontWeight:600}}>Рабочее время: с
+            <input type="time" value={ohFrom} onChange={e=>setOhFrom(e.target.value)} style={{margin:'0 6px',padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:13,fontFamily:'inherit'}}/>
+            до
+            <input type="time" value={ohTo} onChange={e=>setOhTo(e.target.value)} style={{marginLeft:6,padding:'5px 8px',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:13,fontFamily:'inherit'}}/>
+          </label>
+        </div>
+        <textarea value={ohText} onChange={e=>setOhText(e.target.value)}
+          placeholder="Спасибо за обращение! Сейчас нерабочее время. Ответим в рабочие часы с 9:00 до 18:00. 🌙"
+          rows={3}
+          style={{width:'100%',padding:'10px 12px',border:'1.5px solid #e2e8f0',borderRadius:10,fontSize:13,fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:10,color:'#0f172a',background:ohOn?'#fff':'#f8fafc'}}/>
+        <button onClick={saveOffHours} disabled={ohSaving}
+          style={{padding:'9px 18px',border:'none',borderRadius:9,background:ohSaving?'#94a3b8':'#10b981',color:'#fff',fontSize:13,fontWeight:700,cursor:ohSaving?'default':'pointer',fontFamily:'inherit'}}>
+          {ohSaving ? '⏳ Сохраняю...' : '💾 Сохранить'}
         </button>
       </div>
 

@@ -18,6 +18,23 @@ import { VALID_CHAT_STATUSES } from '../../../lib/waConstants'
 // публичный bucket Supabase. Best-effort: любая ошибка/таймаут → оставляем
 // ссылку Green (сообщение всё равно сохранится). Таймаут 6с и лимит 20МБ, чтобы
 // не выйти за 10-секундный бюджет ответа вебхуку.
+// Текущее время в Казахстане (Asia/Almaty, UTC+5) как 'HH:MM' — сервер в UTC
+function nowAlmatyHM() {
+  try {
+    const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
+    const hh = p.find(x => x.type === 'hour').value
+    const mm = p.find(x => x.type === 'minute').value
+    return `${hh}:${mm}`
+  } catch (e) {
+    return new Date().toISOString().slice(11, 16)  // фолбэк: UTC
+  }
+}
+// Нерабочее время: текущий момент вне [from, to). Сравнение строк 'HH:MM' корректно.
+function isOffHours(from, to) {
+  const now = nowAlmatyHM()
+  return !(now >= (from || '09:00') && now < (to || '18:00'))
+}
+
 async function mirrorIncomingMedia(sb, url, chatId, msgId, mime, name) {
   try {
     if (!url) return ''
@@ -353,6 +370,47 @@ export default async function handler(req, res) {
           }
         }
       } catch (e) { console.error('[auto-greeting check]', e.message) }
+    }
+
+    // ── Автоответ в НЕРАБОЧЕЕ время (миграция 017, wa_config) ──────
+    // На любое входящее вне рабочих часов, не чаще 1 раза в 6ч на чат — чтобы
+    // клиент не чувствовал игнора ночью/в выходной, а менеджер спокойно отдыхал.
+    if (direction === 'in') {
+      try {
+        const { data: cfgRow } = await sb
+          .from('calc_settings').select('wa_config').eq('id', 'main').maybeSingle()
+        const wc = cfgRow?.wa_config
+        if (wc?.offhours_on && String(wc.offhours_text || '').trim() &&
+            isOffHours(wc.work_from, wc.work_to)) {
+          // троттлинг: уже отвечали автоответом нерабочего времени за последние 6ч?
+          const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString()
+          const { data: recent } = await sb.from('wa_messages')
+            .select('id').eq('chat_id', chatId).eq('author', 'Автоответ (нерабочее время)')
+            .gte('sent_at', since).limit(1)
+          const GREEN_ID = process.env.GREEN_API_ID, GREEN_TOKEN = process.env.GREEN_API_TOKEN
+          if (!recent?.length && GREEN_ID && GREEN_TOKEN) {
+            const txt = wc.offhours_text.trim()
+            try {
+              const r = await fetch(
+                `https://api.green-api.com/waInstance${GREEN_ID}/sendMessage/${GREEN_TOKEN}`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chatId, message: txt }) }
+              )
+              const d = await r.json()
+              if (d.idMessage) {
+                await sb.from('wa_messages').insert({
+                  id: d.idMessage, chat_id: chatId, direction: 'out', type: 'text',
+                  body: txt, author: 'Автоответ (нерабочее время)', status: 'sent',
+                  sent_at: new Date().toISOString(),
+                })
+                await sb.from('wa_chats').update({
+                  last_message: txt, last_message_at: new Date().toISOString(),
+                }).eq('id', chatId)
+              }
+            } catch (e) { console.error('[offhours send]', e.message) }
+          }
+        }
+      } catch (e) { console.error('[offhours check]', e.message) }
     }
 
     return res.status(200).json({ ok: true, chatId, msgId, type, direction })
