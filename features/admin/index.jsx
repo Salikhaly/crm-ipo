@@ -41,7 +41,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
           { g:'КОМАНДА',      items:[{id:'managers',l:'👤 Менеджеры'},{id:'users',l:'🔐 Пользователи'}] },
           { g:'ПРОЦЕССЫ',     items:[{id:'pipeline',l:'🔄 Воронка'},{id:'routes',l:'🗺 Маршруты'},{id:'checklists',l:'✅ Чек-листы'}] },
           { g:'ИНСТРУМЕНТЫ',  items:[{id:'calc',l:'🧮 Калькулятор'},{id:'docs',l:'📄 Договоры'},{id:'fields',l:'🧩 Поля карточки'},{id:'wa_replies',l:'⚡ WhatsApp'}] },
-          { g:'СИСТЕМА',      items:[{id:'logs',l:'📜 Журнал'},{id:'trash',l:'🗑 Корзина'}] },
+          { g:'СИСТЕМА',      items:[{id:'logs',l:'📜 Журнал'},{id:'trash',l:'🗑 Корзина'},{id:'wa_cleanup',l:'🧹 Чистка WA'}] },
         ].map(grp => (
           <div key={grp.g} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,padding:'8px 10px'}}>
             <div style={{fontSize:9,fontWeight:800,color:'#94a3b8',letterSpacing:'.08em',marginBottom:6}}>{grp.g}</div>
@@ -195,6 +195,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       {tab === 'fields' && <CustomFieldsPanel/>}
       {tab === 'logs' && <ActionLogPanel/>}
       {tab === 'trash' && <TrashPanel reload={reload}/>}
+      {tab === 'wa_cleanup' && <WaCleanupPanel reload={reload}/>}
     </div>
   )
 }
@@ -1409,6 +1410,84 @@ function RoutesPanel() {
 
 // ─── КОРЗИНА КЛИЕНТОВ ────────────────────────────────────────────────────────
 // Удалённые клиенты (deleted_clients, миграция 015): восстановить или удалить навсегда.
+// Чистка старых WA-лидов: авто-созданные из WhatsApp, без договора, застрявшие
+// в «Новом лиде». Мягко в корзину (восстановимо). Только admin/head.
+function WaCleanupPanel({ reload }) {
+  const [items, setItems] = useState(null)
+  const [sel,   setSel]   = useState(() => new Set())
+  const [busy,  setBusy]  = useState(false)
+  const [msg,   setMsg]   = useState('')
+  const toast = t => { setMsg(t); setTimeout(() => setMsg(''), 3500) }
+
+  function load() {
+    setItems(null); setSel(new Set())
+    api.getWaJunk().then(d => {
+      const list = d?.clients || []
+      setItems(list)
+      setSel(new Set(list.map(c => c.id)))  // по умолчанию выбраны все
+    }).catch(() => setItems([]))
+  }
+  useEffect(() => { load() }, [])
+
+  const toggle = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleAll = () => setSel(s => s.size === (items||[]).length ? new Set() : new Set((items||[]).map(c=>c.id)))
+
+  async function clean() {
+    if (!sel.size) return
+    if (!window.confirm(`Переместить ${sel.size} лид(ов) в корзину? Их можно восстановить в разделе «Корзина».`)) return
+    setBusy(true)
+    try {
+      const res = await api.cleanWaJunk([...sel])
+      toast(res?.ok ? `✅ В корзину перемещено: ${res.deleted}` : '⚠️ Ошибка')
+      reload && reload()
+      load()
+    } catch (e) { toast('❌ ' + e.message) }
+    setBusy(false)
+  }
+
+  return (
+    <div style={{position:'relative'}}>
+      {msg && <div style={{position:'fixed',top:16,right:16,background:'#0f172a',color:'#fff',padding:'10px 16px',borderRadius:10,fontSize:13,zIndex:200,boxShadow:'0 4px 16px rgba(0,0,0,.2)'}}>{msg}</div>}
+      <div style={{fontWeight:800,fontSize:16,marginBottom:7}}>🧹 Чистка старых WhatsApp-лидов</div>
+      <div style={{background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:12,padding:'11px 13px',marginBottom:13,fontSize:13,color:'#92400e',lineHeight:1.5}}>
+        Здесь — лиды, которые <b>сами создались из WhatsApp</b> до смены модели: без договора и застрявшие в «Новом лиде». Это обычно случайные обращения. Перемещение — <b>в корзину</b>, откуда всё можно восстановить.
+      </div>
+
+      {items === null && <div style={{textAlign:'center',padding:30,color:'#94a3b8'}}>⏳ Загрузка…</div>}
+      {items && items.length === 0 && (
+        <div style={{textAlign:'center',padding:'40px 20px',color:'#64748b'}}>
+          <i className="ti ti-sparkles" style={{fontSize:40,display:'block',marginBottom:10,color:'#10b981',opacity:.4}}/>
+          <p style={{fontSize:15,fontWeight:600}}>База чистая — старых WA-лидов нет 🎉</p>
+        </div>
+      )}
+      {items && items.length > 0 && (
+        <>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,flexWrap:'wrap'}}>
+            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,fontWeight:600,color:'#334155',cursor:'pointer'}}>
+              <input type="checkbox" checked={sel.size === items.length} onChange={toggleAll}/>
+              Выбрать все ({items.length})
+            </label>
+            <Btn variant="danger" size="sm" disabled={busy || !sel.size} onClick={clean} style={{marginLeft:'auto'}}>
+              <i className="ti ti-trash"/>{busy ? 'Перемещаю…' : `В корзину (${sel.size})`}
+            </Btn>
+          </div>
+          <div style={{border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',maxHeight:'55vh',overflowY:'auto'}}>
+            {items.map(c => (
+              <label key={c.id} style={{display:'flex',alignItems:'center',gap:11,padding:'10px 13px',borderBottom:'1px solid #f1f5f9',cursor:'pointer',background:sel.has(c.id)?'#fef2f2':'#fff'}}>
+                <input type="checkbox" checked={sel.has(c.id)} onChange={()=>toggle(c.id)}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>{c.fio || 'Без имени'}</div>
+                  <div style={{fontSize:11.5,color:'#94a3b8'}}>{c.phone || '—'}{c.dateIn ? ' · ' + c.dateIn : ''}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function TrashPanel({ reload }) {
   const [items, setItems] = useState(null)
   const [ready, setReady] = useState(true)
