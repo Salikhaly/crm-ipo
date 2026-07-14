@@ -340,7 +340,9 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
   }, []) // eslint-disable-line — зависимости из замыканий стабильны
 
   // ── Sidebar: список чатов — useMemo чтобы не пересчитывать при несвязанных рендерах
-  const ChatList = useMemo(() => (
+  // Без useMemo: мемоизация тут ловила баги (кнопка «Шаблоны» не работала —
+  // showTemplates не был в зависимостях). Рендер дешёвый, фильтрация уже мемоизирована.
+  const ChatList = (
     <div className={"wa-sidebar" + (showChatView ? " slide-out" : "")}>
       {/* Header */}
       <div style={{padding:'12px 14px',borderBottom:'1px solid #e2e8f0',background:'#075e54',flexShrink:0}}>
@@ -435,10 +437,10 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
         })}
       </div>
     </div>
-  ), [filteredChats, selChat, waSearch, waFilter, waMgrFilter, totalUnread, managers, clients, showChatView, mgrById])
+  )
 
   // ── Chat view — useMemo чтобы не перестраивать при изменении списка чатов
-  const ChatView = useMemo(() => (
+  const ChatView = (
     <div className={"wa-main" + (!showChatView ? " slide-out" : "")}>
       {!selChat ? (
         <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'#64748b',gap:14,background:'#f0f0f0',padding:'0 30px',textAlign:'center'}}>
@@ -468,20 +470,18 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
               </div>
             </div>
 
-            {/* Назначить менеджера */}
-            <button onClick={()=>setShowAssignDlg(!showAssignDlg)} title="Назначить менеджера / сменить статус"
-              style={{border:'none',background:'rgba(255,255,255,.15)',color:'#fff',borderRadius:8,width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
-              <i className="ti ti-user-check" style={{fontSize:16}}/>
+            {/* Действия — понятные кнопки с подписями */}
+            <button onClick={()=>setShowAssignDlg(!showAssignDlg)} title="Назначить менеджера и сменить статус чата"
+              style={{border:'none',background:showAssignDlg?'#fff':'rgba(255,255,255,.18)',color:showAssignDlg?'#075e54':'#fff',borderRadius:9,padding:'7px 11px',cursor:'pointer',fontSize:12.5,fontWeight:700,fontFamily:'inherit',display:'flex',alignItems:'center',gap:5,flexShrink:0}}>
+              <i className="ti ti-user-cog" style={{fontSize:15}}/><span className="wa-btn-label">Менеджер</span>
             </button>
 
-            {/* Карточка клиента */}
             {linkedClient
-              ? <button onClick={()=>setShowClientPanel(!showClientPanel)}
-                  style={{border:'none',background:'rgba(255,255,255,.15)',color:'#fff',borderRadius:8,width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
-                  <i className="ti ti-user" style={{fontSize:16}}/>
+              ? <button onClick={()=>setShowClientPanel(!showClientPanel)} title="Открыть карточку клиента"
+                  style={{border:'none',background:showClientPanel?'#fff':'rgba(255,255,255,.18)',color:showClientPanel?'#075e54':'#fff',borderRadius:9,padding:'7px 11px',cursor:'pointer',fontSize:12.5,fontWeight:700,fontFamily:'inherit',display:'flex',alignItems:'center',gap:5,flexShrink:0}}>
+                  <i className="ti ti-id" style={{fontSize:15}}/><span className="wa-btn-label">Карточка</span>
                 </button>
               : <button onClick={()=>{
-                    // Автозаполняем из данных чата
                     setNLead(x=>({
                       ...x,
                       phone: selChat.phone || '',
@@ -490,15 +490,10 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
                     }))
                     setShowNewLead(true)
                   }}
-                  title="Завести клиента в базе CRM"
+                  title="Завести этого клиента в базе CRM"
                   style={{border:'none',background:'#25d366',color:'#fff',borderRadius:9,padding:'7px 12px',cursor:'pointer',fontSize:12.5,fontWeight:800,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6,flexShrink:0,boxShadow:'0 2px 8px rgba(37,211,102,.35)'}}>
                   <i className="ti ti-database-plus" style={{fontSize:15}}/>В CRM базу
                 </button>}
-
-            <a href={`https://wa.me/${(selChat.phone||'').replace(/\D/g,'')}`} target="_blank" rel="noreferrer"
-              style={{border:'none',background:'rgba(255,255,255,.15)',color:'#fff',borderRadius:8,padding:'6px 8px',display:'flex',alignItems:'center',cursor:'pointer',textDecoration:'none',flexShrink:0}}>
-              <i className="ti ti-external-link" style={{fontSize:16}}/>
-            </a>
           </div>
 
           {/* Диалог назначения менеджера и смены статуса */}
@@ -686,7 +681,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
         </>
       )}
     </div>
-  ), [selChat, messages, showChatView, showAssignDlg, msgText, sendingFile, managers, linkedClient, showClientPanel, mgrById, showQuickMenu, filteredQuickReplies, quickFilter])
+  )
 
   // ── Client panel ──────────────────────────────────────────────
   // Быстрый расчёт ипотеки по данным связанного клиента → в поле ввода
