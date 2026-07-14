@@ -23,11 +23,26 @@ import {
 import { Logo } from '../components/logo'
 import { clientFromAnketa, clientsFromList } from '../lib/importAnketa'
 import { baseRows } from '../lib/exportAnketa'
-import { CalcPage } from '../features/calc'
-import { WAPage } from '../features/wa'
-import { AdminPage, CalcSettingsPanel } from '../features/admin'
+import dynamic from 'next/dynamic'
 import { ClientDetail } from '../features/clients'
-import { HelpPage } from '../features/help'
+
+// Тяжёлые модули грузим по требованию (next/dynamic) — не тянем их в стартовый
+// бандл. Первый экран (дашборд/канбан) открывается заметно быстрее, особенно
+// с телефона. При заходе в раздел — короткий скелетон вместо белого экрана.
+const PageSkeleton = () => (
+  <div className="page-skeleton">
+    <div className="sk-line" style={{width:'40%',height:22}}/>
+    <div className="sk-line" style={{width:'100%',height:120}}/>
+    <div className="sk-line" style={{width:'85%'}}/>
+    <div className="sk-line" style={{width:'70%'}}/>
+    <div className="sk-line" style={{width:'90%'}}/>
+  </div>
+)
+const CalcPage          = dynamic(() => import('../features/calc').then(m => m.CalcPage), { loading: PageSkeleton, ssr: false })
+const WAPage            = dynamic(() => import('../features/wa').then(m => m.WAPage), { loading: PageSkeleton, ssr: false })
+const AdminPage         = dynamic(() => import('../features/admin').then(m => m.AdminPage), { loading: PageSkeleton, ssr: false })
+const CalcSettingsPanel = dynamic(() => import('../features/admin').then(m => m.CalcSettingsPanel), { loading: PageSkeleton, ssr: false })
+const HelpPage          = dynamic(() => import('../features/help').then(m => m.HelpPage), { loading: PageSkeleton, ssr: false })
 
 // ═══ MAIN APP ═════════════════════════════════════════════════════
 export default function CRM() {
