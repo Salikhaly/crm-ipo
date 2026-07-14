@@ -587,6 +587,18 @@ export default function CRM() {
       }
       return saved || c
     } catch (e) {
+      // Конфликт версий (другой менеджер сохранил раньше) — предупреждаем всегда
+      // (даже в тихом автосейве) и подставляем свежую версию в список
+      if (e.status === 409) {
+        toast$('⚠️ ' + e.message, 'err')
+        if (e.data?.client) {
+          const fresh = e.data.client
+          setClients(cs => cs.map(x => x.id === fresh.id ? fresh : x))
+          if (selClient?.id === fresh.id) setSelClient(fresh)
+        }
+        if (!quiet) setSyncing(false)
+        return false
+      }
       if (!quiet) { toast$('❌ ' + e.message, 'err'); setSyncing(false) }
       else quietErr('⚠️ Не сохраняется: ' + e.message)
       return false

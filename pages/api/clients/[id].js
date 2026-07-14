@@ -59,8 +59,21 @@ export default withAuth(async function handler(req, res) {
 
     // Загружаем текущее состояние для аудит-лога и проверки доступа
     const { data: existing } = await sb
-      .from('clients').select('manager, responsible_manager, mortgage_specialist, stage, comments').eq('id', id).maybeSingle()
+      .from('clients').select('*').eq('id', id).maybeSingle()
     if (!existing) return res.status(404).json({ error: 'Клиент не найден' })
+
+    // ── Optimistic locking: карточку изменил другой менеджер? ──────
+    // Клиент прислал updatedAt, с которым загружал карточку. Если в БД версия
+    // новее — кто-то сохранил раньше; не затираем его правки, возвращаем 409
+    // и свежую версию, фронт предупредит и обновит.
+    if (client.updatedAt && existing.updated_at &&
+        String(client.updatedAt) !== String(existing.updated_at)) {
+      return res.status(409).json({
+        error: 'Карточку одновременно изменил другой менеджер. Обновите — ваши правки не применены.',
+        stale: true,
+        client: dbToClient(existing),
+      })
+    }
 
     // Менеджер может редактировать любого клиента команды, но НЕ переназначать
     // менеджера (защита от «увода» лидов). Ничейного клиента (без менеджера) —

@@ -13,6 +13,36 @@ import { VALID_CHAT_STATUSES } from '../../../lib/waConstants'
 
 // VALID_CHAT_STATUSES импортируется из lib/waConstants — не дублируйте здесь
 
+// Ссылки Green API на входящие медиа временные (живут несколько дней). Для
+// ипотеки документы клиента должны храниться долго → зеркалим файл в постоянный
+// публичный bucket Supabase. Best-effort: любая ошибка/таймаут → оставляем
+// ссылку Green (сообщение всё равно сохранится). Таймаут 6с и лимит 20МБ, чтобы
+// не выйти за 10-секундный бюджет ответа вебхуку.
+async function mirrorIncomingMedia(sb, url, chatId, msgId, mime, name) {
+  try {
+    if (!url) return ''
+    const ac = new AbortController()
+    const t  = setTimeout(() => ac.abort(), 6000)
+    let r
+    try { r = await fetch(url, { signal: ac.signal }) } finally { clearTimeout(t) }
+    if (!r || !r.ok) return ''
+    const declared = +r.headers.get('content-length') || 0
+    if (declared > 20 * 1024 * 1024) return ''
+    const buf = Buffer.from(await r.arrayBuffer())
+    if (buf.length > 20 * 1024 * 1024) return ''
+    const BUCKET = 'wa-media'
+    try { await sb.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 20 * 1024 * 1024 }) } catch (e) { /* уже есть */ }
+    const safe = String(name || 'file').replace(/[^\w.\-]/g, '_').slice(0, 80)
+    const path = `${chatId.replace('@c.us', '')}/in_${msgId}_${safe}`
+    const { error } = await sb.storage.from(BUCKET).upload(path, buf, { contentType: mime || 'application/octet-stream', upsert: true })
+    if (error) return ''
+    return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+  } catch (e) {
+    console.error('[wa mirror in]', e.message)
+    return ''
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Только POST' })
@@ -222,13 +252,20 @@ export default async function handler(req, res) {
 
     // ── Сохраняем сообщение ВСЕГДА (msgId теперь всегда есть; дубли — по id) ──
     {
+      // Входящий файл — зеркалим в постоянное хранилище (ссылка Green временная).
+      // На неудаче остаётся ссылка Green — сообщение в любом случае сохранится.
+      let storedMedia = mediaUrl
+      if (mediaUrl && direction === 'in') {
+        const m = await mirrorIncomingMedia(sb, mediaUrl, chatId, msgId, mediaMime, mediaName)
+        if (m) storedMedia = m
+      }
       const { error: insertErr } = await sb.from('wa_messages').upsert({
         id:         msgId,
         chat_id:    chatId,
         direction,
         type,
         body:       text,
-        media_url:  mediaUrl,
+        media_url:  storedMedia,
         media_name: mediaName,
         media_mime: mediaMime,
         media_size: mediaSize,
