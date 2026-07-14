@@ -132,17 +132,10 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
   }
 
   function applyQuickReply(r) {
-    const client = linkedClient
-    let text = r.body
-    if (client) {
-      text = text
-        .replace(/\{\{имя\}\}/g,      client.fio?.split(' ')[0] || client.fio || '')
-        .replace(/\{\{менеджер\}\}/g,  user?.name || '')
-        .replace(/\{\{сумма\}\}/g,     client.contract_amount ? Math.round(client.contract_amount).toLocaleString('ru') + ' ₸' : '')
-        .replace(/\{\{программа\}\}/g, client.contract_type || '')
-    }
-    text = text.replace(/\{\{менеджер\}\}/g, user?.name || '')
-    setMsgText(text)
+    // Единая подстановка переменных (applyTemplate): раньше здесь читались
+    // contract_amount/contract_type (snake_case), а клиент в camelCase — сумма и
+    // программа не подставлялись. Теперь общий движок, как в панели «Шаблоны».
+    setMsgText(applyTemplate(r.body))
     setShowQuickMenu(false)
     setQuickFilter('')
     setTimeout(() => inputRef.current?.focus(), 50)
@@ -153,6 +146,16 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
     return r.trigger.toLowerCase().includes(quickFilter) ||
            r.title.toLowerCase().includes(quickFilter)
   })
+
+  // Единый список шаблонов для панели «Шаблоны»: сначала настроенные техником
+  // в админке (те же, что и по «/»), затем встроенные заготовки. Раньше панель
+  // показывала ТОЛЬКО встроенные — техник правил один набор, а менеджер видел другой.
+  const templateCats = [
+    ...(quickReplies.length
+      ? [{ cat: '⭐ Ваши шаблоны', items: quickReplies.map(r => ({ id: r.id, label: r.title, text: r.body })) }]
+      : []),
+    ...MSG_TEMPLATES,
+  ]
 
   // Запрашиваем уведомления при первом открытии
   useEffect(() => {
@@ -559,7 +562,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
               {/* Категории */}
               {!tmplSearch && (
                 <div style={{display:'flex',gap:4,padding:'7px 10px',borderBottom:'1px solid #f1f5f9',overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-                  {MSG_TEMPLATES.map((cat,i) => (
+                  {templateCats.map((cat,i) => (
                     <button key={i} onClick={()=>setTmplCat(i)}
                       style={{padding:'4px 10px',borderRadius:20,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap',flexShrink:0,
                         background:tmplCat===i?'#3b82f6':'#f1f5f9',color:tmplCat===i?'#fff':'#64748b',transition:'all .15s'}}>
@@ -572,8 +575,8 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
               <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
                 {(() => {
                   const items = tmplSearch
-                    ? MSG_TEMPLATES.flatMap(c=>c.items).filter(t=>t.label.toLowerCase().includes(tmplSearch.toLowerCase())||t.text.toLowerCase().includes(tmplSearch.toLowerCase()))
-                    : MSG_TEMPLATES[tmplCat]?.items || []
+                    ? templateCats.flatMap(c=>c.items).filter(t=>t.label.toLowerCase().includes(tmplSearch.toLowerCase())||t.text.toLowerCase().includes(tmplSearch.toLowerCase()))
+                    : templateCats[tmplCat]?.items || []
                   return items.length === 0
                     ? <div style={{padding:'20px',textAlign:'center',color:'#94a3b8',fontSize:13}}>Ничего не найдено</div>
                     : items.map(tmpl => (
