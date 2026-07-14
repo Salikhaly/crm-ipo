@@ -643,6 +643,16 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                 fontWeight:700,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
                 <i className="ti ti-file-check" style={{fontSize:16}}/>Документы
               </button>
+              <button onClick={()=>{
+                const link = (typeof window !== 'undefined' ? window.location.origin : '') + '/client/' + c.id
+                try { navigator.clipboard.writeText(link); toast$('🔗 Ссылка для клиента скопирована — отправьте её клиенту, он увидит статус заявки') }
+                catch(e) { toast$('❌ Не удалось скопировать','err') }
+              }} title="Публичная страница статуса заявки для клиента"
+                style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+                padding:'10px',borderRadius:11,background:'#eff6ff',border:'1.5px solid #bfdbfe',color:'#1d4ed8',
+                fontWeight:700,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
+                <i className="ti ti-link" style={{fontSize:16}}/>Ссылка клиенту
+              </button>
             </div>
 
             {/* Contact status */}
