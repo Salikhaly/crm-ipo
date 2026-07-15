@@ -624,7 +624,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
               {/* Подсказка про переменные */}
               <div style={{padding:'6px 12px',background:'#f8fafc',borderTop:'1px solid #f1f5f9',fontSize:10,color:'#94a3b8'}}>
                 <i className="ti ti-info-circle" style={{marginRight:4}}/>
-                Переменные подставляются автоматически: {{имя}}, {{банк}}, {{сумма}}, {{дата}}
+                Переменные подставляются автоматически: {'{{имя}}, {{банк}}, {{сумма}}, {{дата}}'}
               </div>
             </div>
           )}
