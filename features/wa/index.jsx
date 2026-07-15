@@ -8,6 +8,17 @@ import { emptyClient, fmt, fmtN, MAX_FILE_SIZE_BYTES,
 import { Inp, Sel, Fl } from '../../components/ui'
 
 
+// Подпись разделителя дат в переписке: Сегодня / Вчера / «14 июля»
+function waDayLabel(d) {
+  if (!d) return ''
+  const today = new Date(); today.setHours(0,0,0,0)
+  const day = new Date(d); day.setHours(0,0,0,0)
+  const diff = Math.round((today - day) / 86400000)
+  if (diff === 0) return 'Сегодня'
+  if (diff === 1) return 'Вчера'
+  return day.toLocaleDateString('ru', { day: 'numeric', month: 'long' })
+}
+
 // ─── useDebounce hook ─────────────────────────────────────
 function useDebounce(value, delay = 200) {
   const [debounced, setDebounced] = useState(value)
@@ -541,7 +552,25 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
                 Здесь появится переписка.<br/>Напишите первым или дождитесь сообщения клиента.
               </div>
             )}
-            {messages.map(msg => renderMessage(msg))}
+            {(() => {
+              // Разделитель дат между днями — как в настоящем WhatsApp
+              const out = []
+              let lastDay = ''
+              for (const msg of messages) {
+                const d = msg.sent_at ? new Date(msg.sent_at) : null
+                const key = d ? d.toDateString() : ''
+                if (key && key !== lastDay) {
+                  lastDay = key
+                  out.push(
+                    <div key={'sep_'+key} style={{textAlign:'center',margin:'8px 0'}}>
+                      <span style={{display:'inline-block',background:'rgba(255,255,255,.85)',color:'#54656f',fontSize:11.5,fontWeight:600,padding:'4px 12px',borderRadius:20,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>{waDayLabel(d)}</span>
+                    </div>
+                  )
+                }
+                out.push(renderMessage(msg))
+              }
+              return out
+            })()}
             <div ref={msgsEndRef}/>
           </div>
 
@@ -736,6 +765,19 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
     }
   }
 
+  // Быстрая задача-напоминание на клиента прямо из чата (amoCRM-стиль)
+  async function reminderTomorrow() {
+    const lc = linkedClient
+    if (!lc) return
+    const due = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+    const task = { id: 'task_' + Date.now(), type: 'Перезвонить', text: 'из WhatsApp',
+      due, done: false, created: new Date().toISOString().slice(0, 10) }
+    try {
+      await api.updateClient(lc.id, { ...lc, tasks: [...(lc.tasks || []), task] })
+      toast$ && toast$('⏰ Задача создана: перезвонить завтра')
+    } catch (e) { toast$ ? toast$('❌ ' + e.message, 'err') : alert(e.message) }
+  }
+
   const ClientPanel = showClientPanel && linkedClient && (
     <div className="wa-client-panel">
       <div style={{padding:'13px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -768,6 +810,12 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
         <div style={{fontSize:11,color:'#94a3b8',textAlign:'center',marginTop:6}}>
           Считает по программе клиента из карточки (без неё — Наурыз 20%)
         </div>
+
+        {/* Быстрое напоминание */}
+        <button onClick={reminderTomorrow}
+          style={{width:'100%',marginTop:8,padding:'11px',borderRadius:11,background:'#fff',color:'#d97706',border:'1.5px solid #fde68a',cursor:'pointer',fontWeight:700,fontSize:14,fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
+          <i className="ti ti-clock-plus"/>Напомнить перезвонить завтра
+        </button>
       </div>
     </div>
   )
