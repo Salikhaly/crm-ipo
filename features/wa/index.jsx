@@ -316,10 +316,15 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
               <div style={{width:38,height:38,borderRadius:'50%',background:isOut?'rgba(0,0,0,.1)':'#25d36622',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                 <i className="ti ti-microphone" style={{fontSize:18,color:isOut?'#555':'#25d366'}}/>
               </div>
-              <div style={{flex:1}}>
+              <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>🎤 Голосовое</div>
                 {msg.media_url
-                  ? <audio controls src={msg.media_url} style={{width:'100%',height:34,outline:'none'}}/>
+                  ? <>
+                      <audio controls preload="metadata" src={msg.media_url} style={{width:'100%',height:34,outline:'none'}}/>
+                      <a href={msg.media_url} target="_blank" rel="noreferrer" download style={{fontSize:11,color:'#3b82f6',textDecoration:'none',display:'inline-flex',alignItems:'center',gap:3,marginTop:2}}>
+                        <i className="ti ti-download" style={{fontSize:12}}/>Открыть / скачать
+                      </a>
+                    </>
                   : <div style={{fontSize:11,color:'#94a3b8'}}>Загрузка...</div>}
               </div>
             </div>

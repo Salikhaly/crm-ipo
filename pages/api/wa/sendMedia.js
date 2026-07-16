@@ -35,10 +35,8 @@ export default withAuth(async function handler(req, res) {
     const waPhone  = rawPhone.startsWith('7') ? rawPhone : '7' + rawPhone
     const waId     = chatId || (waPhone + '@c.us')
 
-    // Base64
     const fileData   = fs.readFileSync(file.filepath)
     fs.unlink(file.filepath, () => {})   // удаляем временный файл сразу после прочтения
-    const base64File = fileData.toString('base64')
     const fileName   = file.originalFilename || 'file'
     const mimeType   = file.mimetype || 'application/octet-stream'
 
@@ -48,18 +46,22 @@ export default withAuth(async function handler(req, res) {
     else if (mimeType.startsWith('video/')) msgType = 'video'
     else if (mimeType.startsWith('audio/')) msgType = 'audio'
 
-    // Green API — токен передаётся в URL-пути, как требует Green API REST API
+    // Green API sendFileByUpload ждёт multipart/form-data с БИНАРНЫМ файлом.
+    // Раньше слали base64 в JSON → Green отвечал 502 «Internal server error» и
+    // отправка медиа с сайта не работала. Теперь корректный FormData (Node 18+).
+    const greenForm = new FormData()
+    greenForm.append('chatId', waId)
+    greenForm.append('fileName', fileName)
+    if (caption) greenForm.append('caption', caption)
+    greenForm.append('file', new Blob([fileData], { type: mimeType }), fileName)
+
     const greenRes = await fetch(
       `https://api.green-api.com/waInstance${GREEN_ID}/sendFileByUpload/${GREEN_TOKEN}`,
-      {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ chatId: waId, fileName, caption, file: base64File }),
-      }
+      { method: 'POST', body: greenForm }   // Content-Type ставит fetch сам (с boundary)
     )
-    const greenData = await greenRes.json()
+    const greenData = await greenRes.json().catch(() => ({ error: 'bad response' }))
     if (!greenRes.ok || !greenData.idMessage) {
-      console.error('Green API sendMedia error:', greenData)
+      console.error('Green API sendMedia error:', greenRes.status, greenData)
       return res.status(502).json({ error: 'Green API: ' + JSON.stringify(greenData) })
     }
 
@@ -75,7 +77,8 @@ export default withAuth(async function handler(req, res) {
       try { await sb.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 32 * 1024 * 1024 }) } catch (e) { /* уже есть */ }
       const safe = String(fileName).replace(/[^\w.\-]/g, '_').slice(0, 80)
       const path = `${waId.replace('@c.us','')}/${greenData.idMessage}_${safe}`
-      const { error: upErr } = await sb.storage.from(BUCKET).upload(path, fileData, { contentType: mimeType, upsert: true })
+      const cleanMime = String(mimeType || 'application/octet-stream').split(';')[0].trim()
+      const { error: upErr } = await sb.storage.from(BUCKET).upload(path, fileData, { contentType: cleanMime, upsert: true })
       if (!upErr) storedUrl = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
       else console.error('[wa media store upload]', upErr.message)
     } catch (e) { console.error('[wa media store]', e.message) }

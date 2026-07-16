@@ -51,7 +51,9 @@ async function mirrorIncomingMedia(sb, url, chatId, msgId, mime, name) {
     try { await sb.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 20 * 1024 * 1024 }) } catch (e) { /* уже есть */ }
     const safe = String(name || 'file').replace(/[^\w.\-]/g, '_').slice(0, 80)
     const path = `${chatId.replace('@c.us', '')}/in_${msgId}_${safe}`
-    const { error } = await sb.storage.from(BUCKET).upload(path, buf, { contentType: mime || 'application/octet-stream', upsert: true })
+    // codecs-параметр в content-type ломает воспроизведение <audio> в части браузеров
+    const cleanMime = String(mime || 'application/octet-stream').split(';')[0].trim()
+    const { error } = await sb.storage.from(BUCKET).upload(path, buf, { contentType: cleanMime, upsert: true })
     if (error) { console.error('[wa mirror in upload]', error.message); return '' }
     return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
   } catch (e) {
