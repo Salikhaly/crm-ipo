@@ -77,7 +77,11 @@ export default withAuth(async function handler(req, res) {
       const path = `${waId.replace('@c.us','')}/${greenData.idMessage}_${safe}`
       const { error: upErr } = await sb.storage.from(BUCKET).upload(path, fileData, { contentType: mimeType, upsert: true })
       if (!upErr) storedUrl = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+      else console.error('[wa media store upload]', upErr.message)
     } catch (e) { console.error('[wa media store]', e.message) }
+    // Запас: Green возвращает urlFile отправленного файла — лучше временная
+    // ссылка, чем заглушка, если зеркало не удалось
+    if (!storedUrl && greenData.urlFile) storedUrl = greenData.urlFile
 
     // Сохраняем сообщение
     await sb.from('wa_messages').upsert({
