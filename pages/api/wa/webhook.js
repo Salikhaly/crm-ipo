@@ -52,7 +52,7 @@ async function mirrorIncomingMedia(sb, url, chatId, msgId, mime, name) {
     const safe = String(name || 'file').replace(/[^\w.\-]/g, '_').slice(0, 80)
     const path = `${chatId.replace('@c.us', '')}/in_${msgId}_${safe}`
     const { error } = await sb.storage.from(BUCKET).upload(path, buf, { contentType: mime || 'application/octet-stream', upsert: true })
-    if (error) return ''
+    if (error) { console.error('[wa mirror in upload]', error.message); return '' }
     return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
   } catch (e) {
     console.error('[wa mirror in]', e.message)
@@ -153,6 +153,12 @@ export default async function handler(req, res) {
     const msgType = messageData?.typeMessage ?? 'textMessage'
     let type = 'text', text = '', mediaUrl = '', mediaName = '', mediaMime = '', mediaSize = 0
 
+    // Green API кладёт данные ЛЮБОГО файла (фото/видео/аудио/документ) в
+    // messageData.fileMessageData — ключей imageMessageData и т.п. НЕ существует.
+    // Из-за этого downloadUrl был пуст и медиа показывались заглушкой.
+    // Читаем fileMessageData первым, старые ключи оставлены как запас.
+    const fd = messageData?.fileMessageData || {}
+
     switch (msgType) {
       case 'textMessage':
         type = 'text'
@@ -163,38 +169,41 @@ export default async function handler(req, res) {
         text = (messageData?.extendedTextMessageData?.text ?? '').substring(0, 4096)
         break
       case 'imageMessage':
-        type     = 'image'
-        text     = (messageData?.imageMessageData?.caption ?? '').substring(0, 1024)
-        mediaUrl = messageData?.imageMessageData?.downloadUrl ?? ''
-        mediaMime = 'image/jpeg'
+        type      = 'image'
+        text      = (fd.caption ?? messageData?.imageMessageData?.caption ?? '').substring(0, 1024)
+        mediaUrl  = fd.downloadUrl ?? messageData?.imageMessageData?.downloadUrl ?? ''
+        mediaName = (fd.fileName ?? '').substring(0, 255)
+        mediaMime = fd.mimeType || 'image/jpeg'
         break
       case 'videoMessage':
-        type     = 'video'
-        text     = (messageData?.videoMessageData?.caption ?? '').substring(0, 1024)
-        mediaUrl  = messageData?.videoMessageData?.downloadUrl ?? ''
-        mediaMime = 'video/mp4'
+        type      = 'video'
+        text      = (fd.caption ?? messageData?.videoMessageData?.caption ?? '').substring(0, 1024)
+        mediaUrl  = fd.downloadUrl ?? messageData?.videoMessageData?.downloadUrl ?? ''
+        mediaName = (fd.fileName ?? '').substring(0, 255)
+        mediaMime = fd.mimeType || 'video/mp4'
         break
       case 'audioMessage':
-        type     = 'audio'
-        mediaUrl  = messageData?.audioMessageData?.downloadUrl ?? ''
-        mediaMime = 'audio/ogg'
+        type      = 'audio'
+        mediaUrl  = fd.downloadUrl ?? messageData?.audioMessageData?.downloadUrl ?? ''
+        mediaName = (fd.fileName ?? '').substring(0, 255)
+        mediaMime = fd.mimeType || 'audio/ogg'
         break
       case 'pttMessage':
-        type     = 'voice'
-        mediaUrl  = messageData?.pttMessageData?.downloadUrl ?? ''
-        mediaMime = 'audio/ogg'
+        type      = 'voice'
+        mediaUrl  = fd.downloadUrl ?? messageData?.pttMessageData?.downloadUrl ?? ''
+        mediaMime = fd.mimeType || 'audio/ogg'
         break
       case 'documentMessage':
         type      = 'document'
-        mediaUrl  = messageData?.documentMessageData?.downloadUrl ?? ''
-        mediaName = (messageData?.documentMessageData?.fileName ?? 'document').substring(0, 255)
-        mediaMime = messageData?.documentMessageData?.mimeType ?? ''
-        mediaSize = parseInt(messageData?.documentMessageData?.fileSize ?? 0, 10) || 0
+        mediaUrl  = fd.downloadUrl ?? messageData?.documentMessageData?.downloadUrl ?? ''
+        mediaName = (fd.fileName ?? messageData?.documentMessageData?.fileName ?? 'document').substring(0, 255)
+        mediaMime = fd.mimeType ?? messageData?.documentMessageData?.mimeType ?? ''
+        mediaSize = parseInt(fd.fileSize ?? messageData?.documentMessageData?.fileSize ?? 0, 10) || 0
         break
       case 'stickerMessage':
         type      = 'image'
-        mediaUrl  = messageData?.stickerMessageData?.downloadUrl ?? ''
-        mediaMime = 'image/webp'
+        mediaUrl  = fd.downloadUrl ?? messageData?.stickerMessageData?.downloadUrl ?? ''
+        mediaMime = fd.mimeType || 'image/webp'
         text      = '[Стикер]'
         break
       case 'quotedMessage':

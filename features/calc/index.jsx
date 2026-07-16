@@ -1896,6 +1896,38 @@ function CalcTaxTab({ doCalc }) {
             })()}
           </div>
 
+          {/* План по месяцам: клиенту сразу видно 2/3/4/5/6 месяцев */}
+          {(() => {
+            const gross = result.breakdown.find(r=>r.isGross)?.val || (+String(salary).replace(/\s/g,'') || 0)
+            const totalRow = result.breakdown.find(r=>r.isTotal)?.val || 0
+            const held = Math.max(0, gross - netVal)   // удержания с работника в месяц
+            if (!gross) return null
+            return (
+              <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:12}}>
+                <div style={{padding:'9px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontWeight:800,fontSize:12.5,color:'#0f172a'}}>
+                  📅 Если класть такую зарплату несколько месяцев
+                </div>
+                <div style={{padding:'4px 14px 10px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'52px 1fr 1fr 1fr',gap:6,padding:'7px 0 4px',fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>
+                    <span>Срок</span><span style={{textAlign:'right'}}>Внесёте</span><span style={{textAlign:'right'}}>Удержится</span><span style={{textAlign:'right'}}>На карту</span>
+                  </div>
+                  {[2,3,4,5,6].map(n => (
+                    <div key={n} style={{display:'grid',gridTemplateColumns:'52px 1fr 1fr 1fr',gap:6,padding:'6px 0',borderTop:'1px solid #f8fafc',fontSize:12.5}}>
+                      <span style={{fontWeight:800,color:'#3b82f6'}}>{n} мес</span>
+                      <span style={{textAlign:'right',fontWeight:600}}>{fmt(gross*n)}</span>
+                      <span style={{textAlign:'right',color:'#dc2626',fontWeight:600}}>−{fmt(held*n)}</span>
+                      <span style={{textAlign:'right',color:'#0f766e',fontWeight:800}}>{fmt(netVal*n)}</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10.5,color:'#94a3b8',marginTop:6,lineHeight:1.5}}>
+                    «Удержится» — налоги с работника (ОПВ, ВОСМС, СО, ИПН) за весь срок. Полные затраты
+                    с услугами бухгалтера: {fmt(totalRow)}/мес × срок. Ставки настраиваются: Панель техника → Калькулятор → Налоги.
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
           {/* Если есть комиссия — показываем разбивку */}
           {feeVal > 0 && (
             <div style={{background:'#fef9c3',border:'1.5px solid #fde68a',borderRadius:10,
