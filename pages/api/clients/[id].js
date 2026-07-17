@@ -7,6 +7,7 @@ import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, add
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 import { logAction } from '../../../lib/actionLog'
+import { canMoveToStage } from '../../../lib/constants'
 
 export default withAuth(async function handler(req, res) {
   const sb = getSupabase()
@@ -75,6 +76,32 @@ export default withAuth(async function handler(req, res) {
       })
     }
 
+    // ── Дедуп при РЕДАКТИРОВАНИИ (аудит 18.07: проверялся только POST) ────
+    // Смена телефона/ИИН на уже занятые другим клиентом ломает связывание
+    // WhatsApp-чатов (поиск по хвосту номера перестаёт быть однозначным).
+    const newTail = String(client.phone || '').replace(/\D/g, '').replace(/^8/, '7').slice(-10)
+    const oldTail = String(existing.phone || '').replace(/\D/g, '').replace(/^8/, '7').slice(-10)
+    if (newTail.length === 10 && newTail !== oldTail) {
+      const { data: dup } = await sb.from('clients').select('id, fio, phone')
+        .ilike('phone', '%' + newTail).neq('id', id).limit(1)
+      if (dup?.length) {
+        return res.status(409).json({ error: 'Телефон уже есть у клиента: ' + (dup[0].fio || dup[0].phone) })
+      }
+    }
+    if (client.iin && /^\d{12}$/.test(client.iin) && client.iin !== existing.iin) {
+      const { data: dupI } = await sb.from('clients').select('id, fio')
+        .eq('iin', client.iin).neq('id', id).limit(1)
+      if (dupI?.length) {
+        return res.status(409).json({ error: 'ИИН уже есть у клиента: ' + (dupI[0].fio || 'без имени') })
+      }
+    }
+
+    // ── Серверная валидация перехода этапа (аудит 18.07: была только во фронте) ──
+    if (client.stage && client.stage !== existing.stage) {
+      const chk = canMoveToStage(client, client.stage)
+      if (!chk.ok) return res.status(400).json({ error: chk.msg })
+    }
+
     // Менеджер может редактировать любого клиента команды, но НЕ переназначать
     // менеджера (защита от «увода» лидов). Ничейного клиента (без менеджера) —
     // можно взять себе.
@@ -128,20 +155,38 @@ export default withAuth(async function handler(req, res) {
     addCustom(row, client)
     addPkbFields(row, client)
 
-    let { data, error } = await sb
-      .from('clients')
-      .update(row)
-      .eq('id', id)
-      .select()
-      .single()
+    // АТОМАРНЫЙ optimistic lock: версия проверяется прямо в WHERE самого UPDATE.
+    // Ранняя проверка выше (SELECT → сравнение → UPDATE) не атомарна: два
+    // одновременных PUT с одной версией проскакивали SELECT до чужой записи и
+    // ОБА получали 200 — второй молча затирал первого (воспроизведено гонкой
+    // потоков в аудите 18.07). Теперь UPDATE срабатывает только если updated_at
+    // в БД всё ещё тот, что видел клиент; 0 строк = проигрыш гонки → 409.
+    const doUpdate = () => {
+      let q = sb.from('clients').update(row).eq('id', id)
+      if (client.updatedAt) q = q.eq('updated_at', client.updatedAt)
+      return q.select().maybeSingle()
+    }
+    let { data, error } = await doUpdate()
 
     // Если необязательной колонки ещё нет (миграции 008/010 не запущены) — повторяем без неё
     for (let missing = findMissingOptionalColumn(error, row); missing; missing = findMissingOptionalColumn(error, row)) {
       delete row[missing]
-      ;({ data, error } = await sb.from('clients').update(row).eq('id', id).select().single())
+      ;({ data, error } = await doUpdate())
     }
 
     if (error) return apiError(res, error)
+
+    // 0 строк при заданной версии — гонку выиграл другой запрос за миг до нас
+    if (!data && client.updatedAt) {
+      const { data: fresh } = await sb.from('clients').select('*').eq('id', id).maybeSingle()
+      if (!fresh) return res.status(404).json({ error: 'Клиент не найден' })
+      return res.status(409).json({
+        error: 'Карточку одновременно изменил другой менеджер. Обновите — ваши правки не применены.',
+        stale: true,
+        client: dbToClient(fresh),
+      })
+    }
+    if (!data) return res.status(404).json({ error: 'Клиент не найден' })
 
     // Журнал: смена этапа фиксируется отдельно (детальнее), прочие правки — как update
     if (client.stage && existing && client.stage !== existing.stage) {

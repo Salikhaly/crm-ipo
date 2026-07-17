@@ -246,3 +246,117 @@ describe('GET /api/clients/:id', () => {
     expect(res.status).toHaveBeenCalledWith(403)
   })
 })
+
+// ── Фиксы аудита 18.07: дедуп на PUT, серверная валидация этапов, атомарная гонка ──
+// Скриптуемая цепочка: каждый вызов терминального метода забирает следующий
+// результат из очереди — позволяет прописать сценарий из нескольких запросов.
+function makeScriptedChain(queue) {
+  const c = {}
+  const next = () => Promise.resolve(queue.shift() || { data: null, error: null })
+  for (const m of ['select','insert','update','delete','eq','neq','or','order','ilike','gte','lte']) {
+    c[m] = jest.fn().mockReturnValue(c)
+  }
+  c.limit       = jest.fn(() => next())
+  c.maybeSingle = jest.fn(() => next())
+  c.single      = jest.fn(() => next())
+  c.then  = (f) => next().then(f)
+  return c
+}
+
+describe('PUT /api/clients/:id — фиксы аудита 18.07', () => {
+  const EXISTING = {
+    id: 'c1', fio: 'Иванов', phone: '+77001112233', iin: '111111111111',
+    stage: 'new_lead', manager: 'm1', updated_at: '2026-07-18T10:00:00+00:00',
+    responsible_manager: null, mortgage_specialist: '', comments: [],
+  }
+
+  test('смена этапа на «Договор» без типа/суммы → 400 (серверная canMoveToStage)', async () => {
+    const chain = makeScriptedChain([{ data: EXISTING, error: null }])
+    mockFrom.mockReturnValue(chain)
+    const res = makeRes()
+    await idHandler({
+      method: 'PUT',
+      headers: { authorization: makeToken('admin') },
+      query: { id: 'c1' },
+      body: { id: 'c1', fio: 'Иванов', stage: 'contract', updatedAt: EXISTING.updated_at },
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json.mock.calls[0][0].error).toMatch(/тип и сумму договора/i)
+  })
+
+  test('смена телефона на занятый другим клиентом → 409', async () => {
+    const chain = makeScriptedChain([
+      { data: EXISTING, error: null },                                  // load existing
+      { data: [{ id: 'c2', fio: 'Петров', phone: '+77009998877' }], error: null }, // dup check
+    ])
+    mockFrom.mockReturnValue(chain)
+    const res = makeRes()
+    await idHandler({
+      method: 'PUT',
+      headers: { authorization: makeToken('admin') },
+      query: { id: 'c1' },
+      body: { id: 'c1', fio: 'Иванов', phone: '+77009998877', stage: 'new_lead', updatedAt: EXISTING.updated_at },
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json.mock.calls[0][0].error).toMatch(/телефон уже есть/i)
+  })
+
+  test('смена ИИН на занятый → 409', async () => {
+    const chain = makeScriptedChain([
+      { data: EXISTING, error: null },
+      { data: [{ id: 'c2', fio: 'Петров' }], error: null },  // dup ИИН
+    ])
+    mockFrom.mockReturnValue(chain)
+    const res = makeRes()
+    await idHandler({
+      method: 'PUT',
+      headers: { authorization: makeToken('admin') },
+      query: { id: 'c1' },
+      body: { id: 'c1', fio: 'Иванов', phone: '+77001112233', iin: '222222222222', stage: 'new_lead', updatedAt: EXISTING.updated_at },
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json.mock.calls[0][0].error).toMatch(/иин уже есть/i)
+  })
+
+  test('гонка: UPDATE-по-версии вернул 0 строк → 409 со свежей версией (не тихий 200)', async () => {
+    const freshRow = { ...EXISTING, fio: 'Победивший', updated_at: '2026-07-18T10:00:01+00:00' }
+    const chain = makeScriptedChain([
+      { data: EXISTING, error: null },   // load existing (версия совпадает — ранняя проверка пройдена)
+      { data: null, error: null },       // атомарный UPDATE: 0 строк — гонку выиграл другой
+      { data: freshRow, error: null },   // re-fetch свежей версии
+    ])
+    mockFrom.mockReturnValue(chain)
+    const res = makeRes()
+    await idHandler({
+      method: 'PUT',
+      headers: { authorization: makeToken('admin') },
+      query: { id: 'c1' },
+      body: { id: 'c1', fio: 'Проигравший', phone: '+77001112233', stage: 'new_lead', updatedAt: EXISTING.updated_at },
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(409)
+    const body = res.json.mock.calls[0][0]
+    expect(body.stale).toBe(true)
+    expect(body.client.fio).toBe('Победивший')
+  })
+
+  test('успешный PUT: атомарный UPDATE фильтрует и по id, и по updated_at', async () => {
+    const updated = { ...EXISTING, fio: 'Обновлённый' }
+    const chain = makeScriptedChain([
+      { data: EXISTING, error: null },
+      { data: updated, error: null },    // UPDATE прошёл (версия совпала)
+    ])
+    mockFrom.mockReturnValue(chain)
+    const res = makeRes()
+    await idHandler({
+      method: 'PUT',
+      headers: { authorization: makeToken('admin') },
+      query: { id: 'c1' },
+      body: { id: 'c1', fio: 'Обновлённый', phone: '+77001112233', stage: 'new_lead', updatedAt: EXISTING.updated_at },
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(200)
+    // .eq вызван и с id, и с updated_at (атомарный WHERE)
+    const eqArgs = chain.eq.mock.calls.map(a => a[0])
+    expect(eqArgs).toContain('id')
+    expect(eqArgs).toContain('updated_at')
+  })
+})
