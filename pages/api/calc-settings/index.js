@@ -1,30 +1,66 @@
 // pages/api/calc-settings/index.js
-// GET  → все настройки калькулятора (API + новый)
-// POST → сохранить настройки
+// GET         → все настройки калькулятора (API + новый) + быстрые ответы WhatsApp
+// POST / PUT  → сохранить настройки / программы / шаблоны WA
+// DELETE      → удалить шаблон WA ({replyId}) или программу ({programKey})
+//
+// ВАЖНО про методы: фронт (lib/api.js) шлёт сохранение PUT-ом, а удаление DELETE-ом.
+// Раньше обработчик знал только GET и POST → каждая кнопка «Сохранить» в админке
+// (налоги, договоры, поля карточки, маршруты, WhatsApp) молча ловила 405, и в базе
+// так и лежали null-ы. Принимаем оба метода — upsert идемпотентен.
 
 import { withRole }  from '../../../lib/auth'
 import { getSupabase } from '../../../lib/supabase'
 import { apiError, apiErrors } from '../../../lib/apiError'
+
+// Фронт отдаёт camelCase, в таблице snake_case
+const replyToDb = (r, i) => ({
+  id:         r.id,
+  trigger:    String(r.trigger || '').trim(),
+  title:      String(r.title   || '').trim(),
+  body:       String(r.body    || ''),
+  category:   r.category || 'general',
+  active:     r.active !== false,
+  sort_order: r.sortOrder ?? i,
+})
 
 async function handler(req, res) {
   const sb = getSupabase()
 
   // ── GET: вернуть все настройки ──────────────────────────────────
   if (req.method === 'GET') {
-    const [settRes, progRes] = await Promise.all([
+    const [settRes, progRes, repRes] = await Promise.all([
       sb.from('calc_settings').select('*').eq('id', 'main').single(),
       sb.from('calc_programs').select('*').eq('active', true).order('sort_order'),
+      sb.from('wa_quick_replies').select('*').order('sort_order'),
     ])
     return res.status(200).json({
       ok:       true,
       settings: settRes.data  || null,
       programs: progRes.data  || [],
+      // Нет таблицы (миграция 005 не применена) — не роняем настройки целиком
+      replies:  repRes.error ? [] : (repRes.data || []),
     })
   }
 
-  // ── POST: сохранить настройки ───────────────────────────────────
-  if (req.method === 'POST') {
-    const { settings, programs } = req.body || {}
+  // ── DELETE: шаблон WA или программа ─────────────────────────────
+  if (req.method === 'DELETE') {
+    const { replyId, programKey } = req.body || {}
+    if (replyId) {
+      const { error } = await sb.from('wa_quick_replies').delete().eq('id', replyId)
+      if (error) return res.status(500).json({ error: 'Не удалось удалить шаблон' })
+      return res.status(200).json({ ok: true })
+    }
+    if (programKey) {
+      const { error } = await sb.from('calc_programs').delete().eq('key', programKey)
+      if (error) return res.status(500).json({ error: 'Не удалось удалить программу' })
+      return res.status(200).json({ ok: true })
+    }
+    return res.status(400).json({ error: 'Нужен replyId или programKey' })
+  }
+
+  // ── POST/PUT: сохранить настройки ───────────────────────────────
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const { settings, programs, replies } = req.body || {}
     const errs = []
 
     // Сохранение настроек (основные + расширенные)
@@ -88,6 +124,27 @@ async function handler(req, res) {
           updated_at: new Date().toISOString(),
         })
         if (error) errs.push({ section: 'program:' + p.key, error: process.env.NODE_ENV === 'development' ? error.message : 'DB error' })
+      }
+    }
+
+    // Сохранение шаблонов WhatsApp. trigger в таблице UNIQUE — два шаблона с одной
+    // командой «/» дают внятную ошибку в UI, а не молчаливую потерю текста.
+    if (Array.isArray(replies)) {
+      for (let i = 0; i < replies.length; i++) {
+        const row = replyToDb(replies[i], i)
+        if (!row.trigger || !row.title) {
+          errs.push({ section: 'reply:' + (row.trigger || row.id), error: 'Нужны команда и название' })
+          continue
+        }
+        const { error } = await sb.from('wa_quick_replies').upsert(row)
+        if (error) {
+          const dup = (error.message || '').includes('duplicate') || error.code === '23505'
+          errs.push({
+            section: 'reply:' + row.trigger,
+            error: dup ? `Команда ${row.trigger} уже занята другим шаблоном`
+                       : (process.env.NODE_ENV === 'development' ? error.message : 'DB error'),
+          })
+        }
       }
     }
 

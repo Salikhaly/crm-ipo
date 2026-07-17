@@ -880,8 +880,9 @@ function WaRepliesPanel() {
     setSaving(true)
     try {
       const res = await api.saveCalcSettings({ replies })
+      // Без текста ошибки менеджер не поймёт, что чинить (частый случай — занятая команда «/»)
       if (res?.ok) toast('✅ Шаблоны сохранены!')
-      else toast('⚠️ Сохранено с ошибками')
+      else toast('⚠️ ' + (res?.errors?.[0]?.error || 'Сохранено с ошибками'))
     } catch(e) { toast('❌ '+e.message) }
     setSaving(false)
   }
@@ -986,6 +987,14 @@ function WaRepliesPanel() {
           + Добавить шаблон
         </button>
       </div>
+
+      {!replies.length && (
+        <div style={{border:'1.5px dashed #cbd5e1',borderRadius:11,padding:'22px 16px',textAlign:'center',color:'#64748b',fontSize:12.5,lineHeight:1.6,marginBottom:9}}>
+          Шаблонов пока нет.<br/>
+          Нажмите <b>«+ Добавить шаблон»</b> — задайте команду (например <code>/привет</code>),
+          название и текст, затем <b>«Сохранить шаблоны»</b>.
+        </div>
+      )}
 
       {replies.map(r => (
         <div key={r.id}
