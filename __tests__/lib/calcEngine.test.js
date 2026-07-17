@@ -306,7 +306,7 @@ describe('calcBuh', () => {
     expect(calcBuh({ type:'Трудовой' }).ok).toBe(false)
   })
 
-  test('breakdown содержит ИТОГО', () => {
+  test('breakdown содержит Полную стоимость (isTotal)', () => {
     const r = calcBuh({ type:'Трудовой', salary:300000 })
     expect(r.ok).toBe(true)
     const total = r.breakdown.find(b => b.isTotal)
@@ -314,18 +314,30 @@ describe('calcBuh', () => {
     expect(total.val).toBeGreaterThan(0)
   })
 
-  test('ИТОГО = сумма всех ненулевых строк (кроме «на руки»)', () => {
+  test('БАЛАНС: Начислено = Удержано с зарплаты + На руки', () => {
     const r = calcBuh({ type:'Трудовой', salary:300000 })
-    const total    = r.breakdown.find(b => b.isTotal)
-    const sumLines = r.breakdown.filter(b => !b.isTotal && !b.isNet && b.val !== null).reduce((a,b) => a + b.val, 0)
-    expect(total.val).toBe(sumLines)
+    const gross = r.breakdown.find(b => b.isGross).val
+    const held  = r.breakdown.find(b => b.isSub).val
+    const net   = r.breakdown.find(b => b.isNet).val
+    expect(gross).toBe(300000)
+    expect(held + net).toBe(gross)   // ← суммы СХОДЯТСЯ (жалоба владельца)
   })
 
-  test('«Останется на руки» = ЗП минус удержания работника', () => {
+  test('Полная стоимость = Начислено + расходы сверх зарплаты', () => {
     const r = calcBuh({ type:'Трудовой', salary:300000 })
+    const gross = r.breakdown.find(b => b.isGross).val
+    const total = r.breakdown.find(b => b.isTotal).val
+    const extras = r.breakdown.filter(b => b.isExtra).reduce((a,b) => a + b.val, 0)
+    expect(total).toBe(gross + extras)
+  })
+
+  test('«Удержано с зарплаты» = ОПВ+ВОСМС+СО+ИПН', () => {
+    const r = calcBuh({ type:'Трудовой', salary:300000 })
+    const held = r.breakdown.find(b => b.isSub).val
+    const ded  = r.breakdown.filter(b => b.isDed).reduce((a,b) => a + b.val, 0)
+    expect(held).toBe(ded)
     const net = r.breakdown.find(b => b.isNet)
-    const g = l => r.breakdown.find(b => b.label === l).val
-    expect(net.val).toBe(300000 - g('ОПВ') - g('ВОСМС') - g('СО') - g('ИПН'))
+    expect(net.val).toBe(300000 - held)
     expect(net.val).toBeGreaterThan(0)
   })
 
