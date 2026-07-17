@@ -1143,8 +1143,8 @@ export default function CRM() {
       {modal?.type==='import' && <ImportModal onImport={importClients} onClose={()=>setModal(null)} syncing={syncing} pipeline={pipeline}/>}
 
       {/* Modals */}
-      {modal?.type==='quick_client'  && <QuickClientModal  base={modal.c} onSave={saveClient} onOpen={c=>setSelClient(c)} onClose={()=>setModal(null)}
-        onFull={(f,p,s)=>setModal({ type:'new_client', c:{ ...modal.c, fio:f, phone:p, source:s } })} syncing={syncing}/>}
+      {modal?.type==='quick_client'  && <QuickClientModal  base={modal.c} managers={managers} canPickMgr={isSuperUser} onSave={saveClient} onOpen={c=>setSelClient(c)} onClose={()=>setModal(null)}
+        onFull={(f,p,s,m)=>setModal({ type:'new_client', c:{ ...modal.c, fio:f, phone:p, source:s, manager:m } })} syncing={syncing}/>}
       {modal?.type==='new_client'    && <NewClientModal    client={modal.c} managers={managers} pipeline={pipeline} onSave={saveClient} onClose={()=>setModal(null)} syncing={syncing}/>}
       {modal?.type==='mgr_edit'      && <MgrModal          item={modal.item} onSave={saveMgr} onClose={()=>setModal(null)} syncing={syncing}/>}
       {modal?.type==='user_edit'     && <UserModal         item={modal.item} managers={managers} onSave={saveUser} onClose={()=>setModal(null)} syncing={syncing}/>}
@@ -1529,17 +1529,18 @@ function GlobalSearch({ clients, pipeline, onOpen }) {
 }
 
 // ─── QUICK ADD: лид за 10 секунд (имя + телефон + источник) ──────
-function QuickClientModal({ base, onSave, onOpen, onClose, onFull, syncing }) {
+function QuickClientModal({ base, managers = [], canPickMgr, onSave, onOpen, onClose, onFull, syncing }) {
   const [fio,    setFio]    = useState('')
   const [phone,  setPhone]  = useState('')
   const [source, setSource] = useState(base?.source || 'instagram')
+  const [mgr,    setMgr]    = useState(base?.manager || '')
   const [busy,   setBusy]   = useState(false)
   const phoneRef = useRef(null)
 
   async function add(openAfter) {
     if (!fio.trim() && !phone.trim()) return
     setBusy(true)
-    const saved = await onSave({ ...base, fio: fio.trim(), phone: phone.trim(), source })
+    const saved = await onSave({ ...base, fio: fio.trim(), phone: phone.trim(), source, manager: mgr })
     setBusy(false)
     if (saved) { onClose(); if (openAfter) onOpen(saved) }
   }
@@ -1566,13 +1567,21 @@ function QuickClientModal({ base, onSave, onOpen, onClose, onFull, syncing }) {
             ))}
           </div>
         }/>
+        {canPickMgr && (
+          <Fl l="Менеджер" ch={
+            <Sel value={mgr} onChange={e=>setMgr(e.target.value)}>
+              <option value="">— без менеджера —</option>
+              {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </Sel>
+          }/>
+        )}
         <div style={{display:'flex',gap:8,marginTop:16}}>
           <Btn variant="primary" style={{flex:1,justifyContent:'center'}} disabled={busy||syncing||(!fio.trim()&&!phone.trim())} onClick={()=>add(true)}>
             {busy ? <i className="ti ti-loader spin"/> : <><i className="ti ti-user-plus"/>Добавить и открыть</>}
           </Btn>
           <Btn style={{justifyContent:'center'}} disabled={busy||syncing||(!fio.trim()&&!phone.trim())} onClick={()=>add(false)}>Добавить</Btn>
         </div>
-        <button onClick={()=>onFull(fio.trim(), phone.trim(), source)}
+        <button onClick={()=>onFull(fio.trim(), phone.trim(), source, mgr)}
           style={{display:'block',width:'100%',textAlign:'center',marginTop:12,border:'none',background:'transparent',color:'#3b82f6',fontSize:12.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
           Нужна полная форма → открыть
         </button>

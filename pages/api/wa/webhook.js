@@ -88,10 +88,6 @@ export default async function handler(req, res) {
 
     const { typeWebhook, senderData, messageData } = body
 
-    // ВРЕМЕННАЯ ДИАГНОСТИКА (снять после разбора входящих): что реально шлёт Green
-    console.log('[WA HOOK]', 'type=' + typeWebhook, 'chatId=' + (senderData?.chatId || '-'),
-      'msgType=' + (messageData?.typeMessage || '-'), 'idMessage=' + (body.idMessage || '-'))
-
     // ── Статус доставки / прочтения ──────────────────────────
     if (typeWebhook === 'outgoingMessageStatus') {
       const msgId     = body.idMessage || ''
@@ -306,8 +302,6 @@ export default async function handler(req, res) {
         sent_at:    sentAt,
       }, { onConflict: 'id', ignoreDuplicates: true })  // ignoreDuplicates=true — не перезаписываем уже сохранённые
 
-      // ВРЕМЕННАЯ ДИАГНОСТИКА: результат сохранения сообщения
-      console.log('[WA SAVE]', 'dir=' + direction, 'type=' + type, 'id=' + msgId, insertErr ? ('ERR: ' + insertErr.message) : 'OK')
       if (insertErr) console.error('Message upsert error:', insertErr.message)
     }
 
