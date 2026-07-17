@@ -6,7 +6,7 @@
 import { getSupabase } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
-import { VALID_CHAT_STATUSES } from '../../../lib/waConstants'
+import { VALID_CHAT_STATUSES, VALID_CHAT_CATS } from '../../../lib/waConstants'
 
 export default withAuth(async function handler(req, res) {
   const sb = getSupabase()
@@ -95,18 +95,37 @@ export default withAuth(async function handler(req, res) {
       upd.status = status
     }
     if (req.body.clientId !== undefined) upd.client_id = req.body.clientId || null
+    // Метка чата. '' допустима — снять метку. Валидируем, чтобы в базу не попал мусор.
+    if (req.body.category !== undefined) {
+      const cat = req.body.category || ''
+      if (cat && !VALID_CHAT_CATS.includes(cat)) {
+        return res.status(400).json({ error: `Недопустимая категория: ${cat}` })
+      }
+      upd.category = cat
+    }
     if (markRead === true) upd.unread_count = 0
 
     if (Object.keys(upd).length === 0) {
       return res.status(400).json({ error: 'Нечего обновлять' })
     }
 
-    const { data, error } = await sb
+    let { data, error } = await sb
       .from('wa_chats')
       .update(upd)
       .eq('id', chatId)
       .select()
       .maybeSingle()
+
+    // Миграция 020 не применена: колонки category ещё нет. Не роняем обновление —
+    // снимаем метку из запроса, повторяем и просим применить миграцию.
+    if (error && 'category' in upd && /category/.test(error.message || '')) {
+      delete upd.category
+      if (Object.keys(upd).length === 0) {
+        return res.status(200).json({ ok: true, chat: null, needMigration: '020_wa_chat_category' })
+      }
+      ;({ data, error } = await sb.from('wa_chats').update(upd).eq('id', chatId).select().maybeSingle())
+      if (!error) return res.status(200).json({ ok: true, chat: data, needMigration: '020_wa_chat_category' })
+    }
 
     if (error) return apiError(res, error)
     if (!data) return res.status(404).json({ error: 'Чат не найден' })

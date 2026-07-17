@@ -315,6 +315,9 @@ export default function CRM() {
     swipeStartX.current = null
     if (Math.abs(dx) < 70 || Math.abs(dy) > 50) return
     setPage(prev => {
+      // В WhatsApp свайп между окнами отключён: там водишь пальцем по чату и
+      // случайно улетаешь на Калькулятор/Поиск. Переключаться — только кнопками.
+      if (prev === 'wa') return prev
       const idx = PAGE_ORDER.indexOf(prev)
       if (idx === -1) return prev
       if (dx < 0 && idx < PAGE_ORDER.length - 1) return PAGE_ORDER[idx + 1]
@@ -840,6 +843,21 @@ export default function CRM() {
     } catch (e) { toast$('❌ ' + e.message, 'err') }
   }, []) // useCallback
 
+  const setWaChatCategory = useCallback(async function setWaChatCategory(chatId, category) {
+    // Оптимистично: метка появляется сразу. Обновляем и открытый чат (selWaChat —
+    // отдельный стейт), иначе галочка в диалоге не подсветится.
+    const patch = (cat) => {
+      setWaChats(cs => cs.map(c => c.id === chatId ? { ...c, category: cat } : c))
+      setSelWaChat(sc => sc && sc.id === chatId ? { ...sc, category: cat } : sc)
+    }
+    patch(category)
+    try {
+      const r = await api.setWaChatCategory(chatId, category)
+      // Миграция 020 не применена — откатываем и подсказываем что сделать.
+      if (r?.needMigration) { patch(''); toast$('⚠️ Метки заработают после миграции 020', 'err') }
+    } catch (e) { patch(''); toast$('❌ ' + e.message, 'err') }
+  }, []) // useCallback
+
   async function importWaLead(c, linkWaChatId) {
     // Клиент с этим номером/ИИН уже есть? Тогда не плодим дубль (сервер вернёт 409),
     // а привязываем чат к существующему клиенту — частый случай: писал текущий клиент.
@@ -1101,7 +1119,7 @@ export default function CRM() {
             )}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
             {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:clients} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge} onImport={()=>setModal({type:'import'})} onExportAll={()=>exportCsv()}/>}
-            {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
+            {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} onSetCategory={setWaChatCategory} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod} pipeline={pipeline}/>}
