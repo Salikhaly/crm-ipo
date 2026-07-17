@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
-import { ROLE, COLORS, PIPELINE_DEFAULT, ALL_ACCOMP_STAGES, DEFAULT_CHECKLISTS, ACCOMP_TEMPLATES, STAGE_GUIDE, uid, TI, TC, TB } from '../../lib/constants'
+import { ROLE, COLORS, PIPELINE_DEFAULT, ALL_ACCOMP_STAGES, DEFAULT_CHECKLISTS, ACCOMP_TEMPLATES, STAGE_GUIDE, uid, TI, TC, TB, WA_CATS, WA_CAT_L } from '../../lib/constants'
 import { Btn, Tag } from '../../components/ui'
 import { DOC_TEMPLATES_FALLBACK, DOC_PLACEHOLDERS } from '../../lib/docTemplates'
 
@@ -799,7 +799,7 @@ function WaRepliesPanel() {
   const [msg,     setMsg]     = useState('')
 
   const toast = t => { setMsg(t); setTimeout(()=>setMsg(''), 3500) }
-  const CATS  = ['greeting','approval','rejection','docs','calc','meeting','thanks','status','general']
+  const CATS  = WA_CATS.map(([id]) => id)   // общий источник с чатом (lib/constants)
 
   // №5: автоответ новым лидам
   const [autoOn,   setAutoOn]   = useState(false)
@@ -1018,7 +1018,7 @@ function WaRepliesPanel() {
               </div>
             </div>
             <div style={{display:'flex',gap:5,flexShrink:0}}>
-              <span style={{fontSize:10,padding:'2px 7px',borderRadius:5,background:'#f1f5f9',color:'#64748b'}}>{r.category}</span>
+              <span style={{fontSize:10,padding:'2px 7px',borderRadius:5,background:'#f1f5f9',color:'#64748b'}}>{WA_CAT_L[r.category] || r.category}</span>
               <button onClick={e=>{e.stopPropagation();setR(r.id,'active',!r.active)}}
                 style={{padding:'3px 8px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:10,
                   fontWeight:600,cursor:'pointer',
@@ -1053,7 +1053,7 @@ function WaRepliesPanel() {
                   <select value={r.category} onChange={e=>setR(r.id,'category',e.target.value)}
                     style={{padding:'7px 10px',border:'1.5px solid #e2e8f0',borderRadius:8,
                       fontSize:13,width:'100%',background:'#fff',color:'#0f172a'}}>
-                    {CATS.map(c=><option key={c} value={c}>{c}</option>)}
+                    {CATS.map(c=><option key={c} value={c}>{WA_CAT_L[c] || c}</option>)}
                   </select>
                 </div>
               </div>
