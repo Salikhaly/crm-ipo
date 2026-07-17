@@ -977,7 +977,7 @@ function WaRepliesPanel() {
         padding:'10px 14px',marginBottom:14,fontSize:12,color:'#085041',lineHeight:1.6}}>
         <b>⚡ Быстрые ответы через /</b><br/>
         В чате WhatsApp введите <code style={{background:'#fff',padding:'1px 6px',borderRadius:4}}>/</code> и выберите из меню.
-        Переменные: <code>{'{{имя}}'}</code> <code>{'{{менеджер}}'}</code> <code>{'{{сумма}}'}</code> <code>{'{{программа}}'}</code>
+        Переменные: <code>{'{{имя}}'}</code> <code>{'{{фио}}'}</code> <code>{'{{менеджер}}'}</code> <code>{'{{телефон}}'}</code> <code>{'{{банк}}'}</code> <code>{'{{сумма}}'}</code> <code>{'{{программа}}'}</code> <code>{'{{дата}}'}</code> <code>{'{{время}}'}</code>
       </div>
 
       <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
@@ -1063,7 +1063,7 @@ function WaRepliesPanel() {
                   fontSize:12,background:'#fff',color:'#0f172a',resize:'vertical',
                   fontFamily:'inherit',lineHeight:1.55}}/>
               <div style={{fontSize:10,color:'#94a3b8',marginTop:4}}>
-                Переменные: {'{{имя}}'} {'{{менеджер}}'} {'{{сумма}}'} {'{{программа}}'} {'{{цена}}'} {'{{взнос}}'} {'{{кредит}}'} {'{{платёж}}'} {'{{ставка}}'}
+                Переменные: {'{{имя}}'} {'{{фио}}'} {'{{менеджер}}'} {'{{телефон}}'} {'{{банк}}'} {'{{сумма}}'} {'{{программа}}'} {'{{дата}}'} {'{{время}}'} — остальные заменятся на ___
               </div>
             </div>
           )}
