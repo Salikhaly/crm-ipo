@@ -230,8 +230,11 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
       .replace(/{{сумма}}/g,    lc?.contractAmount ? fmtN(lc.contractAmount) : '___')
       .replace(/{{дата}}/g,     dateStr)
       .replace(/{{время}}/g,    timeStr)
+      .replace(/{{программа}}/g, lc?.program || 'подходящая программа')
       .replace(/{{этап}}/g,     lc?.stage || '')
-    return result
+    // Страховка: переменную, которую мы не умеем заполнить, нельзя отправлять
+    // клиенту как «{{цена}}» — оставляем видимый пропуск, менеджер впишет сам.
+    return result.replace(/{{\s*[^{}]*}}/g, '___')
   }
 
   function useTemplate(tmpl) {
