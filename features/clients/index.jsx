@@ -150,13 +150,19 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   // только если у нас нет несохранённых правок, чтобы не затереть ввод
   const cUpdRef = useRef(client.updatedAt)
   useEffect(() => {
-    if (client.updatedAt && client.updatedAt !== cUpdRef.current && !isDirty) {
+    if (!client.updatedAt || client.updatedAt === cUpdRef.current) {
       cUpdRef.current = client.updatedAt
-      verRef.current  = client.updatedAt   // подхватили свежую версию — сверяемся с ней
-      setC(JSON.parse(JSON.stringify(client)))
-    } else {
-      cUpdRef.current = client.updatedAt
+      return
     }
+    cUpdRef.current = client.updatedAt
+    // Версию сверки двигаем ВСЕГДА, даже когда есть несохранённые правки.
+    // Раньше при isDirty ветка else помечала версию как «увиденную», но verRef
+    // оставляла старым — и после первого же 409 карточка навсегда сверялась с
+    // устаревшей версией: «Сохранить» отвечало 409 до перезагрузки страницы.
+    verRef.current = client.updatedAt
+    // А данные на экране заменяем только если менеджер ничего не печатал,
+    // иначе затрём его ввод.
+    if (!isDirty) setC(JSON.parse(JSON.stringify(client)))
   }, [client.updatedAt]) // eslint-disable-line
   const [tab,    setTab]    = useState('profile')
   const [accIdx, setAccIdx] = useState(c.accompStageIndex||0)
@@ -201,12 +207,32 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
   // с собой). Обновляем из ответа сервера после каждого успешного save.
   const verRef = useRef(client.updatedAt || '')
 
+  // Всегда шлём самое свежее состояние: очередь ниже ждёт предыдущий PUT, и к
+  // моменту старта замыкание уже устарело бы.
+  const cRef = useRef(c)
+  useEffect(() => { cRef.current = c }, [c])
+  const savingRef = useRef(null)   // PUT в полёте
+
+  // Сохранения строго по очереди. Два параллельных PUT с одной версией — это
+  // 409 от самого себя: сервер принимает первый и двигает updated_at, второй
+  // прилетает уже с устаревшей версией. Ровно так «Сохранить» и ловило конфликт
+  // с собственным автосейвом, хотя менеджер работал с карточкой один.
+  async function runSave(quiet) {
+    if (savingRef.current) { try { await savingRef.current } catch (e) { /* очередь не рвём */ } }
+    const p = (async () => {
+      setAutoSt('saving')
+      const ok = await onSave({ ...cRef.current, updatedAt: verRef.current }, quiet ? { quiet: true } : {})
+      if (ok) { if (ok.updatedAt) verRef.current = ok.updatedAt; setIsDirty(false); setAutoSt('saved') }
+      else setAutoSt('err')
+      return ok
+    })()
+    savingRef.current = p
+    try { return await p } finally { if (savingRef.current === p) savingRef.current = null }
+  }
+
   async function save() {
     clearTimeout(saveTimer.current)
-    setAutoSt('saving')
-    const ok = await onSave({...c, updatedAt: verRef.current})
-    if (ok) { if (ok.updatedAt) verRef.current = ok.updatedAt; setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
-    return ok
+    return runSave(false)
   }
   // Диалог «Сохранить и выйти» в pages/index зовёт save() открытой карточки
   useEffect(() => { if (saveRef) saveRef.current = save })
@@ -215,11 +241,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
     if (firstC.current) { firstC.current = false; return }
     if (!canEdit) return
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(async () => {
-      setAutoSt('saving')
-      const ok = await onSave({...c, updatedAt: verRef.current}, { quiet: true })
-      if (ok) { if (ok.updatedAt) verRef.current = ok.updatedAt; setIsDirty(false); setAutoSt('saved') } else { setAutoSt('err') }
-    }, 2500)
+    saveTimer.current = setTimeout(() => { runSave(true) }, 2500)
     return () => clearTimeout(saveTimer.current)
   }, [c]) // реагирует на любое изменение карточки, включая setC из вкладок
 
