@@ -40,7 +40,11 @@ const securityHeaders = [
       "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net",
       "img-src 'self' data: https: blob:",
       "connect-src 'self' https://*.supabase.co https://api.green-api.com https://sentry.io https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com",
-      "media-src 'self' blob:",
+      // Голосовые и видео из WhatsApp лежат в Supabase Storage, а запасная ссылка —
+      // на CDN Green API (digitaloceanspaces). С одним 'self' браузер резал их молча:
+      // «violates media-src» — плеер был пустой, и это принимали за битый файл/кодек.
+      // Фото работали только потому, что img-src ниже разрешает https: целиком.
+      "media-src 'self' blob: data: https://*.supabase.co https://*.digitaloceanspaces.com https://api.green-api.com",
       "object-src 'none'",
       "frame-ancestors 'none'",
     ].join('; '),

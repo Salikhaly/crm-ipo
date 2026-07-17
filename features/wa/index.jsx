@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { api } from '../../lib/api'
 import { emptyClient, fmt, fmtN, MAX_FILE_SIZE_BYTES,
-  CR, CR_ST, CITIES, CONTACT_ST } from '../../lib/constants'
+  CR, CR_ST, CITIES, CONTACT_ST, WA_CATS, WA_CAT_L } from '../../lib/constants'
 import { Inp, Sel, Fl } from '../../components/ui'
 
 
@@ -161,10 +161,17 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
   // Единый список шаблонов для панели «Шаблоны»: сначала настроенные техником
   // в админке (те же, что и по «/»), затем встроенные заготовки. Раньше панель
   // показывала ТОЛЬКО встроенные — техник правил один набор, а менеджер видел другой.
+  // Группируем по категориям в порядке WA_CATS: плоский список из полусотни
+  // шаблонов менеджер в живом разговоре не пролистает.
   const templateCats = [
-    ...(quickReplies.length
-      ? [{ cat: '⭐ Ваши шаблоны', items: quickReplies.map(r => ({ id: r.id, label: r.title, text: r.body })) }]
-      : []),
+    ...WA_CATS
+      .map(([id, label]) => ({
+        cat:   label,
+        items: quickReplies
+          .filter(r => (r.category || 'general') === id)
+          .map(r => ({ id: r.id, label: r.title, text: r.body })),
+      }))
+      .filter(g => g.items.length),
     ...MSG_TEMPLATES,
   ]
 
