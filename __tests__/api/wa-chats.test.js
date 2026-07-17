@@ -216,3 +216,41 @@ describe('PATCH /api/wa/chats', () => {
     expect(res.json.mock.calls[0][0].needMigration).toBe('020_wa_chat_category')
   })
 })
+
+describe('DELETE /api/wa/chats — удаление чата (аудит 18.07: удаления не было)', () => {
+  test('admin удаляет чат + его сообщения', async () => {
+    chain.delete = jest.fn().mockReturnValue(chain)
+    const res = makeRes()
+    await handler({
+      method: 'DELETE',
+      headers: { authorization: makeToken('admin') },
+      body: { chatId: 'spam@c.us' },
+      query: {},
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(200)
+    // удалялись и сообщения, и сам чат
+    expect(chain.delete).toHaveBeenCalled()
+  })
+
+  test('403 для менеджера — удалять чаты может только admin/head', async () => {
+    const res = makeRes()
+    await handler({
+      method: 'DELETE',
+      headers: { authorization: makeToken('manager') },
+      body: { chatId: 'spam@c.us' },
+      query: {},
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(403)
+  })
+
+  test('400 без chatId', async () => {
+    const res = makeRes()
+    await handler({
+      method: 'DELETE',
+      headers: { authorization: makeToken('admin') },
+      body: {},
+      query: {},
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(400)
+  })
+})

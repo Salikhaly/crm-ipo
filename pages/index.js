@@ -870,6 +870,16 @@ export default function CRM() {
     } catch (e) { patch(''); toast$('❌ ' + e.message, 'err') }
   }, []) // useCallback
 
+  const deleteWaChat = useCallback(async function deleteWaChat(chatId) {
+    try {
+      await api.deleteWaChat(chatId)
+      setWaChats(cs => cs.filter(c => c.id !== chatId))
+      setSelWaChat(sc => sc && sc.id === chatId ? null : sc)
+      selWaChatRef.current = null
+      toast$('🗑 Чат удалён')
+    } catch (e) { toast$('❌ ' + e.message, 'err') }
+  }, []) // useCallback
+
   async function importWaLead(c, linkWaChatId) {
     // Клиент с этим номером/ИИН уже есть? Тогда не плодим дубль (сервер вернёт 409),
     // а привязываем чат к существующему клиенту — частый случай: писал текущий клиент.
@@ -1131,7 +1141,7 @@ export default function CRM() {
             )}
             {page==='clients'   && <ClientsPage clients={filtered} managers={managers} pipeline={pipeline} onOpen={c => setSelClient(c)} drag={drag} setDrag={setDrag} dragOv={dragOv} setDragOv={setDragOv} onMove={moveClient} onQuick={quickContactAction}/>}
             {page==='search'    && <SearchPage clients={searchRes.length||search||fStage||fMgr?searchRes:clients} managers={managers} pipeline={pipeline} checklists={checklists} search={search} setSearch={setSearch} fStage={fStage} setFStage={setFStage} fMgr={fMgr} setFMgr={setFMgr} onOpen={c => setSelClient(c)} waNew={myCl.filter(c=>c.isWhatsApp&&c.stage==='new_lead')} canMass={isSuperUser} onMass={massUpdate} onExportSel={list=>exportCsv(list)} onMerge={doMerge} onImport={()=>setModal({type:'import'})} onExportAll={()=>exportCsv()}/>}
-            {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} onSetCategory={setWaChatCategory} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
+            {page==='wa'        && <WAPage toast$={toast$} waConfigured={waConfigured} chats={waChats} messages={waMessages} managers={managers} clients={myCl} selChat={selWaChat} onSelChat={c=>{selWaChatRef.current=c;setSelWaChat(c);setWaMessages([]);if(c)loadWaMessages(c.id)}} onSend={sendWaMsg} onSendMedia={sendWaMedia} onImport={importWaLead} onAssign={assignWaChat} onUpdateStatus={updateWaChatStatus} onSetCategory={setWaChatCategory} onDeleteChat={deleteWaChat} user={user} onOpenClient={c=>setSelClient(c)} mgrById={mgrById}/>}
             {page==='calc'      && <CalcPage user={user} clients={myCl} toast$={toast$}/>}
             {page==='tasks'     && <TasksPage clients={myCl} managers={managers} onOpen={c => setSelClient(c)} user={user} onSave={saveClient}/>}
             {page==='kpi'       && <KPIPage data={kpiData} period={kpiPeriod} setPeriod={setKpiPeriod} pipeline={pipeline}/>}

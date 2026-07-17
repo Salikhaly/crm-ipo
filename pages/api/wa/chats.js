@@ -133,5 +133,23 @@ export default withAuth(async function handler(req, res) {
     return res.status(200).json({ ok: true, chat: data })
   }
 
+  // ── DELETE ─────────────────────────────────────────────
+  // Удалить WhatsApp-чат (спам, ошибочный номер, тест) вместе с сообщениями.
+  // Раньше удаления чата не было ВООБЩЕ — мусорные чаты копились в мессенджере
+  // навсегда. Только admin/head: операция необратимая. Медиа в Storage не трогаем
+  // (bucket общий, чистится отдельно), удаляем строки чата и его сообщений.
+  if (req.method === 'DELETE') {
+    if (!['admin', 'head'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Удалять чаты может только admin/head' })
+    }
+    const chatId = req.body?.chatId || req.query?.id
+    if (!chatId) return res.status(400).json({ error: 'chatId обязателен' })
+
+    await sb.from('wa_messages').delete().eq('chat_id', chatId)
+    const { error } = await sb.from('wa_chats').delete().eq('id', chatId)
+    if (error) return apiError(res, error)
+    return res.status(200).json({ ok: true })
+  }
+
   return res.status(405).json({ error: 'Метод не разрешён' })
 })
