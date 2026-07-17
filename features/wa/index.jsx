@@ -110,7 +110,7 @@ const WA_STATUSES = [
 
 
 
-export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, onSetCategory, user, onOpenClient, mgrById, toast$ }) {
+export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, onSetCategory, onDeleteChat, user, onOpenClient, mgrById, toast$ }) {
   const [msgText,         setMsgText]         = useState('')
   const [showChatView,    setShowChatView]     = useState(false)
   const [showTemplates,   setShowTemplates]    = useState(false)
@@ -605,6 +605,20 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
                   })}
                 </div>
               </div>
+              {/* Удаление чата — только admin/head. Спам/ошибочный номер/тест
+                  раньше висели в мессенджере навсегда (удаления чата не было). */}
+              {(user?.role === 'admin' || user?.role === 'head') && onDeleteChat && (
+                <div style={{flexBasis:'100%',borderTop:'1px solid #e2e8f0',paddingTop:10,marginTop:2}}>
+                  <button onClick={()=>{
+                      if (window.confirm('Удалить этот чат вместе со всеми сообщениями? Действие необратимо.')) {
+                        onDeleteChat(selChat.id); setShowAssignDlg(false)
+                      }
+                    }}
+                    style={{border:'none',background:'#fef2f2',color:'#dc2626',borderRadius:8,padding:'7px 12px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:5}}>
+                    <i className="ti ti-trash" style={{fontSize:14}}/>Удалить чат
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
