@@ -6,6 +6,7 @@ import { getSupabase, dbToClient, clientToDb, addSavedCalcs, addCloseReason, add
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
 import { logAction } from '../../../lib/actionLog'
+import { uid } from '../../../lib/constants'
 
 // Экранирует спецсимволы PostgreSQL ILIKE: %, _, \
 function escapeLike(s) {
@@ -59,9 +60,9 @@ export default withAuth(async function handler(req, res) {
   if (req.method === 'POST') {
     const client = req.body
 
-    if (!client.id) {
-      return res.status(400).json({ error: 'id обязателен' })
-    }
+    // id даёт фронт (emptyClient). Если всё же пришёл без него — подставляем свой,
+    // а не роняем создание клиента 400-й: id уходит обратно в ответе.
+    if (!client.id) client.id = uid()
 
     // Менеджер может создавать только себе
     if (role === 'manager') {

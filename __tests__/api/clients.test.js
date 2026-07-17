@@ -151,7 +151,14 @@ describe('GET /api/clients', () => {
 })
 
 describe('POST /api/clients', () => {
-  test('400 если id не передан', async () => {
+  // Раньше сервер отвечал 400 «id обязателен». Фронт слал клиента без id
+  // (emptyClient его не создавал) → «+ Новый клиент» и «В CRM базу» из WhatsApp
+  // не работали вообще. Теперь сервер подставляет свой id.
+  test('без id сервер подставляет свой, а не роняет создание', async () => {
+    const saved = { id: 'gen-id', fio: 'Тест' }
+    const chain = makeFullChain([saved])
+    chain.single = jest.fn().mockResolvedValue({ data: saved, error: null })
+    mockFrom.mockReturnValueOnce(chain)
     const res = makeRes()
     await indexHandler({
       method: 'POST',
@@ -159,7 +166,9 @@ describe('POST /api/clients', () => {
       query: {},
       body: { fio: 'Тест' },
     }, res)
-    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(chain.insert.mock.calls[0][0].id).toEqual(expect.any(String))
+    expect(chain.insert.mock.calls[0][0].id).not.toBe('')
   })
 
   test('201 при создании клиента', async () => {

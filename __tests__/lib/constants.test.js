@@ -4,7 +4,31 @@ const {
   ACCOMP, ACCOMP_TEMPLATES, ACCOMP_GROUP_BY_CONTRACT, ALL_ACCOMP_STAGES,
   getAccompTemplate, STAGE_GUIDE, DEFAULT_CHECKLISTS, getChecklist,
   CLOSE_REASONS, STAGE_AUTO_TASK, canMoveToStage, CONTRACTS, TASK_T,
+  emptyClient, uid,
 } = require('../../lib/constants')
+
+// POST /api/clients требует id. Без него «+ Новый клиент» и «В CRM базу» из
+// WhatsApp падали с 400 — клиента нельзя было завести вообще.
+describe('emptyClient — id для создания клиента', () => {
+  test('всегда возвращает непустой id', () => {
+    const c = emptyClient()
+    expect(typeof c.id).toBe('string')
+    expect(c.id.length).toBeGreaterThan(0)
+  })
+
+  test('id уникален у каждого нового клиента', () => {
+    expect(emptyClient().id).not.toBe(emptyClient().id)
+  })
+
+  test('менеджер проставляется из аргумента', () => {
+    expect(emptyClient('m3').manager).toBe('m3')
+    expect(emptyClient().manager).toBe('')
+  })
+
+  test('uid не падает и даёт разные значения', () => {
+    expect(uid()).not.toBe(uid())
+  })
+})
 
 describe('ACCOMP_TEMPLATES — маршруты по программам', () => {
   test('7 групп маршрутов', () => {
