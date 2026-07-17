@@ -5,6 +5,7 @@
 import { getSupabase } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth }    from '../../../lib/auth'
+import { normalizeWaPhone, toWaChatId } from '../../../lib/waConstants'
 import formidable      from 'formidable'
 import fs              from 'fs'
 
@@ -31,9 +32,8 @@ export default withAuth(async function handler(req, res) {
     if (!phone || !file) return res.status(400).json({ error: 'phone и file обязательны' })
 
     // Форматируем chatId
-    const rawPhone = phone.replace(/\D/g, '')
-    const waPhone  = rawPhone.startsWith('7') ? rawPhone : '7' + rawPhone
-    const waId     = chatId || (waPhone + '@c.us')
+    const waPhone  = normalizeWaPhone(phone)
+    const waId     = chatId || toWaChatId(phone)
 
     const fileData   = fs.readFileSync(file.filepath)
     fs.unlink(file.filepath, () => {})   // удаляем временный файл сразу после прочтения

@@ -115,3 +115,43 @@ describe('baseRows — колонка «Сопровождение»', () => {
     expect(rows[1][i]).toBe('3/7 · Стратегия аудирования')
   })
 })
+
+describe('historyRows — «что по чём сделано»', () => {
+  const { historyRows, HISTORY_HEADERS } = require('../../lib/exportAnketa')
+  const CLIENT = {
+    fio: 'Петров Пётр', phone: '+77010000001', dateIn: '2026-07-01', stage: 'approval',
+    contractType: 'full', contractAmount: 600000,
+    payments: [
+      { name: 'Предоплата', status: 'paid', amount: 180000, paidAmount: 180000, paidDate: '2026-07-05' },
+      { name: 'Остаток',    status: 'pending', amount: 420000, paidAmount: 0 },
+    ],
+    savedCalcs: [{ date: '2026-07-02', program: 'Наурыз', price: 25000000, loan: 20000000, monthly: 150000 }],
+    comments: [{ text: 'Клиент согласен на договор', author: 'Ерлан', date: '2026-07-03' }],
+  }
+  const ctx = { contractLabel: id => ({ full: 'Сопровождение' }[id] || id), stageLabel: id => id }
+
+  test('заголовки на месте', () => {
+    expect(historyRows([], ctx)).toEqual([HISTORY_HEADERS])
+  })
+  test('договор с суммой попадает в историю', () => {
+    const r = historyRows([CLIENT], ctx)
+    const contractRow = r.find(row => row[3] === 'Договор')
+    expect(contractRow[4]).toBe('Сопровождение')
+    expect(contractRow[5]).toBe(600000)
+  })
+  test('оплаченный платёж показывает внесённую сумму, ожидающий — плановую', () => {
+    const r = historyRows([CLIENT], ctx)
+    const pays = r.filter(row => row[3] === 'Оплата')
+    expect(pays[0][5]).toBe(180000)   // paid → paidAmount
+    expect(pays[1][5]).toBe(420000)   // pending → amount
+  })
+  test('расчёт и комментарий присутствуют', () => {
+    const r = historyRows([CLIENT], ctx)
+    expect(r.some(row => row[3] === 'Расчёт')).toBe(true)
+    expect(r.some(row => row[3] === 'Комментарий' && row[4].includes('согласен'))).toBe(true)
+  })
+  test('клиент без активности всё равно даёт строку-статус', () => {
+    const r = historyRows([{ fio: 'Пустой', phone: '+7', stage: 'new_lead' }], ctx)
+    expect(r.some(row => row[3] === 'Статус')).toBe(true)
+  })
+})

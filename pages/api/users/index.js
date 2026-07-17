@@ -39,18 +39,26 @@ export default withAuth(async function handler(req, res) {
     if (exists) return res.status(400).json({ error: 'Логин уже занят' })
 
     const pwd_hash = await bcrypt.hash(u.pwd, 12)
-    const { data, error } = await sb
-      .from('users')
-      .insert({
-        id:         u.id,
-        name:       u.name       || '',
-        login:      u.login.trim().toLowerCase(),
-        pwd_hash,                          // bcrypt hash, не plaintext
-        role:       u.role       || 'manager',
-        manager_id: u.mid        || null,
-      })
-      .select()
-      .single()
+    const row = {
+      id:         u.id,
+      name:       u.name       || '',
+      login:      u.login.trim().toLowerCase(),
+      pwd_hash,                          // bcrypt hash, не plaintext
+      role:       u.role       || 'manager',
+      manager_id: u.mid        || null,
+    }
+
+    let { data, error } = await sb.from('users').insert(row).select().single()
+
+    // Прод-таблица users хранит legacy-колонку `pwd` (NOT NULL, без default):
+    // миграция 003 (rename pwd→pwd_hash) на проде НЕ выполнялась, вместо неё
+    // pwd_hash добавили отдельно. Auth работает через pwd_hash, но INSERT без
+    // pwd падал 500 «not-null constraint» — создать нового сотрудника было НЕЛЬЗЯ.
+    // Дозаполняем pwd маской (реальный пароль — только в bcrypt-хеше) и повторяем.
+    // Миграция 021 убирает колонку насовсем (это ещё и дыра: plaintext в базе).
+    if (error && /column "pwd"/.test(error.message || '')) {
+      ;({ data, error } = await sb.from('users').insert({ ...row, pwd: '***' }).select().single())
+    }
 
     if (error) return apiError(res, error)
     const { pwd_hash: _, ...safeUser } = data  // не возвращаем хеш клиенту
