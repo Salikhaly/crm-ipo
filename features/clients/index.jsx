@@ -765,7 +765,7 @@ export function ClientDetail({ client, managers, pipeline, checklists, user, onS
                 {tab==='accomp'   && <AccompTab   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} managers={managers} canEdit={canEdit} checklists={cls} user={user} accIdx={Math.min(accIdx, accStages.length-1)} setAccIdx={setAccIdx} autoBanner={autoBanner} setAutoBanner={setAutoBanner} toggleCheck={toggleCheck} overallPct={overallPct} totalDone={totalDone} totalItems={totalItems} getSD={getSD} setSD={setSD} toast$={toast$} stages={accStages} tplLabel={accTpl.l} tpl={accTpl}/>}
                 {tab==='tasks'    && <TasksTabC   c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user} canEdit={canEdit}/>}
                 {tab==='history'  && <HistoryTab  c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
-                {tab==='drive'    && <DriveTab     c={c} setC={v=>{setC(v);setIsDirty(true);setHasChanges(true)}} user={user}/>}
+                {tab==='drive'    && <DriveTab     c={c} user={user}/>}
                 {tab==='calc'     && <ClientCalcTab c={c} setC={setC} user={user} toast$={toast$}/>}
               </div>
             </div>
@@ -1871,228 +1871,45 @@ function HistoryTab({ c, setC, user }) {
 
 
 // ─── Google Drive Tab ────────────────────────────────────────────────────────
-function DriveTab({ c, setC, user }) {
-  const [files,      setFiles]      = useState([])
-  const [loading,    setLoading]    = useState(false)
-  const [uploading,  setUploading]  = useState(false)
-  const [uploadName, setUploadName] = useState('')
-  const [error,      setError]      = useState('')
-  const [folderLink, setFolderLink] = useState(c.driveLink || '')
-  const [storageMode, setStorageMode] = useState(false)  // true = Supabase Storage (Drive не настроен)
-  const driveInputRef = useRef(null)
-
-  // Загружаем список файлов при открытии вкладки
-  useEffect(() => {
-    let cancelled = false
-    loadFiles(cancelled)
-    return () => { cancelled = true }  // cleanup: не обновляем стейт после размонтирования
-  }, [c.id])
-
-  async function loadFiles(cancelled) {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await api.getDriveFiles(c.id, c.driveFolderName || c.fio || '')
-      if (cancelled) return
-      setFiles(data.files || [])
-      setStorageMode(!!data.storage)
-      if (data.folderLink && !c.driveLink) {
-        setFolderLink(data.folderLink)
-        setC({ ...c, driveLink: data.folderLink })
-      }
-    } catch (e) {
-      if (!cancelled) setError(e.message)
-    } finally {
-      if (!cancelled) setLoading(false)
-    }
-  }
-
-  async function handleUpload(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    // Сервер режет 20 МБ — говорим об этом ДО загрузки, а не серверной ошибкой после
-    if (file.size > 20 * 1024 * 1024) {
-      setError('Файл больше 20 МБ — сожмите или разбейте на части')
-      e.target.value = ''
-      return
-    }
-    setUploading(true)
-    setUploadName(file.name)
-    setError('')
-    try {
-      const data = await api.uploadDriveFile(c.id, file, c.driveFolderName || c.fio || '')
-      if (data.folderLink) {
-        setFolderLink(data.folderLink)
-        setC({ ...c, driveLink: data.folderLink })
-      }
-      await loadFiles()
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setUploading(false)
-      setUploadName('')
-      e.target.value = ''
-    }
-  }
-
-  async function handleDelete(fileId, fileName) {
-    if (!confirm(`Удалить файл "${fileName}"?`)) return
-    setError('')
-    try {
-      await api.deleteDriveFile(c.id, fileId)
-      setFiles(files.filter(f => f.id !== fileId))
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
-  function fileIcon(mime) {
-    if (!mime) return 'ti-file'
-    if (mime.startsWith('image/'))                       return 'ti-photo'
-    if (mime === 'application/pdf')                      return 'ti-file-type-pdf'
-    if (mime.includes('word') || mime.includes('docx'))  return 'ti-file-type-doc'
-    if (mime.includes('excel') || mime.includes('xlsx')) return 'ti-file-type-xls'
-    if (mime.startsWith('video/'))                       return 'ti-video'
-    if (mime.startsWith('audio/'))                       return 'ti-music'
-    return 'ti-file'
-  }
-
-  const canDelete = user?.role === 'admin' || user?.role === 'head'
-
-  // Общая папка команды в Google Drive: все заходят сами и хранят вручную
-  // (решение владельца — без API-интеграции; переопределяется env-переменной)
+function DriveTab({ c, user }) {
+  // Хранение файлов клиентов — ТОЛЬКО в общем Google Drive команды (решение
+  // владельца 17.07: без загрузки в CRM, менеджеры заходят в папку и хранят там
+  // вручную). Ссылку можно переопределить env NEXT_PUBLIC_SHARED_DRIVE_URL.
   const SHARED_DRIVE = process.env.NEXT_PUBLIC_SHARED_DRIVE_URL
-    || 'https://drive.google.com/drive/folders/1aoZipnnfFcihv7KrOqlybYnQqX-OPDky'
+    || 'https://drive.google.com/drive/folders/1aoZipnnfFcihv7KrOqlybYnQqX-OPDky?usp=sharing'
+  const folderName = (c.fio || c.phone || '').trim()
 
   return (
     <div style={{padding:'4px 0'}}>
-      {/* Общий Google Drive команды — ручное хранение */}
       <a href={SHARED_DRIVE} target="_blank" rel="noreferrer"
-        style={{display:'flex',alignItems:'center',gap:10,background:'#f0fdf4',border:'2px solid #86efac',
-          borderRadius:13,padding:'13px 15px',marginBottom:12,textDecoration:'none',color:'#065f46'}}>
-        <i className="ti ti-brand-google-drive" style={{fontSize:26,color:'#16a34a',flexShrink:0}}/>
+        style={{display:'flex',alignItems:'center',gap:12,background:'#f0fdf4',border:'2px solid #86efac',
+          borderRadius:14,padding:'16px 18px',marginBottom:14,textDecoration:'none',color:'#065f46'}}>
+        <i className="ti ti-brand-google-drive" style={{fontSize:30,color:'#16a34a',flexShrink:0}}/>
         <div style={{flex:1}}>
-          <div style={{fontWeight:800,fontSize:13.5}}>Открыть общий Google Drive команды</div>
-          <div style={{fontSize:11.5,color:'#047857'}}>Папка «CRM — Клиенты»: заходите и храните документы там. Совет: создайте внутри папку с именем клиента.</div>
+          <div style={{fontWeight:800,fontSize:15}}>Открыть общий Google Drive команды</div>
+          <div style={{fontSize:12,color:'#047857',marginTop:2}}>Папка «CRM — Клиенты» — документы всех клиентов здесь</div>
         </div>
-        <i className="ti ti-external-link" style={{fontSize:16,flexShrink:0}}/>
+        <i className="ti ti-external-link" style={{fontSize:18,flexShrink:0}}/>
       </a>
 
-      {/* Понятность: где лежат файлы */}
-      <div className="hint">
-        <span className="hint-icon">📁</span>
-        <div>
-          Сюда загружайте документы клиента — удостоверение, справки, выписки. Файлы <b>сохраняются
-          {storageMode ? ' в защищённом хранилище CRM' : ' в Google Drive'}</b> и не пропадут.
-          {storageMode && <> Google Drive можно подключить позже (инструкция GOOGLE_DRIVE_SETUP.md) — тогда появятся общие папки по менеджерам.</>}
-          {' '}Документы конкретного этапа удобнее грузить во вкладке «Сопровождение» — там они привязаны к шагу сделки.
+      {/* Как хранить — по шагам, чтобы менеджер не путался */}
+      <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:13,padding:'14px 16px'}}>
+        <div style={{fontWeight:800,fontSize:13,marginBottom:9,color:'#0f172a'}}>Как хранить документы этого клиента</div>
+        {[
+          ['1', <>Нажмите зелёную кнопку выше — откроется общая папка команды.</>],
+          ['2', <>Внутри создайте папку с именем клиента: <b>{folderName || 'ФИО клиента'}</b>.</>],
+          ['3', <>Загрузите туда удостоверение, справки, выписки — всё по этому клиенту.</>],
+        ].map(([n, txt]) => (
+          <div key={n} style={{display:'flex',gap:10,alignItems:'flex-start',marginBottom:8}}>
+            <div style={{width:22,height:22,borderRadius:'50%',background:'#16a34a',color:'#fff',fontWeight:800,fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{n}</div>
+            <div style={{fontSize:12.5,color:'#334155',lineHeight:1.5,paddingTop:1}}>{txt}</div>
+          </div>
+        ))}
+        <div style={{fontSize:11.5,color:'#94a3b8',marginTop:6,lineHeight:1.5,borderTop:'1px solid #f1f5f9',paddingTop:9}}>
+          <i className="ti ti-lock" style={{marginRight:4}}/>
+          Доступ к папке — только у команды. Не пересылайте ссылку посторонним: там личные документы клиентов.
         </div>
       </div>
-      {/* Заголовок + кнопки */}
-      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, gap:10}}>
-        <div style={{fontWeight:700, fontSize:14, color:'#0f172a'}}>
-          Файлы клиента
-          {files.length > 0 && <span style={{marginLeft:6, fontSize:12, fontWeight:500, color:'#64748b'}}>({files.length})</span>}
-        </div>
-        <div style={{display:'flex', gap:8}}>
-          {folderLink && (
-            <a href={folderLink} target="_blank" rel="noreferrer" style={{textDecoration:'none'}}>
-              <button style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:8,border:'1px solid #e2e8f0',background:'#f8fafc',color:'#64748b',fontSize:12,fontWeight:500,cursor:'pointer'}}>
-                <i className="ti ti-brand-google-drive" style={{fontSize:14, color:'#1a73e8'}}/>
-                Открыть папку
-              </button>
-            </a>
-          )}
-          <button
-            onClick={() => driveInputRef.current?.click()}
-            disabled={uploading}
-            style={{display:'flex',alignItems:'center',gap:5,padding:'6px 14px',borderRadius:8,border:'none',background:uploading?'#94a3b8':'#3b82f6',color:'#fff',fontSize:12,fontWeight:600,cursor:uploading?'not-allowed':'pointer'}}>
-            {uploading
-              ? <><i className="ti ti-loader-2" style={{fontSize:13, animation:'spin 1s linear infinite'}}/>Загружаю...</>
-              : <><i className="ti ti-upload" style={{fontSize:13}}/>Загрузить файл</>
-            }
-          </button>
-        </div>
-      </div>
-
-      <input ref={driveInputRef} type="file" style={{display:'none'}}
-        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
-        onChange={handleUpload}/>
-
-      {/* Индикатор загрузки */}
-      {uploading && (
-        <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:10,padding:'10px 14px',marginBottom:12,fontSize:13,color:'#1d4ed8',display:'flex',alignItems:'center',gap:8}}>
-          <i className="ti ti-loader-2" style={{fontSize:15}}/>
-          Загружаю «{uploadName}» на Google Диск...
-        </div>
-      )}
-
-      {/* Ошибка */}
-      {error && (
-        <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:10,padding:'10px 14px',marginBottom:12,fontSize:13,color:'#dc2626'}}>
-          <i className="ti ti-alert-circle" style={{marginRight:6}}/>
-          {error.includes('не настроен')
-            ? <>Google Drive не настроен. Попросите администратора добавить ключ сервис-аккаунта.</>
-            : error
-          }
-        </div>
-      )}
-
-      {/* Список файлов */}
-      {loading ? (
-        <div style={{textAlign:'center',padding:'32px 0',color:'#94a3b8',fontSize:13}}>
-          <i className="ti ti-loader-2" style={{fontSize:22,display:'block',marginBottom:6}}/>
-          Загружаю список файлов...
-        </div>
-      ) : files.length === 0 ? (
-        <div style={{textAlign:'center',padding:'40px 20px',color:'#94a3b8'}}>
-          <i className="ti ti-folder-open" style={{fontSize:32,display:'block',marginBottom:8,color:'#cbd5e1'}}/>
-          <div style={{fontSize:13,fontWeight:500}}>Файлов пока нет</div>
-          <div style={{fontSize:12,marginTop:4}}>Нажмите «Загрузить файл» чтобы добавить документы клиента</div>
-        </div>
-      ) : (
-        <div style={{display:'flex',flexDirection:'column',gap:6}}>
-          {files.map(f => (
-            <div key={f.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,border:'1px solid #e2e8f0',background:'#f8fafc',transition:'background .12s'}}>
-              <i className={`ti ${fileIcon(f.mimeType)}`} style={{fontSize:20,color:'#3b82f6',flexShrink:0}}/>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:500,color:'#0f172a',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.name}</div>
-                <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>
-                  {f.size ? fmtSize(+f.size) : ''}
-                  {f.size && f.createdTime ? ' · ' : ''}
-                  {f.createdTime ? new Date(f.createdTime).toLocaleDateString('ru-RU') : ''}
-                </div>
-              </div>
-              <div style={{display:'flex',gap:6,flexShrink:0}}>
-                <a href={f.webViewLink} target="_blank" rel="noreferrer"
-                  style={{display:'flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:7,border:'1px solid #e2e8f0',background:'#fff',color:'#374151',fontSize:11,fontWeight:500,textDecoration:'none',cursor:'pointer'}}>
-                  <i className="ti ti-eye" style={{fontSize:12}}/>Открыть
-                </a>
-                {f.webContentLink && (
-                  <a href={f.webContentLink} target="_blank" rel="noreferrer"
-                    style={{display:'flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:7,border:'1px solid #e2e8f0',background:'#fff',color:'#374151',fontSize:11,fontWeight:500,textDecoration:'none',cursor:'pointer'}}>
-                    <i className="ti ti-download" style={{fontSize:12}}/>
-                  </a>
-                )}
-                {canDelete && (
-                  <button onClick={() => handleDelete(f.id, f.name)}
-                    style={{display:'flex',alignItems:'center',padding:'5px 8px',borderRadius:7,border:'1px solid #fecaca',background:'#fff',color:'#dc2626',fontSize:11,cursor:'pointer'}}>
-                    <i className="ti ti-trash" style={{fontSize:12}}/>
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Подсказка */}
-      <div style={{marginTop:16,fontSize:11,color:'#94a3b8',background:'#f8fafc',borderRadius:9,padding:'9px 12px',border:'1px solid #e2e8f0'}}>
-        <i className="ti ti-info-circle" style={{marginRight:5}}/>
-        Файлы сохраняются в папке клиента. Форматы: PDF, Word, Excel, изображения, ZIP (до 20 МБ)
-      </div>
-
-      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 }
