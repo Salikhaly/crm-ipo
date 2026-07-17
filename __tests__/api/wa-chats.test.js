@@ -157,4 +157,62 @@ describe('PATCH /api/wa/chats', () => {
     }, res)
     expect(res.status).toHaveBeenCalledWith(404)
   })
+
+  test('ставит валидную категорию', async () => {
+    jest.clearAllMocks()
+    chain.select.mockReturnValue(chain); chain.update.mockReturnValue(chain); chain.eq.mockReturnValue(chain)
+    mockMaybe.mockResolvedValueOnce({ data: { id: 'chat1', category: 'zhilzaim' }, error: null })
+    const res = makeRes()
+    await handler({
+      method: 'PATCH',
+      headers: { authorization: makeToken() },
+      body: { chatId: 'chat1@c.us', category: 'zhilzaim' },
+      query: {},
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(chain.update).toHaveBeenCalledWith(expect.objectContaining({ category: 'zhilzaim' }))
+  })
+
+  test('снимает метку пустой категорией', async () => {
+    jest.clearAllMocks()
+    chain.select.mockReturnValue(chain); chain.update.mockReturnValue(chain); chain.eq.mockReturnValue(chain)
+    mockMaybe.mockResolvedValueOnce({ data: { id: 'chat1', category: '' }, error: null })
+    const res = makeRes()
+    await handler({
+      method: 'PATCH',
+      headers: { authorization: makeToken() },
+      body: { chatId: 'chat1@c.us', category: '' },
+      query: {},
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(chain.update).toHaveBeenCalledWith(expect.objectContaining({ category: '' }))
+  })
+
+  test('400 для недопустимой категории (в базу не пройдёт мусор)', async () => {
+    const res = makeRes()
+    await handler({
+      method: 'PATCH',
+      headers: { authorization: makeToken() },
+      body: { chatId: 'chat1@c.us', category: 'взлом' },
+      query: {},
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json.mock.calls[0][0].error).toMatch(/категори/i)
+  })
+
+  test('миграция 020 не применена → needMigration, а не 500', async () => {
+    jest.clearAllMocks()
+    chain.select.mockReturnValue(chain); chain.update.mockReturnValue(chain); chain.eq.mockReturnValue(chain)
+    // единственное поле — category; апдейт падает на отсутствующей колонке
+    mockMaybe.mockResolvedValueOnce({ data: null, error: { message: 'column "category" does not exist' } })
+    const res = makeRes()
+    await handler({
+      method: 'PATCH',
+      headers: { authorization: makeToken() },
+      body: { chatId: 'chat1@c.us', category: 'question' },
+      query: {},
+    }, res)
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(res.json.mock.calls[0][0].needMigration).toBe('020_wa_chat_category')
+  })
 })

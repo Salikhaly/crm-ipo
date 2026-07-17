@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { api } from '../../lib/api'
 import { emptyClient, fmt, fmtN, MAX_FILE_SIZE_BYTES,
   CR, CR_ST, CITIES, CONTACT_ST, WA_CATS, WA_CAT_L } from '../../lib/constants'
+import { WA_CHAT_CATS } from '../../lib/waConstants'
 import { Inp, Sel, Fl } from '../../components/ui'
 
 
@@ -17,6 +18,18 @@ function waDayLabel(d) {
   if (diff === 0) return 'Сегодня'
   if (diff === 1) return 'Вчера'
   return day.toLocaleDateString('ru', { day: 'numeric', month: 'long' })
+}
+
+// Отметка времени в списке чатов: сегодня — часы, вчера — «Вчера»,
+// раньше — дата. Чтобы на следующий день было видно, когда последний контакт.
+function waListStamp(d) {
+  if (!d) return ''
+  const today = new Date(); today.setHours(0,0,0,0)
+  const day = new Date(d); const day0 = new Date(d); day0.setHours(0,0,0,0)
+  const diff = Math.round((today - day0) / 86400000)
+  if (diff === 0) return day.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+  if (diff === 1) return 'Вчера'
+  return day.toLocaleDateString('ru', { day: 'numeric', month: 'short' })
 }
 
 // ─── useDebounce hook ─────────────────────────────────────
@@ -97,7 +110,7 @@ const WA_STATUSES = [
 
 
 
-export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, user, onOpenClient, mgrById, toast$ }) {
+export function WAPage({ waConfigured = true, chats, messages, managers, clients, selChat, onSelChat, onSend, onSendMedia, onImport, onAssign, onUpdateStatus, onSetCategory, user, onOpenClient, mgrById, toast$ }) {
   const [msgText,         setMsgText]         = useState('')
   const [showChatView,    setShowChatView]     = useState(false)
   const [showTemplates,   setShowTemplates]    = useState(false)
@@ -114,6 +127,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
   const debouncedSearch = useDebounce(waSearch, 150)  // 150ms debounce
   const [waFilter,        setWaFilter]         = useState('all')   // all | new | in_work | done
   const [waMgrFilter,     setWaMgrFilter]      = useState('')      // '' = все
+  const [waCatFilter,     setWaCatFilter]      = useState('')      // '' = все категории
   const [nLead, setNLead] = useState({ fio:'', phone:'', iin:'', source:'whatsapp', assignTo:'', msg:'', city:'Алматы', contactStatus:'', creditStatus:'good' })
   const msgsEndRef = useRef(null)
   const inputRef   = useRef(null)
@@ -201,16 +215,17 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
 
   const filteredChats = useMemo(() => {
     // fast-path: нет фильтров и поиска
-    if (waFilter === 'all' && !waMgrFilter && !debouncedSearch.trim()) return chats
+    if (waFilter === 'all' && !waMgrFilter && !waCatFilter && !debouncedSearch.trim()) return chats
     let res = chats
     if (waFilter !== 'all') res = res.filter(c => c.status === waFilter)
     if (waMgrFilter)        res = res.filter(c => c.assigned_to === waMgrFilter)
+    if (waCatFilter)        res = res.filter(c => (c.category || '') === waCatFilter)
     if (debouncedSearch.trim()) {
       const q = debouncedSearch.toLowerCase()
       res = res.filter(c => (c.name||'').toLowerCase().includes(q) || (c.phone||'').includes(q))
     }
     return res
-  }, [chats, waFilter, waMgrFilter, debouncedSearch])
+  }, [chats, waFilter, waMgrFilter, waCatFilter, debouncedSearch])
 
   // ── Отправка ───────────────────────────────────────────────────
   function sendMsg() {
@@ -412,6 +427,26 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
           ))}
         </div>
 
+        {/* Фильтр по категории — «на след. день понять, с кем как работать» */}
+        <div style={{display:'flex',gap:5,marginBottom:6,flexWrap:'wrap'}}>
+          <button onClick={()=>setWaCatFilter('')}
+            style={{padding:'4px 10px',borderRadius:20,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,fontFamily:'inherit',
+              background:!waCatFilter?'#fff':'rgba(255,255,255,.15)',color:!waCatFilter?'#075e54':'rgba(255,255,255,.8)'}}>
+            Все метки
+          </button>
+          {WA_CHAT_CATS.map(cat => {
+            const n = chats.filter(c => c.category === cat.id).length
+            const on = waCatFilter === cat.id
+            return (
+              <button key={cat.id} onClick={()=>setWaCatFilter(on?'':cat.id)}
+                style={{padding:'4px 10px',borderRadius:20,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,fontFamily:'inherit',
+                  background:on?cat.color:'rgba(255,255,255,.15)',color:'#fff',opacity:on||n?1:.65}}>
+                {cat.l}{n>0 && <span style={{marginLeft:4,background:'rgba(255,255,255,.3)',borderRadius:10,padding:'0 5px'}}>{n}</span>}
+              </button>
+            )
+          })}
+        </div>
+
         {/* Фильтр по менеджеру */}
         <select value={waMgrFilter} onChange={e=>setWaMgrFilter(e.target.value)}
           style={{width:'100%',padding:'6px 10px',borderRadius:8,border:'none',background:'rgba(255,255,255,.15)',color:'#fff',fontSize:12,outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
@@ -450,10 +485,14 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
               <div style={{flex:1,minWidth:0}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
                   <span style={{fontWeight:700,fontSize:14,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:150}}>{chat.name||chat.phone}</span>
-                  <span style={{fontSize:10,color:'#94a3b8',flexShrink:0,marginLeft:6}}>{chat.last_message_at?new Date(chat.last_message_at).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'}):''}</span>
+                  <span style={{fontSize:10,color:'#94a3b8',flexShrink:0,marginLeft:6}}>{waListStamp(chat.last_message_at)}</span>
                 </div>
                 <div style={{fontSize:12,color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:3}}>{chat.last_message||'Нет сообщений'}</div>
                 <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
+                  {(() => {
+                    const cat = WA_CHAT_CATS.find(x=>x.id===chat.category)
+                    return cat ? <span style={{fontSize:10,fontWeight:800,color:'#fff',background:cat.color,borderRadius:6,padding:'1px 7px'}}>{cat.l}</span> : null
+                  })()}
                   <span style={{fontSize:10,fontWeight:700,color:stColor,background:stColor+'18',borderRadius:6,padding:'1px 6px'}}>{WA_STATUSES.find(s=>s.id===chat.status)?.l||chat.status}</span>
                   {mgr && <span style={{fontSize:10,color:'#64748b',display:'flex',alignItems:'center',gap:2}}><i className="ti ti-user" style={{fontSize:9}}/>{mgr.name}</span>}
                   {lc
@@ -485,8 +524,9 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
         <>
           {/* Chat header */}
           <div style={{padding:'10px 14px',borderBottom:'1px solid #e2e8f0',background:'#075e54',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-            <button aria-label="Назад к списку чатов" onClick={backToList} style={{border:'none',background:'rgba(255,255,255,.15)',color:'#fff',borderRadius:8,width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
-              <i className="ti ti-arrow-left" style={{fontSize:18}}/>
+            <button aria-label="Назад к списку чатов" onClick={backToList} className="wa-back-btn" style={{border:'none',background:'rgba(255,255,255,.22)',color:'#fff',borderRadius:9,height:36,padding:'0 12px 0 8px',display:'flex',alignItems:'center',gap:3,cursor:'pointer',flexShrink:0,fontFamily:'inherit',fontSize:13,fontWeight:700}}>
+              <i className="ti ti-chevron-left" style={{fontSize:20}}/>
+              <span className="wa-back-label">Чаты</span>
             </button>
             <div style={{width:38,height:38,borderRadius:'50%',background:'rgba(255,255,255,.2)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:16,flexShrink:0}}>
               {selChat.name?.[0]?.toUpperCase()||'?'}
@@ -548,6 +588,23 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
                 </select>
               </div>
               <button onClick={()=>setShowAssignDlg(false)} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:20,padding:'4px',marginTop:16}}>×</button>
+              {/* Категория (метка типа обращения) — на весь ряд отдельными кнопками:
+                  быстрее, чем select, и метка сразу видна в списке чатов. */}
+              <div style={{flexBasis:'100%',marginTop:2}}>
+                <label style={{fontSize:11,fontWeight:700,color:'#64748b',display:'block',marginBottom:5}}>КАТЕГОРИЯ ЧАТА</label>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {WA_CHAT_CATS.map(cat => {
+                    const on = selChat.category === cat.id
+                    return (
+                      <button key={cat.id}
+                        onClick={()=>onSetCategory && onSetCategory(selChat.id, on ? '' : cat.id)}
+                        style={{border:`1.5px solid ${on?cat.color:'#e2e8f0'}`,background:on?cat.color:'#fff',color:on?'#fff':'#475569',borderRadius:20,padding:'6px 13px',fontSize:12.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:5}}>
+                        {on && <i className="ti ti-check" style={{fontSize:13}}/>}{cat.l}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
