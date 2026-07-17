@@ -41,7 +41,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
           { g:'КОМАНДА',      items:[{id:'managers',l:'👤 Менеджеры'},{id:'users',l:'🔐 Пользователи'}] },
           { g:'ПРОЦЕССЫ',     items:[{id:'pipeline',l:'🔄 Воронка'},{id:'routes',l:'🗺 Маршруты'},{id:'checklists',l:'✅ Чек-листы'}] },
           { g:'ИНСТРУМЕНТЫ',  items:[{id:'calc',l:'🧮 Калькулятор'},{id:'docs',l:'📄 Договоры'},{id:'fields',l:'🧩 Поля карточки'},{id:'wa_replies',l:'⚡ WhatsApp'}] },
-          { g:'СИСТЕМА',      items:[{id:'logs',l:'📜 Журнал'},{id:'trash',l:'🗑 Корзина'},{id:'wa_cleanup',l:'🧹 Чистка WA'}] },
+          { g:'СИСТЕМА',      items:[{id:'backup',l:'💾 Бэкап'},{id:'logs',l:'📜 Журнал'},{id:'trash',l:'🗑 Корзина'},{id:'wa_cleanup',l:'🧹 Чистка WA'}] },
         ].map(grp => (
           <div key={grp.g} style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,padding:'8px 10px'}}>
             <div style={{fontSize:9,fontWeight:800,color:'#94a3b8',letterSpacing:'.08em',marginBottom:6}}>{grp.g}</div>
@@ -193,6 +193,7 @@ export function AdminPage({ managers, pipeline, checklists, users, user, onSaveM
       {tab === 'docs' && <DocTemplatesPanel/>}
       {tab === 'routes' && <RoutesPanel/>}
       {tab === 'fields' && <CustomFieldsPanel/>}
+      {tab === 'backup' && <BackupPanel/>}
       {tab === 'logs' && <ActionLogPanel/>}
       {tab === 'trash' && <TrashPanel reload={reload}/>}
       {tab === 'wa_cleanup' && <WaCleanupPanel reload={reload}/>}
@@ -1483,6 +1484,103 @@ function WaCleanupPanel({ reload }) {
             ))}
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+// ─── БЭКАП БАЗЫ ──────────────────────────────────────────────────
+// На бесплатном Supabase автобэкапов нет: эта кнопка — единственная защита
+// от потери базы. Раз в неделю выгрузить и положить файл в облако.
+const BACKUP_SHEETS = {
+  clients:             'Клиенты',
+  managers:            'Менеджеры',
+  users:               'Пользователи',
+  pipeline_stages:     'Воронка',
+  checklist_templates: 'Чек-листы',
+  calc_settings:       'Настройки',
+  calc_programs:       'Программы',
+  wa_chats:            'WhatsApp чаты',
+  wa_messages:         'WhatsApp сообщения',
+  wa_quick_replies:    'WhatsApp шаблоны',
+  action_logs:         'Журнал действий',
+  deleted_clients:     'Корзина',
+}
+
+// Excel не умеет вложенность: задачи, комментарии, платежи, расчёты кладём
+// JSON-строкой в ячейку — читается глазами и переживает восстановление копипастом.
+function flatBackupRow(r) {
+  const out = {}
+  for (const [k, v] of Object.entries(r || {})) {
+    out[k] = (v && typeof v === 'object') ? JSON.stringify(v) : (v ?? '')
+  }
+  return out
+}
+
+function BackupPanel() {
+  const [busy, setBusy] = useState(false)
+  const [last, setLast] = useState(null)
+  const [msg,  setMsg]  = useState('')
+  function toast(t) { setMsg(t); setTimeout(() => setMsg(''), 4500) }
+
+  async function download() {
+    setBusy(true)
+    try {
+      const d = await api.getBackup()
+      const XLSX = await import('xlsx')
+      const wb = XLSX.utils.book_new()
+      for (const [name, rows] of Object.entries(d.tables || {})) {
+        const ws = (rows && rows.length)
+          ? XLSX.utils.json_to_sheet(rows.map(flatBackupRow))
+          : XLSX.utils.aoa_to_sheet([['(пусто)']])
+        // имя листа в Excel — максимум 31 символ
+        XLSX.utils.book_append_sheet(wb, ws, (BACKUP_SHEETS[name] || name).slice(0, 31))
+      }
+      const day = new Date().toISOString().slice(0, 10)
+      XLSX.writeFile(wb, `Бэкап CRM ${day}.xlsx`)
+      setLast({ counts: d.counts || {}, skipped: d.skipped || [] })
+      toast('✅ Файл скачан — положите его в облако или на флешку')
+    } catch (e) { toast('❌ ' + (e.message || e)) }
+    setBusy(false)
+  }
+
+  const total = last ? Object.values(last.counts).reduce((a, b) => a + b, 0) : 0
+
+  return (
+    <div>
+      {msg && <div style={{position:'fixed',top:20,right:20,zIndex:9999,background:'#0f172a',color:'#fff',padding:'10px 16px',borderRadius:10,fontSize:13,fontWeight:600}}>{msg}</div>}
+      <div style={{fontWeight:800,fontSize:16,marginBottom:13}}>Бэкап базы</div>
+
+      <div style={{background:'#fef2f2',border:'1.5px solid #fecaca',borderRadius:12,padding:'13px 15px',marginBottom:14,fontSize:12.5,color:'#991b1b',lineHeight:1.65}}>
+        <b>Автоматических бэкапов нет.</b> База живёт на бесплатном тарифе Supabase — если её потерять,
+        восстановить будет неоткуда. Эта кнопка выгружает <b>всю базу целиком</b> в один Excel-файл:
+        клиенты со всеми полями, переписка WhatsApp, менеджеры, настройки, журнал и корзина.
+        <div style={{marginTop:7}}>
+          👉 <b>Раз в неделю нажмите кнопку и сохраните файл</b> в облако (Google Drive) или на флешку.
+          Пароли в файл не попадают.
+        </div>
+      </div>
+
+      <Btn variant="primary" onClick={download} disabled={busy}>
+        {busy ? <><i className="ti ti-loader spin"/>Собираю базу...</> : <><i className="ti ti-download"/>Скачать бэкап (Excel)</>}
+      </Btn>
+
+      {last && (
+        <div style={{marginTop:16,background:'#f0fdf4',border:'1.5px solid #bbf7d0',borderRadius:12,padding:'13px 15px'}}>
+          <div style={{fontWeight:800,fontSize:13,color:'#166534',marginBottom:8}}>
+            ✅ Выгружено записей: {total}
+          </div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:'5px 14px',fontSize:12,color:'#15803d'}}>
+            {Object.entries(last.counts).map(([t, n]) => (
+              <span key={t}>{BACKUP_SHEETS[t] || t}: <b>{n}</b></span>
+            ))}
+          </div>
+          {!!last.skipped.length && (
+            <div style={{marginTop:9,fontSize:12,color:'#92400e',lineHeight:1.6}}>
+              ⚠️ Не попали в файл (таблицы нет — миграция не применена): <b>{last.skipped.join(', ')}</b>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
