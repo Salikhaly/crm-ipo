@@ -110,6 +110,45 @@ describe('POST /api/users', () => {
     expect(insertArg.pwd_hash).toBeDefined()
     expect(insertArg.pwd_hash).not.toBe('secret')
   })
+
+  // Регрессия: на проде осталась legacy-колонка pwd NOT NULL, из-за неё создание
+  // пользователя падало 500. Endpoint должен дозаполнить pwd маской и повторить.
+  test('legacy-колонка pwd NOT NULL → повторяет insert с pwd, а не падает 500', async () => {
+    mockMaybe.mockResolvedValueOnce({ data: null, error: null })
+    // первый insert падает на not-null pwd, второй проходит
+    mockSingle
+      .mockResolvedValueOnce({ data: null, error: { message: 'null value in column "pwd" of relation "users" violates not-null constraint' } })
+      .mockResolvedValueOnce({ data: { id: 'u9', login: 'legacyuser', role: 'manager' }, error: null })
+
+    const res = makeRes()
+    await indexHandler({
+      method: 'POST',
+      headers: { authorization: makeToken('admin') },
+      body: { login: 'legacyuser', pwd: 'pass123', name: 'Legacy', role: 'manager' },
+    }, res)
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    // второй insert содержит pwd-маску и по-прежнему bcrypt в pwd_hash
+    const retryArg = mockInsert.mock.calls[1][0]
+    expect(retryArg.pwd).toBe('***')
+    expect(retryArg.pwd_hash).toBeDefined()
+    expect(retryArg.pwd_hash).not.toBe('pass123')
+  })
+
+  test('не-pwd ошибка insert → 500, без повторной попытки', async () => {
+    mockMaybe.mockResolvedValueOnce({ data: null, error: null })
+    mockSingle.mockResolvedValueOnce({ data: null, error: { message: 'some other db error' } })
+
+    const res = makeRes()
+    await indexHandler({
+      method: 'POST',
+      headers: { authorization: makeToken('admin') },
+      body: { login: 'x', pwd: 'p', name: 'X', role: 'manager' },
+    }, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(mockInsert).toHaveBeenCalledTimes(1)   // без retry
+  })
 })
 
 describe('PUT /api/users/:id', () => {

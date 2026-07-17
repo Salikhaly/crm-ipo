@@ -6,6 +6,7 @@
 import { getSupabase } from '../../../lib/supabase'
 import { apiError } from '../../../lib/apiError'
 import { withAuth } from '../../../lib/auth'
+import { normalizeWaPhone, toWaChatId } from '../../../lib/waConstants'
 
 // ─── Защита от бана WhatsApp ──────────────────────────────────────────────────
 // WhatsApp (Meta) банит номера за спам-паттерны: высокая скорость, массовая
@@ -93,10 +94,9 @@ export default withAuth(async function handler(req, res) {
   }
 
   try {
-    // Форматируем номер: +77001234567 → 77001234567@c.us
-    const rawPhone = phone.replace(/\D/g, '')
-    const waPhone  = rawPhone.startsWith('7') ? rawPhone : '7' + rawPhone
-    const waId     = chatId || (waPhone + '@c.us')
+    // Форматируем номер в международный (учёт казахстанского 8XXX и 10-значного)
+    const waPhone  = normalizeWaPhone(phone)
+    const waId     = chatId || toWaChatId(phone)
 
     // Отправляем через Green API
     // Токен передаётся в URL-пути, как требует Green API REST API
@@ -117,7 +117,7 @@ export default withAuth(async function handler(req, res) {
     }
 
     // Успешно отправлено — фиксируем для троттлинга
-    markSent(rawPhone, text)
+    markSent(rawPhoneForCheck, text)
 
     // Сохраняем исходящее сообщение в БД
     const sb = getSupabase()

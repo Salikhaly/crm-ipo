@@ -22,7 +22,7 @@ import {
 } from '../components/ui'
 import { Logo } from '../components/logo'
 import { clientFromAnketa, clientsFromList } from '../lib/importAnketa'
-import { baseRows } from '../lib/exportAnketa'
+import { baseRows, historyRows } from '../lib/exportAnketa'
 import dynamic from 'next/dynamic'
 import { ClientDetail } from '../features/clients'
 
@@ -190,6 +190,18 @@ export default function CRM() {
       ws['!cols'] = [16,12,16,26,14,6,12,12,20,14,12,14,22,16].map(wch => ({ wch }))
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'База')
+
+      // Лист «История» — что по чём сделано по каждому клиенту (договор, оплаты,
+      // расчёты, лента). Отдельный лист, чтобы «База» осталась совместимой с ПКБ.
+      const hRows = historyRows(list, {
+        mgrName:       id => mgrById[id]?.name || '',
+        stageLabel:    id => pipeline.find(p => p.id === id)?.l || id || '',
+        contractLabel: id => (CONTRACTS.find(x => x.id === id)?.l) || id || '',
+      })
+      const wsH = XLSX.utils.aoa_to_sheet(hRows)
+      wsH['!cols'] = [24, 15, 12, 14, 60, 14].map(wch => ({ wch }))
+      XLSX.utils.book_append_sheet(wb, wsH, 'История')
+
       XLSX.writeFile(wb, 'база_клиентов_' + today() + '.xlsx')
       toast$('📥 Экспортировано клиентов: ' + list.length)
     } catch (e) { toast$('❌ ' + (e.message || e), 'err') }
