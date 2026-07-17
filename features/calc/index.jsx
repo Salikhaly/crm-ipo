@@ -1797,12 +1797,19 @@ function CalcTaxTab({ doCalc }) {
       '',
       `📥 Начислено: *${fmt(gross)}*`,
     ]
-    result.breakdown?.filter(r => !r.isGross && !r.isTotal && !r.isNet && r.val !== 0)
-      .forEach(r => lines.push(`  ${r.label}: -${fmt(Math.abs(r.val))}`))
-    lines.push(`💳 На руки: *${fmt(netVal)}*`)
+    const bd = result.breakdown || []
+    lines.push('Удержания с зарплаты:')
+    bd.filter(r => r.isDed && r.val !== 0).forEach(r => lines.push(`  ${r.label.replace(/^— /,'')}: -${fmt(Math.abs(r.val))}`))
+    lines.push(`💳 На руки: *${fmt(netVal)}*  (Начислено − удержания)`)
+    const extras = bd.filter(r => r.isExtra && r.val !== 0)
+    if (extras.length) {
+      lines.push('', 'Сверх зарплаты (взносы работодателя + бухгалтер):')
+      extras.forEach(r => lines.push(`  ${r.label}: +${fmt(Math.abs(r.val))}`))
+    }
+    const total = bd.find(r => r.isTotal)
+    if (total) lines.push('', `💰 Полная стоимость оформления: *${fmt(total.val)}*`)
     if (feeVal > 0) {
-      lines.push(`  └ Бухгалтеру: -${fmt(feeVal)}`)
-      lines.push(`  └ На карту: *${fmt(toCard)}*`)
+      lines.push('', `Комиссия бухгалтеру: -${fmt(feeVal)}`, `На карту: *${fmt(toCard)}*`)
     }
     lines.push('', `💡 ОПВ ${fmt(Math.round(+salary*0.10))} = 10% — банк использует для расчёта ср. ЗП`)
     window.open('https://wa.me/?text='+encodeURIComponent(lines.join('\n')),'_blank')
@@ -1920,8 +1927,9 @@ function CalcTaxTab({ doCalc }) {
                     </div>
                   ))}
                   <div style={{fontSize:10.5,color:'#94a3b8',marginTop:6,lineHeight:1.5}}>
-                    «Удержится» — налоги с работника (ОПВ, ВОСМС, СО, ИПН) за весь срок. Полные затраты
-                    с услугами бухгалтера: {fmt(totalRow)}/мес × срок. Ставки настраиваются: Панель техника → Калькулятор → Налоги.
+                    «Внесёте» = зарплата, «Удержится» = налоги с работника (ОПВ, ВОСМС, СО, ИПН), «На карту» = что вернётся.
+                    Внесёте = Удержится + На карту. Полная стоимость оформления (с бухгалтером и взносами работодателя): {fmt(totalRow)}/мес.
+                    Ставки настраиваются: Панель техника → Калькулятор → Налоги.
                   </div>
                 </div>
               </div>
@@ -1951,24 +1959,23 @@ function CalcTaxTab({ doCalc }) {
           <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,overflow:'hidden',marginBottom:10}}>
             <div style={{padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',
               fontSize:12,fontWeight:600,color:'#374151'}}>Детализация ({type})</div>
-            {result.breakdown.map((row,i)=>(
+            {result.breakdown.map((row,i)=>{
+              const strong = row.isGross || row.isSub || row.isNet || row.isTotal
+              const bg = row.isNet ? '#f0fdf4' : row.isSub ? '#fef2f2' : (row.isGross||row.isTotal) ? '#f8fafc' : 'transparent'
+              const col = row.isNet ? '#0f766e' : row.isSub ? '#b91c1c' : row.isTotal ? '#1d4ed8' : row.isGross ? '#0f172a' : row.isDed ? '#94a3b8' : '#64748b'
+              return (
               <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
-                padding:'10px 14px',borderBottom:i<result.breakdown.length-1?'1px solid #f8fafc':'none',
-                background:row.isTotal||row.isNet?'#f0fdf4':row.isGross?'#f8fafc':'transparent'}}>
-                <span style={{fontSize:12,fontWeight:(row.isTotal||row.isNet||row.isGross)?600:400,
-                  color:(row.isTotal||row.isNet)?'#0f766e':row.isGross?'#374151':'#64748b'}}>
-                  {row.label}
-                </span>
-                <span style={{fontSize:(row.isTotal||row.isNet)?14:12,
-                  fontWeight:(row.isTotal||row.isNet||row.isGross)?700:400,
-                  color:(row.isTotal||row.isNet)?'#0f766e':row.isGross?'#0f172a':'#374151',
-                  fontFamily:'monospace'}}>
+                padding: row.isDed?'6px 14px 6px 22px':'10px 14px',
+                borderTop: (row.isSub||row.isTotal)?'1.5px solid #e2e8f0':'none',
+                borderBottom:i<result.breakdown.length-1?'1px solid #f8fafc':'none', background:bg}}>
+                <span style={{fontSize:row.isDed?11.5:12.5,fontWeight:strong?700:400,color:col}}>{row.label}</span>
+                <span style={{fontSize:(row.isNet||row.isTotal)?14:12.5,fontWeight:strong?800:400,color:col,fontFamily:'monospace'}}>
                   {typeof row.val === 'number'
                     ? (row.val < 0 ? '-' : '') + Math.abs(Math.round(row.val)).toLocaleString('ru-RU') + ' ₸'
                     : row.val}
                 </span>
               </div>
-            ))}
+            )})}
           </div>
 
           <div style={{fontSize:11,color:'#94a3b8',marginBottom:10,padding:'0 4px'}}>
