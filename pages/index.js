@@ -2845,6 +2845,74 @@ function TasksPage({ clients, managers, onOpen, user, onSave }) {
 TasksPage = React.memo(TasksPage)
 
 // ─── KPI PAGE ────────────────────────────────────────────────────
+// Аналитика WhatsApp на странице KPI — работа команды в мессенджере.
+function WaStatsSection() {
+  const [st, setSt] = useState(undefined)  // undefined=загрузка, null=ошибка
+  useEffect(() => { api.getWaStats().then(setSt).catch(() => setSt(null)) }, [])
+  if (st === undefined) return <div style={{color:'#94a3b8',fontSize:13,padding:'12px 2px'}}>⏳ Загрузка статистики WhatsApp…</div>
+  if (!st || !st.totals) return null
+
+  const t = st.totals
+  const CAT_L = { accompany:'Сопровождение', zhilzaim:'Жилзайм', question:'Вопрос', cat300:'300' }
+  const card = (label, value, color, hint) => (
+    <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:12,padding:'12px 14px',position:'relative',overflow:'hidden'}}>
+      <div style={{position:'absolute',top:0,left:0,right:0,height:3,background:color}}/>
+      <div style={{fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:5}}>{label}</div>
+      <div style={{fontSize:22,fontWeight:800,color}}>{value}</div>
+      {hint && <div style={{fontSize:10.5,color:'#94a3b8',marginTop:2}}>{hint}</div>}
+    </div>
+  )
+
+  return (
+    <div style={{marginTop:22}}>
+      <div style={{fontWeight:800,fontSize:15,marginBottom:12,display:'flex',alignItems:'center',gap:7}}>
+        <i className="ti ti-brand-whatsapp" style={{color:'#25d366',fontSize:20}}/>Аналитика WhatsApp
+      </div>
+      <div className='mg4' style={{marginBottom:12}}>
+        {card('Всего чатов', t.chats, '#25d366', `${t.notInBase} не в базе`)}
+        {card('Ждут ответа', t.waitingReply, t.waitingReply>0?'#ef4444':'#10b981', 'последнее сообщение от клиента')}
+        {card('Непрочитано', t.unread, t.unread>0?'#f59e0b':'#10b981')}
+        {card('Сообщений сегодня', (t.todayIn||0)+(t.todayOut||0), '#6366f1', `${t.todayIn} вход · ${t.todayOut} исход`)}
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:12}}>
+        {/* По менеджерам */}
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,padding:16}}>
+          <div style={{fontWeight:700,fontSize:13,marginBottom:10}}>Чаты по менеджерам</div>
+          {(st.perManager||[]).map(m => (
+            <div key={m.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:12.5}}>
+              <span style={{fontWeight:600}}>{m.name}</span>
+              <span style={{color:'#64748b'}}>
+                {m.chats} чат{m.chats%10===1&&m.chats%100!==11?'':'ов'}
+                {m.unanswered>0 && <span style={{color:'#ef4444',marginLeft:8,fontWeight:700}}>⏳ {m.unanswered} ждут</span>}
+              </span>
+            </div>
+          ))}
+          {!(st.perManager||[]).length && <div style={{color:'#94a3b8',fontSize:12}}>Нет данных</div>}
+        </div>
+
+        {/* По категориям и статусам */}
+        <div style={{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:14,padding:16}}>
+          <div style={{fontWeight:700,fontSize:13,marginBottom:10}}>По статусу и метке</div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+            <span style={{fontSize:11.5,background:'#eff6ff',color:'#2563eb',borderRadius:6,padding:'3px 9px',fontWeight:700}}>Новые: {st.byStatus?.new||0}</span>
+            <span style={{fontSize:11.5,background:'#fef9c3',color:'#a16207',borderRadius:6,padding:'3px 9px',fontWeight:700}}>В работе: {st.byStatus?.in_work||0}</span>
+            <span style={{fontSize:11.5,background:'#f1f5f9',color:'#64748b',borderRadius:6,padding:'3px 9px',fontWeight:700}}>Закрытые: {st.byStatus?.done||0}</span>
+          </div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {Object.entries(st.byCategory||{}).map(([k,v]) => (
+              <span key={k} style={{fontSize:11.5,background:'#f0fdf4',color:'#166534',borderRadius:6,padding:'3px 9px',fontWeight:700}}>{CAT_L[k]||k}: {v}</span>
+            ))}
+          </div>
+          <div style={{marginTop:12,fontSize:11.5,color:'#64748b'}}>
+            Всего сообщений: <b>{t.messages}</b> ({t.totalIn} вход · {t.totalOut} исход)
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function KPIPage({ data, period, setPeriod, pipeline }) {
   if (!data) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300,color:'#64748b',gap:10}}>
@@ -2884,6 +2952,8 @@ function KPIPage({ data, period, setPeriod, pipeline }) {
           </div>
         ))}
       </div>
+
+      <WaStatsSection/>
 
       {/* №4: Воронка конверсии */}
       {funnel?.length > 0 && (
