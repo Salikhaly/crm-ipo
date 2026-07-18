@@ -116,6 +116,8 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
   const [showTemplates,   setShowTemplates]    = useState(false)
   const [tmplCat,         setTmplCat]          = useState(0)
   const [tmplSearch,      setTmplSearch]       = useState('')
+  const [tmplStage,       setTmplStage]        = useState('cats')  // cats | list | preview
+  const [tmplSel,         setTmplSel]          = useState(null)    // выбранный шаблон для превью
   const [showNewLead,     setShowNewLead]       = useState(false)
   const [showClientPanel, setShowClientPanel]  = useState(false)
   const [showAssignDlg,   setShowAssignDlg]    = useState(false)
@@ -263,7 +265,14 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
     const applied = applyTemplate(tmpl.text)
     setMsgText(applied)
     setShowTemplates(false)
+    setTmplStage('cats'); setTmplSel(null); setTmplSearch('')
     inputRef.current?.focus()
+  }
+
+  // Открыть/закрыть панель шаблонов — всегда начинаем со списка категорий
+  function toggleTemplates() {
+    setShowTemplates(v => !v)
+    setTmplStage('cats'); setTmplSel(null); setTmplSearch('')
   }
 
   const [sendingFile, setSendingFile] = useState(false)
@@ -660,57 +669,86 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
             <div ref={msgsEndRef}/>
           </div>
 
-          {/* Панель шаблонов */}
+          {/* Панель шаблонов — экран поверх чата, крупные кнопки, навигация «Назад» */}
           {showTemplates && (
-            <div style={{background:'#fff',borderTop:'1.5px solid #e2e8f0',display:'flex',flexDirection:'column',maxHeight:340,flexShrink:0}}>
-              {/* Поиск по шаблонам */}
-              <div style={{padding:'8px 10px',borderBottom:'1px solid #f1f5f9',display:'flex',gap:8,alignItems:'center'}}>
-                <i className="ti ti-search" style={{color:'#94a3b8',fontSize:14,flexShrink:0}}/>
-                <input
-                  value={tmplSearch}
-                  onChange={e=>setTmplSearch(e.target.value)}
-                  placeholder="Поиск по шаблонам..."
-                  style={{flex:1,border:'none',outline:'none',fontSize:13,color:'#0f172a',fontFamily:'inherit'}}
-                />
-                {tmplSearch && <button onClick={()=>setTmplSearch('')} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:16}}>×</button>}
+            <div className="wa-tmpl">
+              {/* Шапка: назад (контекстно) + заголовок + закрыть */}
+              <div className="wa-tmpl-head">
+                {(tmplStage !== 'cats' || tmplSearch) ? (
+                  <button className="wa-tmpl-back" onClick={()=>{
+                      if (tmplStage === 'preview') { setTmplStage(tmplSearch ? 'cats' : 'list'); setTmplSel(null) }
+                      else { setTmplStage('cats'); setTmplSearch('') }
+                    }}>
+                    <i className="ti ti-arrow-left" style={{fontSize:18}}/><span>Назад</span>
+                  </button>
+                ) : <span style={{fontWeight:800,fontSize:14,color:'#075e54'}}>Шаблоны сообщений</span>}
+                <div style={{flex:1,textAlign:'center',fontWeight:700,fontSize:13,color:'#334155',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  {tmplStage==='list' && !tmplSearch ? templateCats[tmplCat]?.cat : (tmplStage==='preview' ? (tmplSel?.label||'') : '')}
+                </div>
+                <button className="wa-tmpl-close" onClick={()=>{setShowTemplates(false);setTmplStage('cats');setTmplSearch('')}}>
+                  <i className="ti ti-x" style={{fontSize:20}}/>
+                </button>
               </div>
-              {/* Категории */}
-              {!tmplSearch && (
-                <div style={{display:'flex',gap:4,padding:'7px 10px',borderBottom:'1px solid #f1f5f9',overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-                  {templateCats.map((cat,i) => (
-                    <button key={i} onClick={()=>setTmplCat(i)}
-                      style={{padding:'4px 10px',borderRadius:20,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap',flexShrink:0,
-                        background:tmplCat===i?'#3b82f6':'#f1f5f9',color:tmplCat===i?'#fff':'#64748b',transition:'all .15s'}}>
-                      {cat.cat}
-                    </button>
-                  ))}
+
+              {/* Поиск — на уровне категорий и списка */}
+              {tmplStage !== 'preview' && (
+                <div className="wa-tmpl-search">
+                  <i className="ti ti-search" style={{color:'#94a3b8',fontSize:15,flexShrink:0}}/>
+                  <input value={tmplSearch} onChange={e=>{setTmplSearch(e.target.value); setTmplStage('cats')}}
+                    placeholder="Поиск по всем шаблонам..." style={{flex:1,border:'none',outline:'none',fontSize:14,color:'#0f172a',fontFamily:'inherit',background:'transparent'}}/>
+                  {tmplSearch && <button onClick={()=>setTmplSearch('')} style={{border:'none',background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:18}}>×</button>}
                 </div>
               )}
-              {/* Список шаблонов */}
-              <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
-                {(() => {
-                  const items = tmplSearch
-                    ? templateCats.flatMap(c=>c.items).filter(t=>t.label.toLowerCase().includes(tmplSearch.toLowerCase())||t.text.toLowerCase().includes(tmplSearch.toLowerCase()))
-                    : templateCats[tmplCat]?.items || []
+
+              <div className="wa-tmpl-body">
+                {/* РЕЗУЛЬТАТЫ ПОИСКА — плоский список по всем шаблонам */}
+                {tmplSearch ? (() => {
+                  const q = tmplSearch.toLowerCase()
+                  const items = templateCats.flatMap(c=>c.items).filter(t=>t.label.toLowerCase().includes(q)||t.text.toLowerCase().includes(q))
                   return items.length === 0
-                    ? <div style={{padding:'20px',textAlign:'center',color:'#94a3b8',fontSize:13}}>Ничего не найдено</div>
-                    : items.map(tmpl => (
-                      <div key={tmpl.id} onClick={()=>useTemplate(tmpl)}
-                        style={{padding:'10px 12px',borderBottom:'1px solid #f8fafc',cursor:'pointer',transition:'background .1s'}}
-                        onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
-                        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                        <div style={{fontWeight:700,fontSize:12,color:'#3b82f6',marginBottom:3}}>{tmpl.label}</div>
-                        <div style={{fontSize:12,color:'#374151',lineHeight:1.4,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
-                          {tmpl.text}
-                        </div>
-                      </div>
+                    ? <div className="wa-tmpl-empty">Ничего не найдено</div>
+                    : items.map(t => (
+                      <button key={t.id} className="wa-tmpl-row" onClick={()=>{setTmplSel(t);setTmplStage('preview')}}>
+                        <div className="wa-tmpl-row-t">{t.label}</div>
+                        <div className="wa-tmpl-row-p">{t.text}</div>
+                      </button>
                     ))
-                })()}
-              </div>
-              {/* Подсказка про переменные */}
-              <div style={{padding:'6px 12px',background:'#f8fafc',borderTop:'1px solid #f1f5f9',fontSize:10,color:'#94a3b8'}}>
-                <i className="ti ti-info-circle" style={{marginRight:4}}/>
-                Переменные подставляются автоматически: {'{{имя}}, {{банк}}, {{сумма}}, {{дата}}'}
+                })()
+                /* УРОВЕНЬ 1 — категории */
+                : tmplStage === 'cats' ? (
+                  templateCats.map((cat,i) => (
+                    <button key={i} className="wa-tmpl-cat" onClick={()=>{setTmplCat(i);setTmplStage('list')}}>
+                      <span style={{fontWeight:700,fontSize:14}}>{cat.cat}</span>
+                      <span style={{display:'flex',alignItems:'center',gap:6,color:'#94a3b8',fontSize:12.5}}>
+                        {cat.items.length}<i className="ti ti-chevron-right" style={{fontSize:16}}/>
+                      </span>
+                    </button>
+                  ))
+                )
+                /* УРОВЕНЬ 2 — шаблоны в категории */
+                : tmplStage === 'list' ? (
+                  (templateCats[tmplCat]?.items || []).map(t => (
+                    <button key={t.id} className="wa-tmpl-row" onClick={()=>{setTmplSel(t);setTmplStage('preview')}}>
+                      <div className="wa-tmpl-row-t">{t.label}</div>
+                      <div className="wa-tmpl-row-p">{t.text}</div>
+                    </button>
+                  ))
+                )
+                /* УРОВЕНЬ 3 — превью полного текста + вставка */
+                : tmplSel ? (
+                  <div style={{padding:'4px 2px'}}>
+                    <div style={{whiteSpace:'pre-wrap',fontSize:14,lineHeight:1.5,color:'#0f172a',background:'#f0fdf4',border:'1.5px solid #bbf7d0',borderRadius:12,padding:'13px 15px'}}>
+                      {applyTemplate(tmplSel.text)}
+                    </div>
+                    <div style={{fontSize:11,color:'#94a3b8',margin:'8px 2px 12px'}}>
+                      <i className="ti ti-info-circle" style={{marginRight:4}}/>Имя, сумма и другие данные уже подставлены. Можно поправить после вставки.
+                    </div>
+                    <button onClick={()=>useTemplate(tmplSel)}
+                      style={{width:'100%',border:'none',background:'#25d366',color:'#fff',borderRadius:12,padding:'13px',fontSize:15,fontWeight:800,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+                      <i className="ti ti-corner-down-left" style={{fontSize:18}}/>Вставить в сообщение
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -718,7 +756,7 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
           {/* Input bar */}
           <div className="wa-input">
             {/* Шаблоны сообщений (та же кнопка и «/» в поле — единый список) */}
-            <button onClick={()=>{setShowTemplates(!showTemplates)}} title="Шаблоны сообщений (или введите / в поле)"
+            <button onClick={toggleTemplates} title="Шаблоны сообщений (или введите / в поле)"
               style={{width:38,height:38,borderRadius:'50%',border:'none',background:showTemplates?'#3b82f6':'#e9e9e9',color:showTemplates?'#fff':'#555',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
               <i className="ti ti-template" style={{fontSize:18}}/>
             </button>
