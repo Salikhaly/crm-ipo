@@ -118,6 +118,15 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
   const [tmplSearch,      setTmplSearch]       = useState('')
   const [tmplStage,       setTmplStage]        = useState('cats')  // cats | list | preview
   const [tmplSel,         setTmplSel]          = useState(null)    // выбранный шаблон для превью
+  // Голосовые: idle | recording | preview
+  const [recState,        setRecState]         = useState('idle')
+  const [recTime,         setRecTime]          = useState(0)
+  const [recUrl,          setRecUrl]           = useState('')
+  const recRef       = useRef(null)
+  const recChunksRef = useRef([])
+  const recTimerRef  = useRef(null)
+  const recCancelRef = useRef(false)
+  const recBlobRef   = useRef(null)
   const [showNewLead,     setShowNewLead]       = useState(false)
   const [showClientPanel, setShowClientPanel]  = useState(false)
   const [showAssignDlg,   setShowAssignDlg]    = useState(false)
@@ -288,6 +297,74 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
       .finally(() => setSendingFile(false))
     e.target.value = ''
   }
+
+  // ── Запись голосовых сообщений (MediaRecorder → onSendMedia) ─────────────
+  // Chrome/Android пишут webm/opus, iOS Safari — mp4 (m4a). Выбираем то, что
+  // умеет браузер. Отправка — тем же путём, что файлы (sendMedia → Green API).
+  function pickAudioMime() {
+    if (typeof MediaRecorder === 'undefined') return null
+    for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']) {
+      try { if (MediaRecorder.isTypeSupported(m)) return m } catch (e) { /* older */ }
+    }
+    return ''  // пусть браузер выберет сам
+  }
+
+  async function startRecording() {
+    if (recState !== 'idle' || !selChat) return
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      toast$('❌ Браузер не поддерживает запись звука', 'err'); return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mime = pickAudioMime()
+      const rec  = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+      recChunksRef.current = []
+      rec.ondataavailable = (e) => { if (e.data?.size) recChunksRef.current.push(e.data) }
+      rec.onstop = () => {
+        stream.getTracks().forEach(t => t.stop())   // отпускаем микрофон сразу
+        const type = rec.mimeType || 'audio/webm'
+        const blob = new Blob(recChunksRef.current, { type })
+        if (recCancelRef.current || blob.size < 200) { setRecState('idle'); setRecUrl(''); return }
+        recBlobRef.current = blob
+        setRecUrl(URL.createObjectURL(blob))
+        setRecState('preview')
+      }
+      recRef.current = rec
+      recCancelRef.current = false
+      rec.start()
+      setRecTime(0)
+      recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000)
+      setRecState('recording')
+    } catch (e) {
+      toast$('❌ Нет доступа к микрофону — разрешите в настройках браузера', 'err')
+    }
+  }
+
+  function stopRecording(cancel = false) {
+    recCancelRef.current = cancel
+    clearInterval(recTimerRef.current)
+    try { recRef.current?.state !== 'inactive' && recRef.current?.stop() } catch (e) { /* уже остановлен */ }
+    if (cancel) setRecState('idle')
+  }
+
+  function discardRecording() {
+    if (recUrl) URL.revokeObjectURL(recUrl)
+    recBlobRef.current = null
+    setRecUrl(''); setRecState('idle')
+  }
+
+  function sendRecording() {
+    const blob = recBlobRef.current
+    if (!blob || !selChat) return
+    const ext  = blob.type.includes('mp4') ? 'm4a' : (blob.type.includes('ogg') ? 'ogg' : 'webm')
+    const file = new File([blob], `voice_${Date.now()}.${ext}`, { type: blob.type })
+    setSendingFile(true)
+    Promise.resolve(onSendMedia(selChat.id, selChat.phone, file, ''))
+      .finally(() => setSendingFile(false))
+    discardRecording()
+  }
+
+  const fmtRec = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`
 
   function openChat(chat) {
     onSelChat(chat)
@@ -755,6 +832,39 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
 
           {/* Input bar */}
           <div className="wa-input">
+            {/* ─── Режим ЗАПИСИ голосового ─── */}
+            {recState === 'recording' && (
+              <div style={{flex:1,display:'flex',alignItems:'center',gap:12,minHeight:44}}>
+                <span className="wa-rec-dot"/>
+                <span style={{fontWeight:800,fontSize:16,color:'#dc2626',fontVariantNumeric:'tabular-nums'}}>{fmtRec(recTime)}</span>
+                <span style={{flex:1,fontSize:12.5,color:'#64748b'}}>Идёт запись…</span>
+                <button onClick={()=>stopRecording(true)} title="Отменить запись"
+                  style={{border:'none',background:'#f1f5f9',color:'#64748b',borderRadius:22,padding:'10px 16px',fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+                  Отмена
+                </button>
+                <button onClick={()=>stopRecording(false)} title="Остановить и прослушать"
+                  style={{width:44,height:44,borderRadius:'50%',border:'none',background:'#dc2626',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
+                  <i className="ti ti-player-stop-filled" style={{fontSize:20}}/>
+                </button>
+              </div>
+            )}
+
+            {/* ─── ПРЕВЬЮ записанного голосового ─── */}
+            {recState === 'preview' && (
+              <div style={{flex:1,display:'flex',alignItems:'center',gap:10,minHeight:44}}>
+                <button onClick={discardRecording} title="Удалить запись"
+                  style={{width:40,height:40,borderRadius:'50%',border:'none',background:'#fef2f2',color:'#dc2626',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
+                  <i className="ti ti-trash" style={{fontSize:18}}/>
+                </button>
+                <audio controls src={recUrl} preload="metadata" style={{flex:1,height:40,minWidth:0}}/>
+                <button onClick={sendRecording} disabled={sendingFile} title="Отправить голосовое"
+                  style={{width:44,height:44,borderRadius:'50%',border:'none',background:'#25d366',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
+                  <i className={`ti ${sendingFile?'ti-loader-2':'ti-send'}`} style={{fontSize:20,animation:sendingFile?'spin 1s linear infinite':undefined}}/>
+                </button>
+              </div>
+            )}
+
+            {recState === 'idle' && <>
             {/* Шаблоны сообщений (та же кнопка и «/» в поле — единый список) */}
             <button onClick={toggleTemplates} title="Шаблоны сообщений (или введите / в поле)"
               style={{width:38,height:38,borderRadius:'50%',border:'none',background:showTemplates?'#3b82f6':'#e9e9e9',color:showTemplates?'#fff':'#555',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
@@ -829,10 +939,19 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
                 Шаблоны не найдены по «/{quickFilter}». Техник добавляет шаблоны в Панели техника.
               </div>
             )}
-            <button onClick={sendMsg} disabled={!msgText.trim()}
-              style={{width:44,height:44,borderRadius:'50%',border:'none',background:msgText.trim()?'#25d366':'#e9e9e9',color:msgText.trim()?'#fff':'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center',cursor:msgText.trim()?'pointer':'default',flexShrink:0,transition:'all .15s'}}>
-              <i className="ti ti-send" style={{fontSize:20}}/>
-            </button>
+            {/* Пусто в поле → микрофон (записать голосовое), есть текст → отправить */}
+            {msgText.trim() ? (
+              <button onClick={sendMsg}
+                style={{width:44,height:44,borderRadius:'50%',border:'none',background:'#25d366',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
+                <i className="ti ti-send" style={{fontSize:20}}/>
+              </button>
+            ) : (
+              <button onClick={startRecording} title="Записать голосовое сообщение"
+                style={{width:44,height:44,borderRadius:'50%',border:'none',background:'#25d366',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all .15s'}}>
+                <i className="ti ti-microphone" style={{fontSize:20}}/>
+              </button>
+            )}
+            </>}
           </div>
         </>
       )}

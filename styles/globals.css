@@ -122,6 +122,9 @@ textarea.inp{resize:none;min-height:72px}
 .wa-tmpl-row-t{font-weight:700;font-size:13.5px;color:#075e54;margin-bottom:3px}
 .wa-tmpl-row-p{font-size:12.5px;color:#64748b;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .wa-tmpl-empty{padding:26px;text-align:center;color:#94a3b8;font-size:13px}
+/* Индикатор записи голосового */
+.wa-rec-dot{width:12px;height:12px;border-radius:50%;background:#dc2626;flex-shrink:0;animation:recPulse 1s ease-in-out infinite}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
 @media(max-width:768px){.wa-tmpl{height:72vh}.wa-tmpl-cat{padding:16px 12px}.wa-tmpl-row{padding:14px 12px}}
 
 /* ── METRICS ── */
