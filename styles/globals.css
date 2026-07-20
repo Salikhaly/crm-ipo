@@ -269,7 +269,9 @@ tbody tr:active td{background:#f8fafc}
   .modal-box.center{border-radius:22px 22px 0 0;align-self:flex-end;margin:0;width:100%}
 
   /* WA: sidebar and chat take full screen, slide between them */
-  .wa-layout{height:calc(100dvh - 52px - 62px);border-radius:10px;overflow:hidden}
+  /* env(safe-area-inset-bottom): жестовая панель телефона (активна благодаря
+     viewport-fit=cover) — иначе поле ввода чата пряталось под нижней навигацией */
+  .wa-layout{height:calc(100dvh - 52px - 62px - env(safe-area-inset-bottom, 0px));border-radius:10px;overflow:hidden}
   .wa-sidebar{position:absolute;inset:0;width:100%;border-right:none;z-index:10}
   .wa-sidebar.slide-out{transform:translateX(-100%)}
   .wa-main{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column}

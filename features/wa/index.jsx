@@ -366,13 +366,39 @@ export function WAPage({ waConfigured = true, chats, messages, managers, clients
 
   const fmtRec = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`
 
+  // На телефоне (и особенно в установленном PWA, где нет браузерных кнопок)
+  // открытый чат — отдельная запись в истории: системная «Назад» (жест Android)
+  // возвращает к списку чатов, а НЕ выкидывает из приложения.
+  const chatHistRef = useRef(false)
+  useEffect(() => {
+    const onPop = () => {
+      if (chatHistRef.current) {
+        chatHistRef.current = false
+        setShowChatView(false)
+        setShowClientPanel(false)
+        setShowTemplates(false)
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
   function openChat(chat) {
     onSelChat(chat)
     setShowChatView(true)
     setShowClientPanel(false)
+    // Запись в историю — только на мобильной раскладке (на десктопе список и
+    // чат рядом, закрывать нечего) и только одна на открытый чат
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width:768px)').matches && !chatHistRef.current) {
+      window.history.pushState({ waChat: true }, '')
+      chatHistRef.current = true
+    }
   }
 
   function backToList() {
+    // Если чат лежит в истории — уходим через back(), чтобы не копить записи
+    // (иначе следующая системная «Назад» вернула бы в уже закрытый чат)
+    if (chatHistRef.current) { window.history.back(); return }
     setShowChatView(false)
     setShowClientPanel(false)
   }
