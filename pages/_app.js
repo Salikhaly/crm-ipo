@@ -14,12 +14,15 @@ export default function App({ Component, pageProps }) {
   return (
     <>
       <Head>
-        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+        {/* viewport-fit=cover — включает env(safe-area-inset-*) на телефонах с вырезом/жестовой панелью */}
+        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
         <meta name="theme-color" content="#0f172a"/>
         {/* mobile-web-app-capable — актуальная замена deprecated apple-* (было предупреждение в консоли) */}
         <meta name="mobile-web-app-capable" content="yes"/>
         <meta name="apple-mobile-web-app-capable" content="yes"/>
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+        {/* default (непрозрачный статус-бар): при black-translucent контент PWA
+            рисовался ПОД часами/батареей — «экран кривой», верх приложения перекрыт */}
+        <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
         <meta name="apple-mobile-web-app-title" content="Ипотека CRM"/>
         <link rel="manifest" href="/manifest.webmanifest"/>
         <link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
