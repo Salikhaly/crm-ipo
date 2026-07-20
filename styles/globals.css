@@ -108,6 +108,25 @@ textarea.inp{resize:none;min-height:72px}
 .wa-input{padding:10px;background:#f0f0f0;display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
 .wa-textarea{flex:1;background:#fff;border:none;border-radius:22px;padding:10px 16px;font-size:14px;resize:none;max-height:100px;outline:none;font-family:inherit;line-height:1.4}
 
+/* ── ПАНЕЛЬ ШАБЛОНОВ WhatsApp (двухуровневая навигация + превью) ── */
+.wa-tmpl{background:#fff;border-top:1.5px solid #e2e8f0;display:flex;flex-direction:column;flex-shrink:0;height:min(58vh,440px)}
+.wa-tmpl-head{display:flex;align-items:center;gap:8px;padding:9px 10px;border-bottom:1px solid #eef2f6;flex-shrink:0}
+.wa-tmpl-back{border:none;background:#f0fdf4;color:#075e54;border-radius:9px;padding:7px 12px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px;flex-shrink:0}
+.wa-tmpl-close{border:none;background:transparent;color:#94a3b8;cursor:pointer;padding:4px;display:flex;flex-shrink:0}
+.wa-tmpl-search{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #f1f5f9;flex-shrink:0}
+.wa-tmpl-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 10px 12px}
+.wa-tmpl-cat{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px;border:none;border-bottom:1px solid #f4f6f8;background:transparent;cursor:pointer;font-family:inherit;text-align:left;color:#0f172a}
+.wa-tmpl-cat:active{background:#f0fdf4}
+.wa-tmpl-row{width:100%;display:block;padding:12px;border:none;border-bottom:1px solid #f4f6f8;background:transparent;cursor:pointer;font-family:inherit;text-align:left}
+.wa-tmpl-row:active{background:#f0fdf4}
+.wa-tmpl-row-t{font-weight:700;font-size:13.5px;color:#075e54;margin-bottom:3px}
+.wa-tmpl-row-p{font-size:12.5px;color:#64748b;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.wa-tmpl-empty{padding:26px;text-align:center;color:#94a3b8;font-size:13px}
+/* Индикатор записи голосового */
+.wa-rec-dot{width:12px;height:12px;border-radius:50%;background:#dc2626;flex-shrink:0;animation:recPulse 1s ease-in-out infinite}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+@media(max-width:768px){.wa-tmpl{height:72vh}.wa-tmpl-cat{padding:16px 12px}.wa-tmpl-row{padding:14px 12px}}
+
 /* ── METRICS ── */
 .mg4{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:14px}
 .mg3{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
